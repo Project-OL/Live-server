@@ -1,0 +1,2315 @@
+// Production auth system – design: 02_COMPLETE_AUTH_SYSTEM_DESIGN.md
+// Users use UUID; public_id sequential from 34216589; VIP and sessions supported.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─── 1. USERS (core identity, public IDs, VIP, profile) ───
+model User {
+  id              String @id @default(uuid()) @db.Uuid
+  username        String @db.VarChar(255)
+  publicId        BigInt @unique @map("public_id")
+  defaultPublicId BigInt @unique @map("default_public_id")
+
+  firstName         String?   @map("first_name") @db.VarChar(255)
+  lastName          String?   @map("last_name") @db.VarChar(255)
+  dateOfBirth       DateTime? @map("date_of_birth") @db.Date
+  country           String?   @db.VarChar(100)
+  gender            String?   @db.VarChar(50) // male, female, other
+  avatarUrl         String?   @map("avatar_url") @db.Text
+  bio               String?   @db.Text
+  // Last time display name (PATCH /me `name`) changed — monthly throttle.
+  usernameUpdatedAt DateTime? @map("username_updated_at")
+
+  status             String    @default("new") @db.VarChar(50) // new, active, suspended, deactivating, deleted
+  passwordSet        Boolean   @default(false) @map("password_set")
+  profileCompletedAt DateTime? @map("profile_completed_at")
+
+  currentVipPublicId   BigInt?   @unique @map("current_vip_public_id")
+  vipPublicIdExpiresAt DateTime? @map("vip_public_id_expires_at")
+  vipPurchaseAt        DateTime? @map("vip_purchase_at")
+
+  // Permanent base public ID from registration (sequence); VIP overlay is separate.
+  originalPublicId BigInt? @unique @map("original_public_id")
+
+  vipSubscriptionActive    Boolean   @default(false) @map("vip_subscription_active")
+  vipSubscriptionStartAt   DateTime? @map("vip_subscription_start_at")
+  vipSubscriptionExpiresAt DateTime? @map("vip_subscription_expires_at")
+
+  privacyInvisibleVisitor Boolean   @default(false) @map("privacy_invisible_visitor")
+  privacyMysteryLive      Boolean   @default(false) @map("privacy_mystery_live")
+  privacyMysteryRank      Boolean   @default(false) @map("privacy_mystery_rank")
+  privacyInvisibleOnline  Boolean   @default(false) @map("privacy_invisible_online")
+  hideMicStatus           Boolean   @default(false) @map("hide_mic_status")
+  isSupport               Boolean   @default(false) @map("is_support")
+  privacyUpdatedAt        DateTime? @map("privacy_updated_at")
+
+  isAgent         Boolean   @default(false) @map("is_agent")
+  isTagged        Boolean   @default(false) @map("is_tagged")
+  lastActiveAt    DateTime? @map("last_active_at")
+  currentAgencyId String?   @map("current_agency_id") @db.Uuid
+
+  lastIpAddress String?  @map("last_ip_address") @db.VarChar(45)
+  tokenVersion  Int      @default(0) @map("token_version") // revoke-all / password change; embedded in access JWT
+  createdAt     DateTime @default(now()) @map("created_at")
+  updatedAt     DateTime @updatedAt @map("updated_at")
+
+  authIdentifiers               AuthIdentifier[]
+  authPassword                  AuthPassword?
+  securityPassword              SecurityPassword?
+  otpTokens                     OtpToken[]
+  sessions                      Session[]
+  deviceRegistry                DeviceRegistry[]
+  auditLogs                     AuditLog[]
+  ownedVipIds                   VipPublicId[]                  @relation("VipOwner")
+  vipAssignments                UserVipAssignment[]
+  accountDeletion               AccountDeletion?               @relation("AccountDeletion")
+  userSettings                  UserSettings?
+  linkedDeviceAccounts          DeviceLinkedAccount[]
+  followers                     UserFollow[]                   @relation("Following")
+  following                     UserFollow[]                   @relation("Follower")
+  profileVisitors               ProfileVisitor[]               @relation("ProfileOwner")
+  visitHistory                  ProfileVisitor[]               @relation("ProfileVisitor")
+  userLevel                     UserLevel?
+  subscribers                   UserSubscriber[]               @relation("Creator")
+  subscriptions                 UserSubscriber[]               @relation("Subscriber")
+  creatorSubsAsFan              CreatorSubscription[]          @relation("CreatorSubFan")
+  creatorSubsAsHost             CreatorSubscription[]          @relation("CreatorSubHost")
+  posts                         Post[]                         @relation("UserPosts")
+  taggedIn                      PostTag[]                      @relation("TaggedIn")
+  postLikes                     PostLike[]                     @relation("PostLikes")
+  conversationMembers           ConversationMember[]
+  sentMessages                  Message[]                      @relation("SentMessages")
+  messageReactions              MessageReaction[]
+  blockedBy                     BlockList[]                    @relation("BlockedBy")
+  blockedUsers                  BlockList[]                    @relation("BlockedUsers")
+  reporterReports               MessageReport[]                @relation("Reporter")
+  reportedReports               MessageReport[]                @relation("Reported")
+  reminderOwner                 BroadcastReminder[]            @relation("ReminderOwner")
+  reminderCreator               BroadcastReminder[]            @relation("ReminderCreator")
+  wallets                       Wallet[]
+  walletUserLevels              WalletUserLevel[]
+  videoCallSettings             VideoCallSettings?
+  callerSessions                VideoCallSession[]             @relation("CallSessionCaller")
+  creatorSessions               VideoCallSession[]             @relation("CallSessionCreator")
+  hostGalleryProgress           GiftGalleryProgress[]          @relation("HostGalleryProgress")
+  gifterGalleryProgress         GiftGalleryProgress[]          @relation("GifterGalleryProgress")
+  giftsSent                     GiftTransaction[]              @relation("GiftsSent")
+  giftsReceived                 GiftTransaction[]              @relation("GiftsReceived")
+  fanSpendSent                  FanSpend[]                     @relation("FanSpendSender")
+  fanSpendReceived              FanSpend[]                     @relation("FanSpendReceiver")
+  guardiansAsGuardian           Guardian[]                     @relation("GuardianOf")
+  guardiansAsTarget             Guardian[]                     @relation("GuardedBy")
+  supportTickets                SupportTicket[]                @relation("SupportTicketsAsUser")
+  supportTicketsClosed          SupportTicket[]                @relation("SupportTicketsClosedBy")
+  supportMessagesSent           SupportMessage[]               @relation("SupportMessageSender")
+  storeItems                    UserStoreItem[]                @relation("UserStoreItems")
+  storePurchasedItems           UserStoreItem[]                @relation("StorePurchasedBy")
+  activeStoreItems              UserActiveStoreItems[]
+  userRichTier                  UserRichTier?
+  monthlyRechargeAggregates     MonthlyRechargeAggregate[]
+  richTierHistoryRows           RichTierHistory[]              @relation("RichTierHistoryUser")
+  vipMembershipPurchases        VipMembershipPurchase[]
+  vipDailyClaims                VipDailyClaim[]
+  vipDailyQuotas                VipDailyQuota[]
+  questionnaireAttempts         UserQuestionnaireAttempt[]
+  faceProfile                   UserFaceProfile?
+  faceVerificationAttempts      FaceVerificationAttempt[]
+  userLivePhoto                 UserLivePhoto?
+  livePhotoVerificationAttempts LivePhotoVerificationAttempt[]
+  faceRegistrationSessions      FaceRegistrationSession[]
+  faceRegistrationAuditLogs     FaceRegistrationAuditLog[]
+
+  agency                       Agency?
+  hostAgencyMembership         AgencyHost?
+  agencyDailyAsHost            AgencyDailyEarning[]          @relation("AgencyDailyHost")
+  agentTransfersSent           AgentPointTransfer[]          @relation("AgentTransferSender")
+  agentTransfersReceived       AgentPointTransfer[]          @relation("AgentTransferRecipient")
+  currentAgencyAgent           User?                         @relation("HostToAgencyAgent", fields: [currentAgencyId], references: [id], onDelete: SetNull)
+  usersHostedInMyAgency        User[]                        @relation("HostToAgencyAgent")
+  agencyApplicationsAsHost     AgencyHostApplication[]       @relation("AgencyAppHost")
+  agencyApplicationsResolved   AgencyHostApplication[]       @relation("AgencyAppResolver")
+  agencyLeaveAsHost            AgencyLeaveApplication[]      @relation("AgencyLeaveHost")
+  agencyLeaveResolved          AgencyLeaveApplication[]      @relation("AgencyLeaveResolver")
+  agencyApplicationKyc         AgencyApplicationKyc?
+  agencyAgentApplication       AgencyAgentApplication?       @relation("AgencyAgentApplications")
+  tradingCoinTopupOrders       CoinTradingTopupOrder[]       @relation("TradingCoinTopupsByAgent")
+  tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
+  tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
+  tradingCoinTransferReversals CoinTradingTransfer[]         @relation("TradingCoinTransferReversedBy")
+  paymentMethods               UserPaymentMethod[]
+  payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
+  hostLiveSessions             HostLiveSession[]
+
+  @@index([publicId])
+  @@index([defaultPublicId])
+  @@index([username])
+  @@index([status])
+  @@index([createdAt(sort: Desc)])
+  @@index([isAgent])
+  @@index([currentAgencyId])
+  @@index([lastActiveAt])
+  @@map("users")
+}
+
+// ─── 2. AUTH_IDENTIFIERS (email, phone, google, facebook, apple) ───
+model AuthIdentifier {
+  id         String    @id @default(uuid()) @db.Uuid
+  userId     String    @map("user_id") @db.Uuid
+  provider   String    @db.VarChar(50) // email, phone, google, facebook, apple
+  identifier String    @db.VarChar(255)
+  isVerified Boolean   @default(false) @map("is_verified")
+  verifiedAt DateTime? @map("verified_at")
+  isPrimary  Boolean   @default(false) @map("is_primary")
+  createdAt  DateTime  @default(now()) @map("created_at")
+  updatedAt  DateTime  @updatedAt @map("updated_at")
+  version    Int       @default(1)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, identifier])
+  @@unique([userId, provider])
+  @@index([userId])
+  @@index([provider])
+  @@index([identifier])
+  @@map("auth_identifiers")
+}
+
+// ─── 3. AUTH_PASSWORDS (bcrypt, one per user) ───
+model AuthPassword {
+  id                     String   @id @default(uuid()) @db.Uuid
+  userId                 String   @unique @map("user_id") @db.Uuid
+  passwordHash           String   @map("password_hash") @db.VarChar(255)
+  previousPasswordHashes String[] @map("previous_password_hashes")
+  lastChangedAt          DateTime @default(now()) @map("last_changed_at")
+  createdAt              DateTime @default(now()) @map("created_at")
+  updatedAt              DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("auth_passwords")
+}
+
+// ─── 3b. SECURITY_PASSWORDS (separate from login password; for purchases, destructive ops) ───
+model SecurityPassword {
+  id                  String    @id @default(cuid())
+  userId              String    @unique @map("user_id") @db.Uuid
+  passwordHash        String    @map("password_hash") @db.VarChar(255)
+  setAt               DateTime  @default(now()) @map("set_at")
+  updatedAt           DateTime  @updatedAt @map("updated_at")
+  failedAttempts      Int       @default(0) @map("failed_attempts")
+  lastFailedAttemptAt DateTime? @map("last_failed_attempt_at")
+  lockedUntil         DateTime? @map("locked_until")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([lockedUntil])
+  @@map("security_passwords")
+}
+
+// ─── 4. OTP_TOKENS (hashed OTP, purpose, 5 min expiry) ───
+model OtpToken {
+  id               String    @id @default(uuid()) @db.Uuid
+  userId           String?   @map("user_id") @db.Uuid // null for signup (no user yet)
+  otpHash          String    @map("otp_hash") @db.VarChar(255)
+  otpPurpose       String    @map("otp_purpose") @db.VarChar(50)
+  targetIdentifier String    @map("target_identifier") @db.VarChar(255)
+  isUsed           Boolean   @default(false) @map("is_used")
+  attemptCount     Int       @default(0) @map("attempt_count")
+  expiresAt        DateTime  @map("expires_at")
+  verifiedAt       DateTime? @map("verified_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([expiresAt])
+  @@index([otpPurpose])
+  @@index([targetIdentifier, otpPurpose])
+  @@map("otp_tokens")
+}
+
+// ─── 5. SESSIONS (device, refresh token hash, max 3 per user) ───
+model Session {
+  id                    String    @id @default(uuid()) @db.Uuid
+  userId                String    @map("user_id") @db.Uuid
+  deviceName            String    @map("device_name") @db.VarChar(255)
+  deviceId              String    @map("device_id") @db.VarChar(255)
+  deviceFingerprint     String?   @map("device_fingerprint") @db.VarChar(500)
+  deviceFingerprintHash String?   @map("device_fingerprint_hash") @db.VarChar(64) // SHA-256 binding hash
+  ipHash                String?   @map("ip_hash") @db.VarChar(64)
+  userAgentHash         String?   @map("user_agent_hash") @db.VarChar(64)
+  refreshTokenHash      String    @unique @map("refresh_token_hash") @db.VarChar(255)
+  ipAddress             String    @map("ip_address") @db.VarChar(45)
+  userAgent             String?   @map("user_agent") @db.VarChar(500)
+  isActive              Boolean   @default(true) @map("is_active")
+  isRevoked             Boolean   @default(false) @map("is_revoked")
+  lastActiveAt          DateTime  @default(now()) @map("last_active_at")
+  createdAt             DateTime  @default(now()) @map("created_at")
+  updatedAt             DateTime  @updatedAt @map("updated_at")
+  expiresAt             DateTime  @map("expires_at")
+  revokedAt             DateTime? @map("revoked_at")
+  loginType             String?   @map("login_type") @db.VarChar(50) // password, google, facebook, apple
+  tokenVersion          Int       @default(0) @map("token_version") // bumped on refresh; matches access JWT
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@index([deviceId])
+  @@index([isActive])
+  @@index([expiresAt])
+  @@index([userId, deviceId])
+  @@map("sessions")
+}
+
+// ─── 6. DEVICE_REGISTRY (device history, device management) ───
+model DeviceRegistry {
+  id                    String   @id @default(uuid()) @db.Uuid
+  userId                String   @map("user_id") @db.Uuid
+  deviceId              String   @map("device_id") @db.VarChar(255)
+  deviceName            String   @map("device_name") @db.VarChar(255)
+  deviceType            String?  @map("device_type") @db.VarChar(50)
+  platform              String   @default("web") @db.VarChar(20)
+  loginAt               DateTime @default(now()) @map("login_at")
+  lastActiveAt          DateTime @default(now()) @map("last_active_at")
+  ipAddress             String?  @map("ip_address") @db.VarChar(45)
+  userAgent             String?  @map("user_agent") @db.VarChar(500)
+  deviceFingerprintHash String?  @map("device_fingerprint_hash") @db.VarChar(64)
+  ipHash                String?  @map("ip_hash") @db.VarChar(64)
+  userAgentHash         String?  @map("user_agent_hash") @db.VarChar(64)
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, deviceId])
+  @@index([userId])
+  @@index([userId, lastActiveAt])
+  @@map("device_registry")
+}
+
+// ─── 6b. DEVICE_LINKED_ACCOUNTS (accounts linked to a physical/device identifier) ───
+model DeviceLinkedAccount {
+  id         String   @id @default(cuid())
+  deviceId   String   @map("device_id") @db.VarChar(255)
+  userId     String   @map("user_id") @db.Uuid
+  linkedAt   DateTime @default(now()) @map("linked_at")
+  lastUsedAt DateTime @default(now()) @map("last_used_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([deviceId, userId])
+  @@index([deviceId])
+  @@index([userId])
+  @@map("device_linked_accounts")
+}
+
+// ─── 7. VIP_PUBLIC_IDS (reserved patterns) ───
+model VipPublicId {
+  id             String    @id @default(uuid()) @db.Uuid
+  publicId       BigInt    @unique @map("public_id")
+  tier           String    @default("NONE") @map("tier") @db.VarChar(50)
+  priceGroup     String    @default("STANDARD") @map("price_group") @db.VarChar(50)
+  rarityScore    Int       @default(0) @map("rarity_score")
+  matchedRules   String[]  @default([]) @map("matched_rules")
+  detectedAt     DateTime  @default(now()) @map("detected_at")
+  assignedAt     DateTime? @map("assigned_at")
+  patternType    String?   @map("pattern_type") @db.VarChar(50)
+  isAvailable    Boolean   @default(true) @map("is_available")
+  currentOwnerId String?   @map("current_owner_id") @db.Uuid
+  priceCredits   Int?      @map("price_credits")
+  purchasedAt    DateTime? @map("purchased_at")
+  expiresAt      DateTime? @map("expires_at")
+  createdAt      DateTime  @default(now()) @map("created_at")
+
+  currentOwner User?               @relation("VipOwner", fields: [currentOwnerId], references: [id], onDelete: SetNull)
+  assignments  UserVipAssignment[]
+
+  @@index([isAvailable])
+  @@index([currentOwnerId])
+  @@index([expiresAt])
+  @@index([tier, assignedAt])
+  @@index([assignedAt])
+  @@map("vip_public_ids")
+}
+
+// ─── 7b. USER_VIP_ASSIGNMENTS (time-boxed VIP public ID use) ───
+model UserVipAssignment {
+  id        String    @id @default(cuid())
+  userId    String    @map("user_id") @db.Uuid
+  publicId  BigInt    @map("public_id")
+  startsAt  DateTime  @default(now()) @map("starts_at")
+  expiresAt DateTime  @map("expires_at")
+  revokedAt DateTime? @map("revoked_at")
+  isActive  Boolean   @default(true) @map("is_active")
+
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  vipPublicId VipPublicId @relation(fields: [publicId], references: [publicId])
+
+  @@index([userId, isActive])
+  @@index([expiresAt, isActive])
+  @@map("user_vip_assignments")
+}
+
+// ─── STORE ───────────────────────────────────────────────────────────────────
+
+enum StoreItemCategory {
+  RIDE
+  AVATAR_FRAME
+  CHAT_BUBBLE
+  PROFILE_CARD
+}
+
+model StoreItem {
+  id              String            @id @default(uuid()) @db.Uuid
+  name            String            @db.VarChar(255)
+  description     String?           @db.Text
+  category        StoreItemCategory
+  coinCost        Int               @map("coin_cost")
+  validityDays    Int               @default(15) @map("validity_days")
+  displayImageUrl String            @map("display_image_url") @db.Text
+  effectUrl       String?           @map("effect_url") @db.Text
+  isActive        Boolean           @default(true) @map("is_active")
+  sortOrder       Int               @default(0) @map("sort_order")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  userItems UserStoreItem[]
+
+  @@index([category, isActive, sortOrder])
+  @@index([isActive])
+  @@map("store_items")
+}
+
+model UserStoreItem {
+  id             String    @id @default(uuid()) @db.Uuid
+  userId         String    @map("user_id") @db.Uuid
+  storeItemId    String    @map("store_item_id") @db.Uuid
+  purchasedById  String    @map("purchased_by_id") @db.Uuid
+  coinsPaid      Int       @map("coins_paid")
+  isActive       Boolean   @default(true) @map("is_active")
+  isApplied      Boolean   @default(false) @map("is_applied")
+  expiresAt      DateTime  @map("expires_at")
+  activatedAt    DateTime? @map("activated_at")
+  expiredAt      DateTime? @map("expired_at")
+  revokedAt      DateTime? @map("revoked_at")
+  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime  @default(now()) @map("created_at")
+  updatedAt      DateTime  @updatedAt @map("updated_at")
+
+  user        User                   @relation("UserStoreItems", fields: [userId], references: [id], onDelete: Cascade)
+  purchasedBy User                   @relation("StorePurchasedBy", fields: [purchasedById], references: [id], onDelete: Restrict)
+  storeItem   StoreItem              @relation(fields: [storeItemId], references: [id], onDelete: Restrict)
+  activeRows  UserActiveStoreItems[]
+
+  @@index([userId, isApplied])
+  @@index([userId, isActive])
+  @@index([expiresAt, isActive])
+  @@index([storeItemId])
+  @@map("user_store_items")
+}
+
+model UserActiveStoreItems {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  category        StoreItemCategory
+  userStoreItemId String?           @map("user_store_item_id") @db.Uuid
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+
+  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userStoreItem UserStoreItem? @relation(fields: [userStoreItemId], references: [id], onDelete: SetNull)
+
+  @@unique([userId, category])
+  @@index([userId])
+  @@map("user_active_store_items")
+}
+
+// ─── 8. AUDIT_LOGS (90-day retention) ───
+model AuditLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  userId        String?  @map("user_id") @db.Uuid
+  actionType    String   @map("action_type") @db.VarChar(100)
+  actionStatus  String   @map("action_status") @db.VarChar(50) // success, failed
+  actionDetails Json?    @map("action_details")
+  ipAddress     String?  @map("ip_address") @db.VarChar(45)
+  userAgent     String?  @map("user_agent") @db.VarChar(500)
+  deviceId      String?  @map("device_id") @db.VarChar(255)
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([actionType])
+  @@index([createdAt(sort: Desc)])
+  @@map("audit_logs")
+}
+
+// ─── 9. ACCOUNT_DELETIONS (schedule, grace period, permanent delete) ───
+model AccountDeletion {
+  id                String    @id @default(cuid())
+  userId            String    @unique @map("user_id") @db.Uuid
+  scheduledAt       DateTime  @default(now()) @map("scheduled_at")
+  deactivationUntil DateTime  @map("deactivation_until")
+  deletionAt        DateTime  @map("deletion_at")
+  isCancelled       Boolean   @default(false) @map("is_cancelled")
+  cancelledAt       DateTime? @map("cancelled_at")
+  isDeleted         Boolean   @default(false) @map("is_deleted")
+  deletedAt         DateTime? @map("deleted_at")
+  reason            String?   @db.VarChar(500)
+  ipAddress         String?   @map("ip_address") @db.VarChar(45)
+  user              User      @relation("AccountDeletion", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([scheduledAt])
+  @@index([deactivationUntil])
+  @@index([deletionAt])
+  @@index([isDeleted])
+  @@index([userId])
+  @@map("account_deletions")
+}
+
+// ─── 10. NEXT_PUBLIC_ID_SEQUENCE (single row, id=1) ───
+model NextPublicIdSequence {
+  id        Int    @id
+  nextValue BigInt @map("next_value") // default 34216589 via seed
+
+  @@map("next_public_id_sequence")
+}
+
+/// Cursor for VIP-pattern pre-generation (horizon ahead of signup sequence). Singleton row id=1.
+model PublicIdClassificationProgress {
+  id               Int      @id @default(1)
+  lastClassifiedId BigInt   @map("last_classified_id")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("public_id_classification_progress")
+}
+
+// ─── 11. USER_SETTINGS (per-user messaging and language preferences) ───
+model UserSettings {
+  id                    String   @id @default(cuid())
+  userId                String   @unique @map("user_id") @db.Uuid
+  language              String   @default("en") @db.VarChar(10)
+  allowMsgFromMutual    Boolean  @default(true) @map("allow_msg_from_mutual")
+  allowMsgFromFollowing Boolean  @default(true) @map("allow_msg_from_following")
+  allowMsgFromStranger  Boolean  @default(false) @map("allow_msg_from_stranger")
+  createdAt             DateTime @default(now()) @map("created_at")
+  updatedAt             DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("user_settings")
+}
+
+// ─── 12. USER_FOLLOWS (social graph: follow relationships) ───
+model UserFollow {
+  id          String   @id @default(cuid())
+  followerId  String   @map("follower_id") @db.Uuid
+  followingId String   @map("following_id") @db.Uuid
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+
+  @@unique([followerId, followingId])
+  @@index([followerId])
+  @@index([followingId])
+  @@map("user_follows")
+}
+
+// ─── 13. PROFILE_VISITORS (who visited which profile) ───
+model ProfileVisitor {
+  id        String   @id @default(cuid())
+  profileId String   @map("profile_id") @db.Uuid
+  visitorId String   @map("visitor_id") @db.Uuid
+  visitedAt DateTime @default(now()) @map("visited_at")
+
+  profile User @relation("ProfileOwner", fields: [profileId], references: [id], onDelete: Cascade)
+  visitor User @relation("ProfileVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
+
+  @@unique([profileId, visitorId])
+  @@index([profileId, visitedAt])
+  @@index([visitorId, visitedAt])
+  @@map("profile_visitors")
+}
+
+// ─── 14. USER_SUBSCRIBERS (creator/subscriber relationships) ───
+model UserSubscriber {
+  id           String   @id @default(cuid())
+  subscriberId String   @map("subscriber_id") @db.Uuid
+  creatorId    String   @map("creator_id") @db.Uuid
+  subscribedAt DateTime @default(now()) @map("subscribed_at")
+
+  subscriber User @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
+  creator    User @relation("Creator", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, creatorId])
+  @@index([creatorId])
+  @@index([subscriberId])
+  @@map("user_subscribers")
+}
+
+enum CreatorSubscriptionStatus {
+  ACTIVE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+model CreatorSubscription {
+  id            String                    @id @default(cuid())
+  subscriberId  String                    @map("subscriber_id") @db.Uuid
+  creatorId     String                    @map("creator_id") @db.Uuid
+  status        CreatorSubscriptionStatus
+  nextRenewalAt DateTime                  @map("next_renewal_at")
+  graceUntil    DateTime?                 @map("grace_until")
+  createdAt     DateTime                  @default(now()) @map("created_at")
+  updatedAt     DateTime                  @updatedAt @map("updated_at")
+
+  subscriber User @relation("CreatorSubFan", fields: [subscriberId], references: [id], onDelete: Cascade)
+  creator    User @relation("CreatorSubHost", fields: [creatorId], references: [id], onDelete: Cascade)
+
+  @@unique([subscriberId, creatorId])
+  @@index([nextRenewalAt, status])
+  @@index([subscriberId, status])
+  @@map("creator_subscriptions")
+}
+
+enum GuardianTier {
+  SILVER
+  GOLD
+  KING
+}
+
+model Guardian {
+  id             String       @id @default(cuid())
+  guardianUserId String       @map("guardian_user_id") @db.Uuid
+  targetUserId   String       @map("target_user_id") @db.Uuid
+  tier           GuardianTier
+  durationMonths Int          @map("duration_months")
+  coinsPaid      BigInt       @map("coins_paid")
+  purchasedAt    DateTime     @default(now()) @map("purchased_at")
+  expiresAt      DateTime     @map("expires_at")
+  isExpired      Boolean      @default(false) @map("is_expired")
+
+  guardianUser User @relation("GuardianOf", fields: [guardianUserId], references: [id], onDelete: Restrict)
+  targetUser   User @relation("GuardedBy", fields: [targetUserId], references: [id], onDelete: Restrict)
+
+  @@unique([guardianUserId, targetUserId])
+  @@index([targetUserId, isExpired, expiresAt])
+  @@index([guardianUserId, isExpired])
+  @@index([expiresAt, isExpired])
+  @@map("guardians")
+}
+
+// ─── 15. USER_LEVELS (per-user livestream/wealth levels and XP) ───
+model UserLevel {
+  id              String   @id @default(cuid())
+  userId          String   @unique @map("user_id") @db.Uuid
+  livestreamLevel Int      @default(0) @map("livestream_level")
+  wealthLevel     Int      @default(0) @map("wealth_level")
+  livestreamXp    BigInt   @default(0) @map("livestream_xp")
+  wealthXp        BigInt   @default(0) @map("wealth_xp")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_levels")
+}
+
+// ─── 16. LEVEL_CONFIG (config for level thresholds) ───
+model LevelConfig {
+  id        String  @id @default(cuid())
+  levelType String  @map("level_type") @db.VarChar(50) // 'livestream' | 'wealth'
+  level     Int
+  minXp     BigInt  @map("min_xp")
+  maxXp     BigInt  @map("max_xp")
+  label     String  @db.VarChar(255)
+  iconUrl   String? @map("icon_url") @db.VarChar(500)
+
+  @@unique([levelType, level])
+  @@index([levelType])
+  @@map("level_config")
+}
+
+// ─── 17. POSTS (media posts with tagging and likes) ───
+
+enum PostVisibility {
+  PUBLIC
+  SUBSCRIBERS_ONLY
+}
+
+enum PostMediaType {
+  IMAGE
+  VIDEO
+}
+
+model Post {
+  id             String         @id @default(cuid())
+  userId         String         @map("user_id") @db.Uuid
+  mediaKey       String         @map("media_key") @db.VarChar(500)
+  mediaUrl       String         @map("media_url") @db.VarChar(1000)
+  mediaType      PostMediaType  @default(IMAGE) @map("media_type")
+  thumbnailKey   String?        @map("thumbnail_key") @db.VarChar(500)
+  thumbnailUrl   String?        @map("thumbnail_url") @db.VarChar(1000)
+  caption        String?        @db.Text
+  visibility     PostVisibility @default(SUBSCRIBERS_ONLY)
+  subscriberOnly Boolean        @default(false) @map("subscriber_only")
+  likesCount     Int            @default(0) @map("likes_count")
+  createdAt      DateTime       @default(now()) @map("created_at")
+  updatedAt      DateTime       @updatedAt @map("updated_at")
+
+  user  User       @relation("UserPosts", fields: [userId], references: [id], onDelete: Cascade)
+  tags  PostTag[]
+  likes PostLike[]
+
+  @@index([userId, createdAt])
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "posts_user_id_created_at_id_idx")
+  @@index([createdAt])
+  @@map("posts")
+}
+
+model PostTag {
+  id           String   @id @default(cuid())
+  postId       String   @map("post_id")
+  taggedUserId String   @map("tagged_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at")
+
+  post       Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  taggedUser User @relation("TaggedIn", fields: [taggedUserId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, taggedUserId])
+  @@index([postId])
+  @@index([taggedUserId])
+  @@map("post_tags")
+}
+
+model PostLike {
+  id        String   @id @default(cuid())
+  postId    String   @map("post_id")
+  userId    String   @map("user_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+
+  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user User @relation("PostLikes", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([postId, userId])
+  @@index([postId])
+  @@index([userId])
+  @@map("post_likes")
+}
+
+// ─── MESSAGING ───
+enum ConversationType {
+  DIRECT
+  GROUP
+}
+
+enum MessageType {
+  TEXT
+  TEXT_COINS
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  SYSTEM
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+
+// Async sidecar processing for message media (waveform extraction, transcoding, etc.).
+enum MediaProcessingStatus {
+  NONE
+  PENDING
+  ENQUEUED
+  READY
+  FAILED
+}
+
+// Future transcription pipeline; persisted for client UX.
+enum MediaTranscriptionStatus {
+  NONE
+  PENDING
+  READY
+  FAILED
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  INAPPROPRIATE_CONTENT
+  FAKE_ACCOUNT
+  VIOLENCE
+  OTHER
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+model Conversation {
+  id            String               @id @default(cuid())
+  type          ConversationType
+  lastMessageAt DateTime?            @map("last_message_at")
+  // Monotonic per-conversation message sequence
+  lastSeq       BigInt               @default(0) @map("last_seq")
+  createdAt     DateTime             @default(now()) @map("created_at")
+  updatedAt     DateTime             @updatedAt @map("updated_at")
+  members       ConversationMember[]
+  messages      Message[]
+
+  @@index([lastMessageAt])
+  @@map("conversations")
+}
+
+model ConversationMember {
+  id                String       @id @default(cuid())
+  conversationId    String       @map("conversation_id")
+  userId            String       @map("user_id") @db.Uuid
+  joinedAt          DateTime     @default(now()) @map("joined_at")
+  lastReadAt        DateTime?    @map("last_read_at")
+  lastReadMessageId String?      @map("last_read_message_id")
+  isMuted           Boolean      @default(false) @map("is_muted")
+  mutedUntil        DateTime?    @map("muted_until")
+  isDeleted         Boolean      @default(false) @map("is_deleted")
+  deletedAt         DateTime?    @map("deleted_at")
+  conversation      Conversation @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  user              User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([conversationId, userId])
+  @@index([userId])
+  @@index([conversationId])
+  @@map("conversation_members")
+}
+
+model Message {
+  id              String            @id @default(cuid())
+  conversationId  String            @map("conversation_id")
+  senderId        String            @map("sender_id") @db.Uuid
+  type            MessageType
+  content         String?           @db.Text
+  replyToId       String?           @map("reply_to_id")
+  isDeleted       Boolean           @default(false) @map("is_deleted")
+  deletedAt       DateTime?         @map("deleted_at")
+  // Idempotency key (UUID) when set; unique per conversation
+  clientMessageId String?           @map("client_message_id")
+  isAutoReply     Boolean           @default(false) @map("is_auto_reply")
+  // Per-conversation monotonic order
+  seq             BigInt            @map("seq")
+  createdAt       DateTime          @default(now()) @map("created_at")
+  updatedAt       DateTime          @updatedAt @map("updated_at")
+  conversation    Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  sender          User              @relation("SentMessages", fields: [senderId], references: [id])
+  replyTo         Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies         Message[]         @relation("MessageReplies")
+  mediaItems      MessageMedia[]
+  reactions       MessageReaction[]
+
+  @@unique([conversationId, clientMessageId])
+  @@unique([conversationId, seq])
+  @@index([conversationId, seq])
+  @@index([conversationId, createdAt])
+  @@index([senderId])
+  @@map("messages")
+}
+
+// Transactional outbox: at-least-once WS fan-out after commit
+model MessageOutbox {
+  id             BigInt    @id @default(autoincrement())
+  conversationId String    @map("conversation_id")
+  payload        Json
+  createdAt      DateTime  @default(now()) @map("created_at")
+  publishedAt    DateTime? @map("published_at")
+
+  @@index([publishedAt, id])
+  @@map("message_outbox")
+}
+
+model MessageMedia {
+  id                  String                   @id @default(cuid())
+  messageId           String                   @map("message_id")
+  mediaType           MediaType                @map("media_type")
+  s3Key               String                   @map("s3_key") @db.VarChar(500)
+  s3Bucket            String                   @map("s3_bucket") @db.VarChar(255)
+  fileName            String?                  @map("file_name") @db.VarChar(255)
+  mimeType            String?                  @map("mime_type") @db.VarChar(100)
+  sizeBytes           Int?                     @map("size_bytes")
+  durationSec         Int?                     @map("duration_sec")
+  width               Int?
+  height              Int?
+  order               Int                      @default(0)
+  // Compact waveform: `{ "v": 1, "e": "<base64 u8 peaks>" }` or legacy normalized floats (bounded).
+  waveformJson        Json?                    @map("waveform_json")
+  codec               String?                  @map("codec") @db.VarChar(32)
+  bitrate             Int?                     @map("bitrate")
+  sampleRate          Int?                     @map("sample_rate")
+  channels            Int?                     @map("channels")
+  processingStatus    MediaProcessingStatus    @default(NONE) @map("processing_status")
+  transcriptionStatus MediaTranscriptionStatus @default(NONE) @map("transcription_status")
+  checksumSha256      String?                  @map("checksum_sha256") @db.VarChar(64)
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  message             Message                  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+
+  @@index([messageId])
+  @@index([processingStatus, createdAt])
+  @@index([createdAt])
+  @@map("message_media")
+}
+
+model MessageReaction {
+  id        String   @id @default(cuid())
+  messageId String   @map("message_id")
+  userId    String   @map("user_id") @db.Uuid
+  emoji     String   @db.VarChar(20)
+  createdAt DateTime @default(now()) @map("created_at")
+  message   Message  @relation(fields: [messageId], references: [id], onDelete: Cascade)
+  user      User     @relation(fields: [userId], references: [id])
+
+  @@unique([messageId, userId, emoji])
+  @@index([messageId])
+  @@map("message_reactions")
+}
+
+model BlockList {
+  id        String   @id @default(cuid())
+  blockerId String   @map("blocker_id") @db.Uuid
+  blockedId String   @map("blocked_id") @db.Uuid
+  createdAt DateTime @default(now()) @map("created_at")
+  blocker   User     @relation("BlockedBy", fields: [blockerId], references: [id])
+  blocked   User     @relation("BlockedUsers", fields: [blockedId], references: [id])
+
+  @@unique([blockerId, blockedId])
+  @@index([blockerId])
+  @@index([blockedId])
+  @@map("block_lists")
+}
+
+model MessageReport {
+  id             String       @id @default(cuid())
+  reporterId     String       @map("reporter_id") @db.Uuid
+  reportedUserId String       @map("reported_user_id") @db.Uuid
+  conversationId String?      @map("conversation_id")
+  messageId      String?      @map("message_id")
+  reason         ReportReason
+  additionalInfo String?      @map("additional_info") @db.Text
+  evidenceS3Keys String[]     @map("evidence_s3_keys")
+  status         ReportStatus @default(PENDING)
+  createdAt      DateTime     @default(now()) @map("created_at")
+  reporter       User         @relation("Reporter", fields: [reporterId], references: [id])
+  reportedUser   User         @relation("Reported", fields: [reportedUserId], references: [id])
+
+  @@index([reporterId])
+  @@index([reportedUserId])
+  @@index([createdAt])
+  @@map("message_reports")
+}
+
+model BroadcastReminder {
+  id        String   @id @default(cuid())
+  userId    String   @map("user_id") @db.Uuid
+  creatorId String   @map("creator_id") @db.Uuid
+  remindAt  DateTime @map("remind_at")
+  isSent    Boolean  @default(false) @map("is_sent")
+  createdAt DateTime @default(now()) @map("created_at")
+  user      User     @relation("ReminderOwner", fields: [userId], references: [id])
+  creator   User     @relation("ReminderCreator", fields: [creatorId], references: [id])
+
+  @@unique([userId, creatorId])
+  @@index([remindAt, isSent])
+  @@map("broadcast_reminders")
+}
+
+// ── Wallet: coins & points ───────────────────────────────────────────────────
+
+enum WalletCurrencyType {
+  COIN
+  POINT
+  TRADING_COIN
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum CoinTxType {
+  TOPUP
+  TRADING_TOPUP
+  GIFT_SEND
+  GIFT_REFUND
+  TRANSFER_OUT
+  TRANSFER_IN
+  TRADING_TRANSFER_OUT
+  TRADING_TRANSFER_IN
+  TRADING_EXCHANGE_FROM_POINTS
+  TRADING_TRANSFER_REVERSAL
+  VIP_PURCHASE
+  VIP_REWARD
+  DAILY_LOGIN
+  WEEKLY_TOPUP
+  PLATFORM_REWARD
+  EXPIRE
+  ADJUSTMENT
+  VIDEO_CALL
+  USERNAME_CHANGE
+  CREATOR_SUBSCRIPTION
+  GUARDIAN_PURCHASE
+  STORE_ITEM_PURCHASE
+  VIP_MEMBERSHIP_PURCHASE
+  POINT_EXCHANGE_TO_COINS
+}
+
+enum PointTxType {
+  LIVESTREAM_GIFT
+  SUBSCRIPTION
+  GUARDIAN_PURCHASE
+  COMMISSION
+  TRANSFER_IN
+  TRANSFER_OUT
+  PLATFORM_REWARD
+  WITHDRAWAL
+  WITHDRAWAL_REFUND
+  ADJUSTMENT
+  VIDEO_CALL
+  GIFT_RECEIVE
+  AGENCY_FORCE_EXIT_PENALTY
+  AGENT_COMMISSION
+  AGENT_POINT_TRANSFER
+  PAYROLL_PROCESSING_REWARD
+  // Withdrawal & payroll v2 — escrow model
+  WITHDRAWAL_ESCROW // host: soft mark of in-flight escrow (does NOT reduce ledger sum)
+  WITHDRAWAL_ESCROW_SETTLED // host: real debit at payroll completion (reduces ledger sum)
+  PAYROLL_HOST_PAYOUT // agent: credit of hostPayoutPoints at payroll completion
+}
+
+enum WithdrawalStatus {
+  PENDING
+  KYC_CHECK
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  REJECTED
+  PENDING_PLATFORM
+  DISPUTED
+}
+
+model CoinPackage {
+  id         String   @id @default(uuid()) @db.Uuid
+  coins      Int
+  priceCents Int      @map("price_cents")
+  currency   String   @default("USD") @db.VarChar(10)
+  label      String?  @db.VarChar(100)
+  isActive   Boolean  @default(true) @map("is_active")
+  sortOrder  Int      @default(0) @map("sort_order")
+  createdAt  DateTime @default(now()) @map("created_at")
+  updatedAt  DateTime @updatedAt @map("updated_at")
+
+  topupOrders CoinTopupOrder[]
+
+  @@unique([coins, priceCents])
+  @@index([isActive, sortOrder])
+  @@map("coin_packages")
+}
+
+model Wallet {
+  id           String             @id @default(uuid()) @db.Uuid
+  userId       String             @map("user_id") @db.Uuid
+  currencyType WalletCurrencyType @map("currency_type")
+  version      BigInt             @default(0)
+  // Sum of grossPoints across all open (escrowed) withdrawals. POINT wallet only.
+  // availablePoints = ledger sum (totalPoints) - unconfirmedPoints.
+  unconfirmedPoints BigInt        @default(0) @map("unconfirmed_points")
+  createdAt    DateTime           @default(now()) @map("created_at")
+  updatedAt    DateTime           @updatedAt @map("updated_at")
+
+  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinLedger  CoinLedgerEntry[]
+  pointLedger PointLedgerEntry[]
+  withdrawals Withdrawal[]
+
+  @@unique([userId, currencyType])
+  @@index([userId])
+  @@map("wallets")
+}
+
+model CoinLedgerEntry {
+  id             String          @id @default(uuid()) @db.Uuid
+  walletId       String          @map("wallet_id") @db.Uuid
+  direction      LedgerDirection
+  txType         CoinTxType      @map("tx_type")
+  amount         BigInt
+  balanceAfter   BigInt          @map("balance_after")
+  refId          String?         @map("ref_id") @db.VarChar(255)
+  counterpartyId String?         @map("counterparty_id") @db.Uuid
+  description    String?         @db.Text
+  metadata       Json?
+  idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  wallet                 Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  vipMembershipPurchases VipMembershipPurchase[]
+  vipDailyClaims         VipDailyClaim[]
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([walletId, txType, createdAt(sort: Desc)])
+  @@index([idempotencyKey])
+  @@map("coin_ledger_entries")
+}
+
+enum VipMembershipTier {
+  DIAMOND
+  SVIP
+}
+
+enum FaceProfileStatus {
+  PENDING_INDEX
+  INDEXED
+  FAILED
+  REVOKED
+  DUPLICATE_FACE
+}
+
+enum FaceVerificationDecision {
+  PASS
+  FAIL
+  ERROR
+  QUALITY_REJECTED
+  RATE_LIMITED
+}
+
+// One-time verified live selfie (CompareFaces vs indexed face profile).
+enum LivePhotoVerificationState {
+  NOT_UPLOADED
+  PENDING_UPLOAD
+  PENDING_VERIFICATION
+  PROCESSING
+  VERIFIED
+  FAILED
+  REJECTED
+}
+
+model VipMembershipPurchase {
+  id              String            @id @default(uuid()) @db.Uuid
+  userId          String            @map("user_id") @db.Uuid
+  tier            VipMembershipTier
+  periodDays      Int               @map("period_days")
+  coinCost        BigInt            @map("coin_cost")
+  ledgerEntryId   String            @map("ledger_entry_id") @db.Uuid
+  expiresAtBefore DateTime?         @map("expires_at_before")
+  expiresAtAfter  DateTime          @map("expires_at_after")
+  createdAt       DateTime          @default(now()) @map("created_at")
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@unique([ledgerEntryId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([tier, createdAt(sort: Desc)])
+  @@map("vip_membership_purchases")
+}
+
+model VipDailyClaim {
+  userId        String   @map("user_id") @db.Uuid
+  claimDate     DateTime @map("claim_date") @db.Date
+  coinAmount    BigInt   @map("coin_amount")
+  ledgerEntryId String   @map("ledger_entry_id") @db.Uuid
+  claimedAt     DateTime @default(now()) @map("claimed_at")
+
+  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+
+  @@id([userId, claimDate])
+  @@index([userId, claimDate(sort: Desc)])
+  @@map("vip_daily_claims")
+}
+
+model VipDailyQuota {
+  userId     String   @map("user_id") @db.Uuid
+  quotaDate  DateTime @map("quota_date") @db.Date
+  quotaType  String   @map("quota_type") @db.VarChar(50)
+  used       Int      @default(0)
+  maxAllowed Int      @map("max_allowed")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, quotaDate, quotaType])
+  @@map("vip_daily_quotas")
+}
+
+model PointLedgerEntry {
+  id             String          @id @default(uuid()) @db.Uuid
+  walletId       String          @map("wallet_id") @db.Uuid
+  direction      LedgerDirection
+  txType         PointTxType     @map("tx_type")
+  amount         BigInt
+  balanceAfter   BigInt          @map("balance_after")
+  refId          String?         @map("ref_id") @db.VarChar(255)
+  counterpartyId String?         @map("counterparty_id") @db.Uuid
+  description    String?         @db.Text
+  metadata       Json?
+  idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime        @default(now()) @map("created_at")
+
+  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+
+  @@index([walletId, createdAt(sort: Desc)])
+  @@index([walletId, txType, createdAt(sort: Desc)])
+  // Serves agency dashboard agent-own-earnings / payroll sums: filter by wallet +
+  // tx type + direction within a time window.
+  @@index([walletId, txType, direction, createdAt])
+  @@index([walletId, refId])
+  @@index([idempotencyKey])
+  @@map("point_ledger_entries")
+}
+
+model CoinTopupOrder {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  packageId      String   @map("package_id") @db.Uuid
+  coins          Int
+  priceCents     Int      @map("price_cents")
+  currency       String   @default("USD") @db.VarChar(10)
+  gatewayRef     String?  @unique @map("gateway_ref") @db.VarChar(256)
+  status         String   @default("PENDING") @db.VarChar(50)
+  ledgerEntryId  String?  @map("ledger_entry_id") @db.Uuid
+  idempotencyKey String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  package CoinPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("coin_topup_orders")
+}
+
+enum AgencyAgentApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  MORE_DOCS_REQUIRED
+  APPROVED
+  REJECTED
+}
+
+model AgencyAgentApplication {
+  id         String                       @id @default(uuid()) @db.Uuid
+  publicId   String                       @unique @default(cuid()) @map("public_id")
+  userId     String                       @unique @map("user_id") @db.Uuid
+  status     AgencyAgentApplicationStatus @default(PENDING)
+  adminNote  String?                      @map("admin_note") @db.Text
+  userNote   String?                      @map("user_note") @db.Text
+  reviewedAt DateTime?                    @map("reviewed_at")
+  reviewedBy String?                      @map("reviewed_by") @db.Uuid
+  createdAt  DateTime                     @default(now()) @map("created_at")
+  updatedAt  DateTime                     @updatedAt @map("updated_at")
+
+  user User                  @relation("AgencyAgentApplications", fields: [userId], references: [id], onDelete: Cascade)
+  kyc  AgencyApplicationKyc?
+
+  @@map("agency_agent_applications")
+}
+
+model AgencyApplicationKyc {
+  userId             String    @id @map("user_id") @db.Uuid
+  applicationId      String?   @unique @map("application_id") @db.Uuid
+  govtIdS3Key        String?   @map("govt_id_s3_key") @db.VarChar(255)
+  govtIdS3Bucket     String?   @map("govt_id_s3_bucket") @db.VarChar(255)
+  govtIdSubmittedAt  DateTime? @map("govt_id_submitted_at")
+  contactPhone       String?   @map("contact_phone") @db.VarChar(20)
+  contactEmail       String?   @map("contact_email") @db.VarChar(255)
+  contactSubmittedAt DateTime? @map("contact_submitted_at")
+  faceVerified       Boolean   @default(false) @map("face_verified")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
+
+  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  application AgencyAgentApplication? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+
+  @@map("agency_application_kyc")
+}
+
+model CoinTradingTopupPackage {
+  id           String   @id @default(uuid()) @db.Uuid
+  tradingCoins BigInt   @map("trading_coins")
+  priceCents   Int      @map("price_cents")
+  coinsPerUsd  Int      @map("coins_per_usd")
+  currency     String   @default("USD") @db.VarChar(10)
+  label        String?  @db.VarChar(100)
+  isActive     Boolean  @default(true) @map("is_active")
+  sortOrder    Int      @default(0) @map("sort_order")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+
+  topupOrders CoinTradingTopupOrder[]
+
+  @@unique([tradingCoins, priceCents])
+  @@index([isActive, sortOrder])
+  @@map("coin_trading_topup_packages")
+}
+
+model CoinTradingTopupOrder {
+  id                  String   @id @default(uuid()) @db.Uuid
+  agentUserId         String   @map("agent_user_id") @db.Uuid
+  packageId           String?  @map("package_id") @db.Uuid
+  amountUsd           Decimal  @map("amount_usd") @db.Decimal(12, 2)
+  tradingCoinsAwarded BigInt   @map("trading_coins_awarded")
+  rateApplied         Int      @map("rate_applied")
+  epayRef             String?  @unique @map("epay_ref") @db.VarChar(256)
+  status              String   @default("PENDING") @db.VarChar(50)
+  ledgerEntryId       String?  @map("ledger_entry_id") @db.Uuid
+  idempotencyKey      String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  agent   User                       @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
+  package CoinTradingTopupPackage?   @relation(fields: [packageId], references: [id], onDelete: Restrict)
+
+  @@index([agentUserId, createdAt(sort: Desc)])
+  @@index([status, createdAt(sort: Desc)])
+  @@map("coin_trading_topup_orders")
+}
+
+model CoinTradingTransfer {
+  id                     String    @id @default(uuid()) @db.Uuid
+  senderAgentUserId      String    @map("sender_agent_user_id") @db.Uuid
+  recipientUserId        String    @map("recipient_user_id") @db.Uuid
+  tradingCoinsDebited    BigInt    @map("trading_coins_debited")
+  coinsCredited          BigInt    @map("coins_credited")
+  recipientWalletType    String    @map("recipient_wallet_type") @db.VarChar(20)
+  senderLedgerEntryId    String    @map("sender_ledger_entry_id") @db.Uuid
+  recipientLedgerEntryId String    @map("recipient_ledger_entry_id") @db.Uuid
+  idempotencyKey         String    @unique @map("idempotency_key") @db.VarChar(200)
+  reversedAt             DateTime? @map("reversed_at")
+  reversedByUserId       String?   @map("reversed_by_user_id") @db.Uuid
+  reverseReason          String?   @map("reverse_reason") @db.Text
+  createdAt              DateTime  @default(now()) @map("created_at")
+
+  senderAgent User  @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
+  recipient   User  @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  reversedBy  User? @relation("TradingCoinTransferReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([senderAgentUserId, createdAt(sort: Desc)])
+  @@index([recipientUserId, createdAt(sort: Desc)])
+  @@map("coin_trading_transfers")
+}
+
+model CoinTradingTopupRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  minUsd      Decimal  @map("min_usd") @db.Decimal(12, 2)
+  maxUsd      Decimal? @map("max_usd") @db.Decimal(12, 2)
+  coinsPerUsd Int      @map("coins_per_usd")
+  sortOrder   Int      @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("coin_trading_topup_rates")
+}
+
+model AgentExchangeRate {
+  id          String   @id @default(uuid()) @db.Uuid
+  minUsdEquiv Decimal  @map("min_usd_equiv") @db.Decimal(12, 2)
+  maxUsdEquiv Decimal? @map("max_usd_equiv") @db.Decimal(12, 2)
+  coinsPerUsd Int      @map("coins_per_usd")
+  sortOrder   Int      @map("sort_order")
+  isActive    Boolean  @default(true) @map("is_active")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  @@index([isActive, sortOrder])
+  @@map("agent_exchange_rates")
+}
+
+model Withdrawal {
+  id              String           @id @default(uuid()) @db.Uuid
+  walletId        String           @map("wallet_id") @db.Uuid
+  userId          String           @map("user_id") @db.Uuid
+  amountPoints    BigInt           @map("amount_points")
+  amountFiatCents BigInt?          @map("amount_fiat_cents")
+  currency        String           @default("USD") @db.VarChar(10)
+  status          WithdrawalStatus @default(PENDING)
+  payoutRef       String?          @map("payout_ref") @db.VarChar(256)
+  failReason      String?          @map("fail_reason") @db.Text
+  notes           String?          @db.Text
+  idempotencyKey  String           @unique @map("idempotency_key") @db.VarChar(200)
+  requestedAt     DateTime         @default(now()) @map("requested_at")
+  processedAt     DateTime?        @map("processed_at")
+  updatedAt       DateTime         @updatedAt @map("updated_at")
+
+  paymentMethodId   String?  @map("payment_method_id") @db.Uuid
+  hostPayoutUsd     Decimal? @map("host_payout_usd") @db.Decimal(12, 2)
+  platformFeePoints BigInt?  @map("platform_fee_points")
+  agentRewardPoints BigInt?  @map("agent_reward_points")
+  assignmentCount   Int      @default(0) @map("assignment_count")
+  disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
+  // 1 = legacy real-debit flow (WITHDRAWAL). 2 = escrow flow (WITHDRAWAL_ESCROW).
+  withdrawalVersion Int      @default(1) @map("withdrawal_version")
+
+  wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  paymentMethod      UserPaymentMethod?            @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  payrollAssignments WithdrawalPayrollAssignment[]
+
+  @@index([userId, status])
+  @@index([walletId, requestedAt(sort: Desc)])
+  @@map("withdrawals")
+}
+
+model UserPaymentMethod {
+  id                String   @id @default(uuid()) @db.Uuid
+  userId            String   @map("user_id") @db.Uuid
+  methodType        String   @map("method_type") @db.VarChar(10)
+  epayEmail         String?  @map("epay_email") @db.VarChar(255)
+  bankName                 String?  @map("bank_name") @db.VarChar(255)
+  bankAccountHolder        String?  @map("bank_account_holder") @db.VarChar(255)
+  accountHolderFirstName   String?  @map("account_holder_first_name") @db.VarChar(100)
+  accountHolderLastName    String?  @map("account_holder_last_name") @db.VarChar(100)
+  branch                   String?  @db.VarChar(150)
+  bankAccountNumber        String?  @map("bank_account_number") @db.VarChar(50)
+  bankIfscCode             String?  @map("bank_ifsc_code") @db.VarChar(20)
+  upiNumber                String?  @map("upi_number") @db.VarChar(50)
+  registeredPhone          String?  @map("registered_phone") @db.VarChar(30)
+  registeredEmail          String?  @map("registered_email") @db.VarChar(255)
+  lastUsedAt               DateTime? @map("last_used_at")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  withdrawals Withdrawal[]
+
+  @@unique([userId, methodType])
+  @@index([userId])
+  @@map("user_payment_methods")
+}
+
+model WithdrawalPayrollAssignment {
+  id               String    @id @default(uuid()) @db.Uuid
+  withdrawalId     String    @map("withdrawal_id") @db.Uuid
+  agencyUserId     String    @map("agency_user_id") @db.Uuid
+  assignedAt       DateTime  @default(now()) @map("assigned_at")
+  expiresAt        DateTime  @map("expires_at")
+  status           String    @default("PENDING") @map("status") @db.VarChar(20)
+  proofS3Key       String?   @map("proof_s3_key") @db.VarChar(500)
+  proofS3Bucket    String?   @map("proof_s3_bucket") @db.VarChar(255)
+  completedAt      DateTime? @map("completed_at")
+  rejectedAt       DateTime? @map("rejected_at")
+  rejectionReason  String?   @map("rejection_reason") @db.Text
+  assignmentNumber Int       @map("assignment_number")
+  waitingExpiresAt DateTime? @map("waiting_expires_at")
+  createdAt        DateTime  @default(now()) @map("created_at")
+  updatedAt        DateTime  @updatedAt @map("updated_at")
+
+  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
+  agencyUser User       @relation("AgencyPayrollAssignments", fields: [agencyUserId], references: [id], onDelete: Cascade)
+
+  @@index([withdrawalId, assignmentNumber])
+  @@index([agencyUserId, status, assignedAt(sort: Desc)])
+  @@index([status, expiresAt])
+  @@index([agencyUserId, status, updatedAt(sort: Desc)])
+  @@map("withdrawal_payroll_assignments")
+}
+
+model PayrollConfig {
+  id                    Int      @id @default(1)
+  platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp")
+  agentRewardRateBp     Int      @default(600) @map("agent_reward_rate_bp")
+  serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
+  minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
+  maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
+  slaHours              Int      @default(2) @map("sla_hours")
+  waitingHours          Int      @default(2) @map("waiting_hours")
+  maxAssignmentAttempts Int      @default(5) @map("max_assignment_attempts")
+  inrPerUsd             Decimal  @default(94.00) @map("inr_per_usd") @db.Decimal(8, 2)
+  nprPerUsd             Decimal  @default(150.00) @map("npr_per_usd") @db.Decimal(10, 4)
+  updatedAt             DateTime @updatedAt @map("updated_at")
+  updatedByUserId       String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("payroll_config")
+}
+
+model WithdrawalPayoutRailConfig {
+  id              Int      @id @default(1)
+  epayFeeRateBp   Int      @default(600) @map("epay_fee_rate_bp")
+  epayArrivalTime String   @default("Within 24 hours") @map("epay_arrival_time") @db.VarChar(200)
+  bankFeeRateBp   Int      @default(600) @map("bank_fee_rate_bp")
+  bankArrivalTime String   @default("3-5 business days") @map("bank_arrival_time") @db.VarChar(200)
+  updatedAt       DateTime @updatedAt @map("updated_at")
+  updatedByUserId String?  @map("updated_by_user_id") @db.Uuid
+
+  @@map("withdrawal_payout_rail_config")
+}
+
+model WalletIdempotencyLog {
+  key              String   @id @db.VarChar(200)
+  requestHash      String   @map("request_hash") @db.VarChar(128)
+  responseSnapshot Json?    @map("response_snapshot")
+  status           String   @default("PROCESSING") @db.VarChar(50)
+  expiresAt        DateTime @map("expires_at")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@index([expiresAt])
+  @@map("wallet_idempotency_log")
+}
+
+// ── Wallet-driven levels (cumulative credits from ledgers) — separate from legacy user_levels XP ──
+
+enum LevelType {
+  WEALTH
+  LIVESTREAM
+}
+
+enum SupportTicketType {
+  CONSULT
+  REPORT_COMPLAINTS
+  FEEDBACK
+  BUSINESS_COOPERATION
+}
+
+enum SupportTicketStatus {
+  OPEN
+  AWAITING_REPLY
+  CLOSED
+}
+
+enum SupportMessageSenderType {
+  USER
+  SUPPORT
+}
+
+model WalletLevelConfig {
+  id        String    @id @default(uuid()) @db.Uuid
+  levelType LevelType @map("level_type")
+  level     Int
+  threshold BigInt
+  label     String?   @db.VarChar(255)
+  iconKey   String?   @map("icon_key") @db.VarChar(255)
+  isActive  Boolean   @default(true) @map("is_active")
+  createdAt DateTime  @default(now()) @map("created_at")
+  updatedAt DateTime  @updatedAt @map("updated_at")
+
+  @@unique([levelType, level])
+  @@index([levelType, threshold])
+  @@map("wallet_level_configs")
+}
+
+model WalletUserLevel {
+  id              String    @id @default(uuid()) @db.Uuid
+  userId          String    @map("user_id") @db.Uuid
+  levelType       LevelType @map("level_type")
+  currentLevel    Int       @default(1) @map("current_level")
+  cumulativeTotal BigInt    @default(0) @map("cumulative_total")
+  createdAt       DateTime  @default(now()) @map("created_at")
+  updatedAt       DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, levelType])
+  @@index([userId])
+  @@map("wallet_user_levels")
+}
+
+// ── Video Call ────────────────────────────────────────────────────────────────
+
+model VideoCallSettings {
+  id          String   @id @default(cuid())
+  userId      String   @unique @map("user_id") @db.Uuid
+  pricePerMin Int      @default(1800) @map("price_per_min") // coins per minute, min 1800
+  blockLv5    Boolean  @default(false) @map("block_lv5") // block callers with wealthLevel ≤ 5
+  blockLv10   Boolean  @default(false) @map("block_lv10") // block callers with wealthLevel ≤ 10
+  createdAt   DateTime @default(now()) @map("created_at")
+  updatedAt   DateTime @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("video_call_settings")
+}
+
+model VideoCallSession {
+  id            String    @id @default(cuid())
+  callerId      String    @map("caller_id") @db.Uuid
+  creatorId     String    @map("creator_id") @db.Uuid
+  livekitRoom   String    @unique @map("livekit_room") @db.VarChar(255)
+  pricePerMin   Int       @map("price_per_min") // snapshot at call start
+  status        String    @default("ACTIVE") @map("status") @db.VarChar(50) // ACTIVE | ENDED | INSUFFICIENT_COINS
+  minsCharged   Int       @default(0) @map("mins_charged")
+  coinsDeducted BigInt    @default(0) @map("coins_deducted")
+  pointsAwarded BigInt    @default(0) @map("points_awarded")
+  startedAt     DateTime  @default(now()) @map("started_at")
+  endedAt       DateTime? @map("ended_at")
+  endReason     String?   @map("end_reason") @db.VarChar(100)
+
+  caller  User @relation("CallSessionCaller", fields: [callerId], references: [id])
+  creator User @relation("CallSessionCreator", fields: [creatorId], references: [id])
+
+  @@index([callerId, status])
+  @@index([creatorId, status])
+  @@index([livekitRoom])
+  @@map("video_call_sessions")
+}
+
+// ── Gifts, gallery, fan ranking ───────────────────────────────────────────────
+
+model Gift {
+  id              String   @id @default(uuid()) @db.Uuid
+  name            String   @db.VarChar(255)
+  coinCost        Int      @map("coin_cost")
+  displayImageUrl String   @map("display_image_url") @db.Text
+  effectUrl       String?  @map("effect_url") @db.Text
+  isActive        Boolean  @default(true) @map("is_active")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  tags                GiftTag[]
+  gallerySectionItems GiftGallerySectionItem[]
+  transactions        GiftTransaction[]
+  galleryProgressRows GiftGalleryProgress[]
+
+  @@index([isActive])
+  @@map("gifts")
+}
+
+model GiftTag {
+  id     String @id @default(uuid()) @db.Uuid
+  giftId String @map("gift_id") @db.Uuid
+  tag    String @db.VarChar(64)
+
+  gift Gift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+
+  @@unique([giftId, tag])
+  @@index([tag])
+  @@map("gift_tags")
+}
+
+model GiftGallery {
+  id        String   @id @default(uuid()) @db.Uuid
+  year      Int
+  month     Int
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  sections GiftGallerySection[]
+  progress GiftGalleryProgress[]
+
+  @@unique([year, month])
+  @@map("gift_galleries")
+}
+
+model GiftGallerySection {
+  id        String @id @default(uuid()) @db.Uuid
+  galleryId String @map("gallery_id") @db.Uuid
+  title     String @db.VarChar(255)
+  sortOrder Int    @default(0) @map("sort_order")
+
+  gallery GiftGallery              @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  gifts   GiftGallerySectionItem[]
+
+  @@index([galleryId])
+  @@map("gift_gallery_sections")
+}
+
+model GiftGallerySectionItem {
+  id        String @id @default(uuid()) @db.Uuid
+  sectionId String @map("section_id") @db.Uuid
+  giftId    String @map("gift_id") @db.Uuid
+  sortOrder Int    @default(0) @map("sort_order")
+
+  section      GiftGallerySection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
+  gift         Gift                  @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  progressRows GiftGalleryProgress[]
+
+  @@unique([sectionId, giftId])
+  @@index([giftId])
+  @@map("gift_gallery_section_items")
+}
+
+model GiftGalleryProgress {
+  id                       String   @id @default(uuid()) @db.Uuid
+  galleryId                String   @map("gallery_id") @db.Uuid
+  hostUserId               String   @map("host_user_id") @db.Uuid
+  giftId                   String   @map("gift_id") @db.Uuid
+  giftGallerySectionItemId String   @map("gift_gallery_section_item_id") @db.Uuid
+  firstGifterId            String   @map("first_gifter_id") @db.Uuid
+  receivedAt               DateTime @default(now()) @map("received_at")
+
+  gallery     GiftGallery            @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  host        User                   @relation("HostGalleryProgress", fields: [hostUserId], references: [id], onDelete: Cascade)
+  firstGifter User                   @relation("GifterGalleryProgress", fields: [firstGifterId], references: [id], onDelete: Restrict)
+  gift        Gift                   @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  sectionItem GiftGallerySectionItem @relation(fields: [giftGallerySectionItemId], references: [id], onDelete: Cascade)
+
+  @@unique([hostUserId, giftGallerySectionItemId])
+  @@index([hostUserId, galleryId])
+  @@index([galleryId])
+  @@map("gift_gallery_progress")
+}
+
+model GiftTransaction {
+  id             String   @id @default(uuid()) @db.Uuid
+  senderUserId   String   @map("sender_user_id") @db.Uuid
+  receiverUserId String   @map("receiver_user_id") @db.Uuid
+  giftId         String   @map("gift_id") @db.Uuid
+  coinCost       Int      @map("coin_cost")
+  pointsAwarded  Int      @map("points_awarded")
+  context        String   @default("direct") @db.VarChar(32)
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  sender   User @relation("GiftsSent", fields: [senderUserId], references: [id], onDelete: Restrict)
+  receiver User @relation("GiftsReceived", fields: [receiverUserId], references: [id], onDelete: Restrict)
+  gift     Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+
+  @@index([senderUserId])
+  @@index([receiverUserId])
+  @@index([createdAt])
+  @@map("gift_transactions")
+}
+
+model FanSpend {
+  id             String   @id @default(uuid()) @db.Uuid
+  senderUserId   String   @map("sender_user_id") @db.Uuid
+  receiverUserId String   @map("receiver_user_id") @db.Uuid
+  periodType     String   @map("period_type") @db.VarChar(16)
+  periodKey      String   @map("period_key") @db.VarChar(16)
+  coinsSpent     BigInt   @default(0) @map("coins_spent")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  sender   User @relation("FanSpendSender", fields: [senderUserId], references: [id], onDelete: Cascade)
+  receiver User @relation("FanSpendReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+
+  @@unique([senderUserId, receiverUserId, periodType, periodKey])
+  @@index([receiverUserId, periodType, periodKey])
+  @@map("fan_spend")
+}
+
+// ─── AGENCY (Phase 1 — commission/payroll in later phases) ───
+
+enum AgencyApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AgencyLeaveApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  LATE_APPROVED
+  AUTO_APPROVED
+  CANCELLED
+}
+
+enum AgencyHostHistoryReason {
+  LEAVE_APPROVED
+  LEAVE_AUTO_APPROVED
+  LEAVE_LATE_APPROVED
+  REMOVED_INACTIVE
+  REMOVED_SUSPENDED
+  CS_FORCE_EXIT
+  AGENT_DELETED
+  HOST_DELETED
+}
+
+model Agency {
+  userId                     String    @id @map("user_id") @db.Uuid
+  defaultPublicId            BigInt    @unique @map("default_public_id")
+  displayName                String    @map("display_name") @db.VarChar(255)
+  payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
+  pausedAt                   DateTime? @map("paused_at")
+  pausedUntil                DateTime? @map("paused_until")
+  totalHostsCount            Int       @default(0) @map("total_hosts_count")
+  lifetimeHostEarningsPoints BigInt    @default(0) @map("lifetime_host_earnings_points")
+  currentLevel               String    @default("D") @map("current_level") @db.VarChar(8)
+  currentWindowTotalPoints   BigInt    @default(0) @map("current_window_total_points")
+  lastLevelRecomputedAt      DateTime? @map("last_level_recomputed_at")
+  lastPayrollAssignedAt      DateTime? @map("last_payroll_assigned_at")
+  createdAt                  DateTime  @default(now()) @map("created_at")
+  updatedAt                  DateTime  @updatedAt @map("updated_at")
+
+  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hosts             AgencyHost[]
+  applications      AgencyHostApplication[]
+  leaveApplications AgencyLeaveApplication[]
+  dailyEarnings     AgencyDailyEarning[]
+  coinsellerSettings AgencyCoinseller?
+
+  @@index([payrollEnabled, pausedAt])
+  @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
+  @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
+  @@index([totalHostsCount(sort: Desc)])
+  @@map("agencies")
+}
+
+enum AgencyTransferChannel {
+  BANK
+  EPAY
+}
+
+model AgencyCoinseller {
+  id                 String                @id @default(uuid()) @db.Uuid
+  agencyUserId       String                @unique @map("agency_user_id") @db.Uuid
+  transferChannel    AgencyTransferChannel @default(EPAY) @map("transfer_channel")
+  whatsappNumber     String?               @map("whatsapp_number") @db.VarChar(30)
+  priceImageS3Key    String?               @map("price_image_s3_key") @db.VarChar(512)
+  priceImageS3Bucket String?               @map("price_image_s3_bucket") @db.VarChar(128)
+  autoReply          String?               @map("auto_reply") @db.VarChar(100)
+  createdAt          DateTime              @default(now()) @map("created_at")
+  updatedAt          DateTime              @updatedAt @map("updated_at")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+
+  @@map("agency_coinseller_settings")
+}
+
+model AgencyHost {
+  agencyUserId String   @map("agency_user_id") @db.Uuid
+  hostUserId   String   @id @map("host_user_id") @db.Uuid
+  joinedAt     DateTime @default(now()) @map("joined_at")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host   User   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([agencyUserId, joinedAt(sort: Desc)])
+  @@map("agency_hosts")
+}
+
+model AgencyHostApplication {
+  id               String                  @id @default(uuid()) @db.Uuid
+  agencyUserId     String                  @map("agency_user_id") @db.Uuid
+  hostUserId       String                  @map("host_user_id") @db.Uuid
+  status           AgencyApplicationStatus
+  message          String?                 @db.Text
+  createdAt        DateTime                @default(now()) @map("created_at")
+  resolvedAt       DateTime?               @map("resolved_at")
+  resolvedByUserId String?                 @map("resolved_by") @db.Uuid
+  updatedAt        DateTime                @updatedAt @map("updated_at")
+
+  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host       User   @relation("AgencyAppHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy User?  @relation("AgencyAppResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([hostUserId, status, createdAt(sort: Desc)])
+  @@index([agencyUserId, status, createdAt(sort: Desc)])
+  @@map("agency_host_applications")
+}
+
+model AgencyLeaveApplication {
+  id               String                       @id @default(uuid()) @db.Uuid
+  agencyUserId     String                       @map("agency_user_id") @db.Uuid
+  hostUserId       String                       @map("host_user_id") @db.Uuid
+  status           AgencyLeaveApplicationStatus
+  reason           String?                      @db.Text
+  createdAt        DateTime                     @default(now()) @map("created_at")
+  resolvedAt       DateTime?                    @map("resolved_at")
+  resolvedByUserId String?                      @map("resolved_by") @db.Uuid
+  autoApproveAt    DateTime                     @map("auto_approve_at")
+  lateApproveUntil DateTime?                    @map("late_approve_until")
+  updatedAt        DateTime                     @updatedAt @map("updated_at")
+
+  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host       User   @relation("AgencyLeaveHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy User?  @relation("AgencyLeaveResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+
+  @@index([hostUserId, status, createdAt(sort: Desc)])
+  @@index([agencyUserId, status, createdAt(sort: Desc)])
+  @@index([status, autoApproveAt])
+  @@map("agency_leave_applications")
+}
+
+model AgencyHostHistory {
+  id           String                  @id @default(uuid()) @db.Uuid
+  agencyUserId String                  @map("agency_user_id") @db.Uuid
+  hostUserId   String                  @map("host_user_id") @db.Uuid
+  joinedAt     DateTime                @map("joined_at")
+  exitedAt     DateTime                @default(now()) @map("exited_at")
+  reason       AgencyHostHistoryReason
+  exitMetadata Json?                   @map("exit_metadata")
+
+  @@index([hostUserId, exitedAt(sort: Desc)])
+  @@index([agencyUserId, exitedAt(sort: Desc)])
+  @@map("agency_host_history")
+}
+
+/// Seeded ladder: D / C / B / A / S / SS+ (rates in basis points).
+model AgencyCommissionLevel {
+  level           String   @id @db.VarChar(8)
+  minWindowPoints BigInt   @map("min_window_points")
+  liveRateBp      Int      @map("live_rate_bp")
+  matchChatRateBp Int      @map("match_chat_rate_bp")
+  sortOrder       Int      @map("sort_order")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  @@map("agency_commission_levels")
+}
+
+model AgencyDailyEarning {
+  agencyUserId         String    @map("agency_user_id") @db.Uuid
+  hostUserId           String    @map("host_user_id") @db.Uuid
+  day                  DateTime  @db.Date
+  hostEarningsPoints   BigInt    @default(0) @map("host_earnings_points")
+  hostCommissionPoints BigInt    @default(0) @map("host_commission_points")
+  hostWasActive        Boolean   @default(true) @map("host_was_active")
+  lastCreditAt         DateTime? @map("last_credit_at")
+  liveDurationSeconds  BigInt    @default(0) @map("live_duration_seconds")
+
+  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host   User   @relation("AgencyDailyHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@id([agencyUserId, hostUserId, day])
+  @@index([agencyUserId, day(sort: Desc)])
+  @@index([hostUserId, day(sort: Desc)])
+  @@map("agency_daily_earnings")
+}
+
+/// Marks a host point ledger entry as processed for agency commission (same tx as applyCommission).
+model AgencyCommissionProcessed {
+  hostLedgerEntryId String   @id @map("host_ledger_entry_id") @db.Uuid
+  createdAt         DateTime @default(now()) @map("created_at")
+
+  @@map("agency_commission_processed")
+}
+
+model HostLiveSession {
+  id              String    @id @default(uuid()) @db.Uuid
+  hostUserId      String    @map("host_user_id") @db.Uuid
+  agencyUserId    String    @map("agency_user_id") @db.Uuid
+  roomId          String    @map("room_id")
+  startedAt       DateTime  @default(now()) @map("started_at")
+  endedAt         DateTime? @map("ended_at")
+  durationSeconds BigInt?   @map("duration_seconds")
+  status          String    @default("ACTIVE")
+  createdAt       DateTime  @default(now()) @map("created_at")
+
+  host User @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+
+  @@index([hostUserId, status])
+  @@index([agencyUserId, startedAt])
+  @@map("host_live_sessions")
+}
+
+model AgentPointTransfer {
+  id                     String   @id @default(uuid()) @db.Uuid
+  senderAgentUserId      String   @map("sender_agent_user_id") @db.Uuid
+  recipientAgentUserId   String   @map("recipient_agent_user_id") @db.Uuid
+  points                 BigInt
+  senderLedgerEntryId    String   @map("sender_ledger_entry_id") @db.Uuid
+  recipientLedgerEntryId String   @map("recipient_ledger_entry_id") @db.Uuid
+  idempotencyKey         String   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt              DateTime @default(now()) @map("created_at")
+
+  sender    User @relation("AgentTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
+  recipient User @relation("AgentTransferRecipient", fields: [recipientAgentUserId], references: [id], onDelete: Cascade)
+
+  @@index([senderAgentUserId, createdAt(sort: Desc)])
+  @@index([recipientAgentUserId, createdAt(sort: Desc)])
+  @@map("agent_point_transfers")
+}
+
+model SupportTicket {
+  id                    BigInt              @id @default(autoincrement()) @db.BigInt
+  publicId              String              @unique @default(cuid()) @map("public_id")
+  userId                String              @map("user_id") @db.Uuid
+  type                  SupportTicketType
+  subType               String              @map("sub_type") @db.VarChar(100)
+  description           String              @db.Text
+  imageUrl              String?             @map("image_url") @db.Text
+  status                SupportTicketStatus @default(AWAITING_REPLY)
+  userLastReadMessageId BigInt?             @map("user_last_read_message_id") @db.BigInt
+  csLastReadMessageId   BigInt?             @map("cs_last_read_message_id") @db.BigInt
+  rating                Int?
+  ratedAt               DateTime?           @map("rated_at")
+  closedAt              DateTime?           @map("closed_at")
+  closedByUserId        String?             @map("closed_by_user_id") @db.Uuid
+  createdAt             DateTime            @default(now()) @map("created_at")
+  updatedAt             DateTime            @updatedAt @map("updated_at")
+
+  user     User             @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
+  closedBy User?            @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
+  messages SupportMessage[]
+
+  @@index([userId, status, updatedAt])
+  @@index([status, updatedAt])
+  @@map("support_tickets")
+}
+
+model SupportMessage {
+  id           BigInt                   @id @default(autoincrement()) @db.BigInt
+  publicId     String                   @unique @default(cuid()) @map("public_id")
+  ticketId     BigInt                   @map("ticket_id") @db.BigInt
+  senderUserId String?                  @map("sender_user_id") @db.Uuid
+  senderType   SupportMessageSenderType @map("sender_type")
+  content      String                   @db.Text
+  imageUrl     String?                  @map("image_url") @db.Text
+  isAutoReply  Boolean                  @default(false) @map("is_auto_reply")
+  createdAt    DateTime                 @default(now()) @map("created_at")
+
+  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
+  sender User?         @relation("SupportMessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+
+  @@index([ticketId, createdAt])
+  @@map("support_messages")
+}
+
+model MonthlyRechargeAggregate {
+  userId             String   @map("user_id") @db.Uuid
+  year               Int
+  month              Int
+  totalRechargeCoins BigInt   @default(0) @map("total_recharge_coins")
+  rechargeCount      Int      @default(0) @map("recharge_count")
+  lastRechargeAt     DateTime @default(now()) @map("last_recharge_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, year, month])
+  @@index([year, month, totalRechargeCoins(sort: Desc)])
+  @@map("monthly_recharge_aggregates")
+}
+
+model UserRichTier {
+  userId                 String    @id @map("user_id") @db.Uuid
+  currentTier            Int       @default(0) @map("current_tier")
+  evaluatedFromYear      Int       @default(0) @map("evaluated_from_year")
+  evaluatedFromMonth     Int       @default(0) @map("evaluated_from_month")
+  evaluatedRechargeCoins BigInt    @default(0) @map("evaluated_recharge_coins")
+  carryoverCoins         BigInt    @default(0) @map("carryover_coins")
+  lastRolledOverAt       DateTime? @map("last_rolled_over_at")
+  updatedAt              DateTime  @updatedAt @map("updated_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([currentTier, evaluatedFromYear, evaluatedFromMonth])
+  @@map("user_rich_tier")
+}
+
+model RichTierHistory {
+  userId             String   @map("user_id") @db.Uuid
+  year               Int
+  month              Int
+  tier               Int
+  totalProgressCoins BigInt   @map("total_progress_coins")
+  carryoverApplied   BigInt   @map("carryover_applied")
+  pureRechargeCoins  BigInt   @map("pure_recharge_coins")
+  createdAt          DateTime @default(now()) @map("created_at")
+
+  user User @relation("RichTierHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@id([userId, year, month])
+  @@index([year, month, tier])
+  @@map("rich_tier_history")
+}
+
+model RichTierConfig {
+  tier             Int      @id
+  minRechargeCoins BigInt   @map("min_recharge_coins")
+  displayName      String   @map("display_name")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+
+  @@map("rich_tier_configs")
+}
+
+model UserFaceProfile {
+  id                 String            @id @default(uuid()) @db.Uuid
+  userId             String            @unique @map("user_id") @db.Uuid
+  collectionId       String            @map("collection_id")
+  rekognitionFaceId  String?           @unique @map("rekognition_face_id")
+  duplicateOfUserId  String?           @map("duplicate_of_user_id") @db.Uuid
+  s3KeyReference     String            @map("s3_key_reference")
+  imageQualityScore  Float?            @map("image_quality_score")
+  livenessConfidence Float?            @map("liveness_confidence")
+  status             FaceProfileStatus @default(PENDING_INDEX)
+  failureReason      String?           @map("failure_reason")
+  indexedAt          DateTime?         @map("indexed_at")
+  lastVerifiedAt     DateTime?         @map("last_verified_at")
+  revokedAt          DateTime?         @map("revoked_at")
+  createdAt          DateTime          @default(now()) @map("created_at")
+  updatedAt          DateTime          @updatedAt @map("updated_at")
+
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  livePhotoLinks UserLivePhoto[]
+
+  @@index([status])
+  @@map("user_face_profiles")
+}
+
+model FaceVerificationAttempt {
+  id                   String                   @id @default(uuid()) @db.Uuid
+  userId               String                   @map("user_id") @db.Uuid
+  s3Key                String                   @map("s3_key")
+  similarityScore      Float?                   @map("similarity_score")
+  decision             FaceVerificationDecision
+  reason               String?
+  rekognitionRequestId String?                  @map("rekognition_request_id")
+  ipAddress            String?                  @map("ip_address")
+  userAgent            String?                  @map("user_agent")
+  clientRequestId      String?                  @map("client_request_id") @db.Uuid
+  latencyMs            Int?                     @map("latency_ms")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, clientRequestId])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([decision, createdAt(sort: Desc)])
+  @@map("face_verification_attempts")
+}
+
+model UserLivePhoto {
+  id                String                     @id @default(uuid()) @db.Uuid
+  userId            String                     @unique @map("user_id") @db.Uuid
+  s3Key             String                     @map("s3_key") @db.Text
+  s3Bucket          String                     @map("s3_bucket") @db.VarChar(255)
+  imageUrl          String?                    @map("image_url") @db.Text
+  verificationState LivePhotoVerificationState @map("verification_state")
+  similarityScore   Float?                     @map("similarity_score")
+  verifiedAt        DateTime?                  @map("verified_at")
+  failedReason      String?                    @map("failed_reason") @db.Text
+  faceProfileId     String?                    @map("face_profile_id") @db.Uuid
+  /// Incremented on each verify enqueue; worker ignores stale generations (latest upload wins).
+  verifyGeneration  Int                        @default(0) @map("verify_generation")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+
+  user        User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  faceProfile UserFaceProfile?               @relation(fields: [faceProfileId], references: [id], onDelete: SetNull)
+  attempts    LivePhotoVerificationAttempt[]
+
+  @@index([verificationState])
+  @@map("user_live_photos")
+}
+
+model LivePhotoVerificationAttempt {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  livePhotoId          String   @map("live_photo_id") @db.Uuid
+  similarityScore      Float?   @map("similarity_score")
+  matched              Boolean  @default(false)
+  rekognitionRequestId String?  @map("rekognition_request_id") @db.VarChar(128)
+  failureReason        String?  @map("failure_reason") @db.Text
+  metadata             Json?    @db.JsonB
+  processingLatencyMs  Int?     @map("processing_latency_ms")
+  rekognitionLatencyMs Int?     @map("rekognition_latency_ms")
+  createdAt            DateTime @default(now()) @map("created_at")
+
+  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  livePhoto UserLivePhoto @relation(fields: [livePhotoId], references: [id], onDelete: Cascade)
+
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([livePhotoId, createdAt(sort: Desc)])
+  @@map("live_photo_verification_attempts")
+}
+
+/// Active liveness-gated first registration (AWS Face Liveness → reference image → `PENDING_INDEX` → worker-face-index).
+enum FaceRegistrationSessionStatus {
+  PENDING
+  UPLOADED
+  PROCESSING
+  LIVENESS_PASSED
+  LIVENESS_FAILED
+  INDEX_PENDING
+  INDEXED
+  REJECTED
+  EXPIRED
+}
+
+model FaceRegistrationSession {
+  id                     String                        @id @default(uuid()) @db.Uuid
+  userId                 String                        @map("user_id") @db.Uuid
+  status                 FaceRegistrationSessionStatus @default(PENDING)
+  /// Amazon Rekognition Face Liveness `SessionId` from CreateFaceLivenessSession.
+  awsSessionId           String?                       @map("aws_session_id") @db.VarChar(128)
+  /// UX + audit: ordered challenge hints (randomized server-side); AWS SDK performs its own challenge.
+  challengeSequence      Json                          @map("challenge_sequence")
+  challengeNonce         String                        @map("challenge_nonce") @db.VarChar(64)
+  supplementalVideoS3Key String?                       @map("supplemental_video_s3_key") @db.Text
+  uploadNonce            String?                       @map("upload_nonce") @db.VarChar(64)
+  riskScore              Float                         @default(0) @map("risk_score")
+  deviceMetadata         Json?                         @map("device_metadata")
+  ipAddress              String?                       @map("ip_address") @db.VarChar(64)
+  failureReason          String?                       @map("failure_reason") @db.Text
+  livenessConfidence     Float?                        @map("liveness_confidence")
+  rekognitionRawStatus   String?                       @map("rekognition_raw_status") @db.VarChar(32)
+  idempotencyKey         String?                       @map("idempotency_key") @db.Uuid
+  awsRequestId           String?                       @map("aws_request_id") @db.VarChar(128)
+  expiresAt              DateTime                      @map("expires_at")
+  verifiedAt             DateTime?                     @map("verified_at")
+  indexedAt              DateTime?                     @map("indexed_at")
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @updatedAt @map("updated_at")
+
+  user      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  auditLogs FaceRegistrationAuditLog[]
+
+  @@index([userId, status])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("face_registration_sessions")
+}
+
+model FaceRegistrationAuditLog {
+  id        String   @id @default(uuid()) @db.Uuid
+  sessionId String   @map("session_id") @db.Uuid
+  userId    String   @map("user_id") @db.Uuid
+  action    String   @db.VarChar(64)
+  details   Json?
+  ipAddress String?  @map("ip_address") @db.VarChar(64)
+  userAgent String?  @map("user_agent") @db.Text
+  latencyMs Int?     @map("latency_ms")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  session FaceRegistrationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("face_registration_audit_logs")
+}
+
+model Questionnaire {
+  id                String   @id @default(uuid()) @db.Uuid
+  key               String
+  title             String
+  description       String?
+  version           Int      @default(1)
+  isActive          Boolean  @default(true) @map("is_active")
+  requireAllCorrect Boolean  @default(true) @map("require_all_correct")
+  createdAt         DateTime @default(now()) @map("created_at")
+  updatedAt         DateTime @updatedAt @map("updated_at")
+  createdById       String?  @map("created_by_id") @db.Uuid
+  updatedById       String?  @map("updated_by_id") @db.Uuid
+
+  questions QuestionnaireQuestion[]
+  attempts  UserQuestionnaireAttempt[]
+
+  @@unique([key, version])
+  @@index([key, isActive])
+  @@map("questionnaires")
+}
+
+model QuestionnaireQuestion {
+  id              String @id @default(uuid()) @db.Uuid
+  questionnaireId String @map("questionnaire_id") @db.Uuid
+  text            String
+  order           Int
+
+  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  options       QuestionnaireOption[]
+  answers       UserQuestionnaireAnswer[]
+
+  @@unique([questionnaireId, order])
+  @@map("questionnaire_questions")
+}
+
+model QuestionnaireOption {
+  id         String  @id @default(uuid()) @db.Uuid
+  questionId String  @map("question_id") @db.Uuid
+  label      String
+  value      String
+  isCorrect  Boolean @default(false) @map("is_correct")
+  order      Int
+
+  question QuestionnaireQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, value])
+  @@unique([questionId, order])
+  @@map("questionnaire_options")
+}
+
+model UserQuestionnaireAttempt {
+  id                   String   @id @default(uuid()) @db.Uuid
+  userId               String   @map("user_id") @db.Uuid
+  questionnaireId      String   @map("questionnaire_id") @db.Uuid
+  questionnaireVersion Int      @map("questionnaire_version")
+  totalQuestions       Int      @map("total_questions")
+  correctCount         Int      @map("correct_count")
+  allCorrect           Boolean  @map("all_correct")
+  completedAt          DateTime @default(now()) @map("completed_at")
+
+  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  answers       UserQuestionnaireAnswer[]
+
+  @@index([userId, questionnaireId, completedAt(sort: Desc)])
+  @@index([userId, questionnaireId, questionnaireVersion, allCorrect])
+  @@map("user_questionnaire_attempts")
+}
+
+model UserQuestionnaireAnswer {
+  id               String  @id @default(uuid()) @db.Uuid
+  attemptId        String  @map("attempt_id") @db.Uuid
+  questionId       String  @map("question_id") @db.Uuid
+  selectedOptionId String? @map("selected_option_id") @db.Uuid
+  selectedValue    String? @map("selected_value")
+  isCorrect        Boolean @map("is_correct")
+
+  attempt  UserQuestionnaireAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question QuestionnaireQuestion    @relation(fields: [questionId], references: [id], onDelete: Restrict)
+
+  @@unique([attemptId, questionId])
+  @@map("user_questionnaire_answers")
+}
+
+model ServiceRequest {
+  id          String   @id @default(cuid())
+  userId      String
+  serviceId   String
+  provider    String?
+  status      String   @default("pending")
+  payload     Json?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+}
+
+model LiveStream {
+  id           String   @id @default(uuid())
+
+  userId       String
+  title        String
+
+  streamId     String   @unique
+  streamKey    String
+  playbackId   String?
+
+  isLive       Boolean  @default(false)
+
+  startedAt    DateTime?
+  endedAt      DateTime?
+
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+}
+
+model LiveMessage {
+  id         String   @id @default(uuid())
+
+  streamId   String
+  senderId   String
+
+  message    String
+
+  createdAt  DateTime @default(now())
+}
+
+model StreamViewer {
+  id         String   @id @default(uuid())
+
+  streamId   String
+  userId     String
+
+  joinedAt   DateTime @default(now())
+
+  @@unique([streamId, userId])
+}
+

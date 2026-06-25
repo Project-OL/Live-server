@@ -1,0 +1,25 @@
+◇ injected env (0) from .env // tip: ⌘ override existing { override: true }
+Checking for users in Database...
+
+==================================================
+   🚀 COPY-PASTE THESE DETAILS FOR TESTING 🚀
+==================================================
+
+🟢 [USER A - CALLER]
+User ID : ab02afd3-663b-41f0-9cc5-db22c134dd04
+Token   : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJhYjAyYWZkMy02NjNiLTQxZjAtOWNjNS1kYjIyYzEzNGRkMDQiLCJ0b2tlblZlcnNpb24iOjAsImlhdCI6MTc4MjM5MDk5MiwiZXhwIjoxNzgyNDc3MzkyfQ.I0f2fuqFFGW9EdkxdV4A1HKNbVxgzjzVi1tY0gUJvRE
+
+🔵 [USER B - RECEIVER]
+User ID : ca4e8cff-1376-4a52-b097-a3abe82ca242
+Token   : eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJjYTRlOGNmZi0xMzc2LTRhNTItYjA5Ny1hM2FiZTgyY2EyNDIiLCJ0b2tlblZlcnNpb24iOjAsImlhdCI6MTc4MjM5MDk5MiwiZXhwIjoxNzgyNDc3MzkyfQ.04R7pywF2GTppruVl5Zy__3k2utUFQBeDJvsHQ4pDu4
+
+==================================================
+✅ HOW TO TEST:
+1. Open http://localhost:5000/test.html in Browser Tab 1
+2. Open http://localhost:5000/test.html in Browser Tab 2
+3. In Tab 1, enter [USER A] Token and User ID. In Target ID enter [USER B] User ID.
+4. In Tab 2, enter [USER B] Token and User ID. (Target ID can be empty).
+5. Click 'Connect' on both tabs.
+6. Click 'Call' on Tab 1.
+==================================================
+

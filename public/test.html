@@ -1,0 +1,285 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Video Call Test Dashboard</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+</head>
+<body class="bg-gray-900 text-white min-h-screen p-8 font-sans">
+    <div class="max-w-5xl mx-auto space-y-6">
+        <div class="text-center">
+            <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-2">Video Call Debugger</h1>
+            <p class="text-gray-400 text-sm">Test end-to-end Socket + LiveKit + REST APIs</p>
+        </div>
+        
+        <!-- Controls -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-6">
+            <div class="col-span-1 md:col-span-3">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My JWT Token (Required for APIs)</label>
+                <input id="myToken" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono text-green-400" placeholder="eyJhbGciOiJIUzI1...">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My User ID</label>
+                <input id="myId" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono" placeholder="My UUID from DB">
+            </div>
+            <div>
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Target User ID (To Call)</label>
+                <input id="targetId" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono" placeholder="Target UUID">
+            </div>
+            <div class="flex items-end space-x-3">
+                <button id="btnConnect" class="bg-green-600 hover:bg-green-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg flex items-center justify-center">
+                    📡 Connect
+                </button>
+                <button id="btnCall" class="bg-blue-600 hover:bg-blue-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg opacity-50 flex items-center justify-center" disabled>
+                    📞 Call
+                </button>
+            </div>
+        </div>
+
+        <!-- Status Bar -->
+        <div class="bg-gray-800 rounded-xl p-4 text-center shadow-inner border border-gray-700">
+            <span id="statusText" class="text-gray-400 font-bold tracking-wide">Status: Disconnected</span>
+        </div>
+
+        <!-- Incoming Call Modal -->
+        <div id="incomingModal" class="hidden bg-gradient-to-r from-red-900/80 to-orange-900/80 p-8 rounded-xl border-2 border-red-500 text-center shadow-[0_0_30px_rgba(239,68,68,0.3)] animate-pulse">
+            <div class="animate-bounce mb-4 text-5xl">📱</div>
+            <h2 class="text-3xl font-black mb-2 tracking-tight">Incoming Video Call!</h2>
+            <p class="mb-6 font-mono text-gray-300 text-sm" id="callerIdText">Caller ID: ...</p>
+            <div class="flex justify-center space-x-6">
+                <button id="btnAccept" class="bg-green-500 hover:bg-green-400 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">✅ Accept</button>
+                <button id="btnReject" class="bg-red-600 hover:bg-red-500 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">❌ Reject</button>
+            </div>
+        </div>
+
+        <!-- Video Area -->
+        <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="videoGrid">
+            <div class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center group">
+                <div class="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition"></div>
+                <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Local Video</p>
+                <span class="absolute bottom-4 left-4 z-30 bg-black/60 px-3 py-1 rounded text-xs font-bold hidden" id="localTag">YOU</span>
+                <video id="localVideo" class="relative z-10 w-full h-full object-cover hidden" autoplay muted playsinline></video>
+            </div>
+            
+            <div class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center">
+                <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Remote Video</p>
+                <!-- LiveKit injects remote tracks here -->
+                <div id="remoteVideos" class="relative z-10 w-full h-full flex flex-wrap items-center justify-center"></div>
+            </div>
+        </div>
+
+        <!-- Call Actions -->
+        <div class="flex justify-center mt-8 pb-12">
+            <button id="btnEnd" class="hidden bg-red-600 hover:bg-red-500 px-12 py-4 rounded-full font-black tracking-widest shadow-[0_0_20px_rgba(220,38,38,0.5)] transition transform hover:scale-105">
+                END CALL
+            </button>
+        </div>
+    </div>
+
+    <script>
+        let socket;
+        let room;
+        let currentSessionId = null;
+
+        const API_BASE = "http://localhost:5000/api/video-call";
+        const LIVEKIT_URL = "ws://localhost:7880";
+
+        const E = {
+            token: document.getElementById('myToken'),
+            myId: document.getElementById('myId'),
+            targetId: document.getElementById('targetId'),
+            btnConnect: document.getElementById('btnConnect'),
+            btnCall: document.getElementById('btnCall'),
+            btnAccept: document.getElementById('btnAccept'),
+            btnReject: document.getElementById('btnReject'),
+            btnEnd: document.getElementById('btnEnd'),
+            statusText: document.getElementById('statusText'),
+            incomingModal: document.getElementById('incomingModal'),
+            callerIdText: document.getElementById('callerIdText'),
+            localVideo: document.getElementById('localVideo'),
+            remoteVideos: document.getElementById('remoteVideos'),
+            localTag: document.getElementById('localTag')
+        };
+
+        const updateStatus = (text, colorClass = "text-yellow-400") => {
+            E.statusText.innerText = `Status: ${text}`;
+            E.statusText.className = `font-bold tracking-wide ${colorClass}`;
+            console.log(`[Status] ${text}`);
+        };
+
+        // 1. Connect Socket
+        E.btnConnect.onclick = () => {
+            const userId = E.myId.value.trim();
+            if(!userId) return alert("Enter My User ID first");
+
+            socket = io("http://localhost:5000", { auth: { userId } });
+
+            socket.on("connect", () => {
+                updateStatus("Socket Connected 🟢", "text-green-400");
+                E.btnCall.disabled = false;
+                E.btnCall.classList.remove('opacity-50');
+            });
+
+            socket.on("CALL_INCOMING", (data) => {
+                updateStatus("Incoming Call Ringing... 🔔", "text-orange-400");
+                currentSessionId = data.sessionId;
+                E.callerIdText.innerText = `Caller ID: ${data.callerId}`;
+                E.incomingModal.classList.remove('hidden');
+            });
+
+            socket.on("CALL_ACCEPTED", async (data) => {
+                updateStatus("Call Accepted! Connecting Video... 🎥", "text-green-400");
+                await joinLiveKitRoom(data.token);
+            });
+
+            socket.on("CALL_REJECTED", () => {
+                updateStatus("Call Rejected ❌", "text-red-400");
+                currentSessionId = null;
+            });
+
+            socket.on("CALL_ENDED", () => {
+                updateStatus("Call Ended by other party ⏹️", "text-gray-400");
+                leaveLiveKitRoom();
+            });
+
+            socket.on("USER_BUSY", () => {
+                updateStatus("User is busy ⏳", "text-red-400");
+            });
+        };
+
+        // 2. Initiate Call
+        E.btnCall.onclick = async () => {
+            const targetId = E.targetId.value.trim();
+            const token = E.token.value.trim();
+            if(!targetId || !token) return alert("Token and Target ID required");
+
+            try {
+                updateStatus("Initiating Call... ⏳", "text-yellow-400");
+                const res = await fetch(`${API_BASE}/initiate`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ creatorId: targetId })
+                });
+                const data = await res.json();
+                
+                if(data.success) {
+                    updateStatus("Ringing... 🔔", "text-yellow-400");
+                    currentSessionId = data.data.id; // Prisma object returned
+                } else {
+                    updateStatus(`Call Failed: ${data.message}`, "text-red-400");
+                }
+            } catch (err) {
+                updateStatus("Network Error", "text-red-500");
+            }
+        };
+
+        // 3. Accept Call
+        E.btnAccept.onclick = async () => {
+            const token = E.token.value.trim();
+            E.incomingModal.classList.add('hidden');
+            
+            try {
+                updateStatus("Accepting Call...", "text-yellow-400");
+                const res = await fetch(`${API_BASE}/accept`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                    body: JSON.stringify({ sessionId: currentSessionId })
+                });
+                const data = await res.json();
+                
+                if(data.success) {
+                    updateStatus("Connecting to Video... 🎥", "text-green-400");
+                    await joinLiveKitRoom(data.data.token);
+                } else {
+                    updateStatus(`Failed to accept: ${data.message}`, "text-red-400");
+                }
+            } catch (err) {
+                updateStatus("Network Error", "text-red-500");
+            }
+        };
+
+        // 4. Reject Call
+        E.btnReject.onclick = async () => {
+            const token = E.token.value.trim();
+            E.incomingModal.classList.add('hidden');
+            updateStatus("Call Rejected ❌", "text-red-400");
+            
+            await fetch(`${API_BASE}/reject`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ sessionId: currentSessionId })
+            });
+            currentSessionId = null;
+        };
+
+        // 5. End Call
+        E.btnEnd.onclick = async () => {
+            const token = E.token.value.trim();
+            updateStatus("Ending Call...", "text-yellow-400");
+            
+            await fetch(`${API_BASE}/end`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                body: JSON.stringify({ sessionId: currentSessionId, reason: "MANUAL_END" })
+            });
+            
+            leaveLiveKitRoom();
+            updateStatus("Call Ended ⏹️", "text-gray-400");
+        };
+
+        // --- LiveKit Connection Logic ---
+        async function joinLiveKitRoom(livekitToken) {
+            room = new LivekitClient.Room({
+                adaptiveStream: true,
+                dynacast: true,
+            });
+
+            room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                if (track.kind === 'video' || track.kind === 'audio') {
+                    const el = track.attach();
+                    if(track.kind === 'video') {
+                        el.className = "w-full h-full object-cover shadow-2xl rounded-xl";
+                    }
+                    E.remoteVideos.appendChild(el);
+                }
+            });
+
+            room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+                track.detach().forEach(el => el.remove());
+            });
+
+            await room.connect(LIVEKIT_URL, livekitToken);
+            updateStatus("Connected & Streaming 🟢", "text-green-500");
+            
+            // Start Local Camera and Mic
+            await room.localParticipant.setCameraEnabled(true);
+            await room.localParticipant.setMicrophoneEnabled(true);
+            
+            // Attach local video manually (since attach() creates a new element, we just bind to our existing one)
+            const videoTracks = Array.from(room.localParticipant.videoTrackPublications.values());
+            if(videoTracks.length > 0 && videoTracks[0].track) {
+                E.localVideo.classList.remove('hidden');
+                E.localTag.classList.remove('hidden');
+                videoTracks[0].track.attach(E.localVideo);
+            }
+
+            E.btnEnd.classList.remove('hidden');
+        }
+
+        function leaveLiveKitRoom() {
+            if(room) {
+                room.disconnect();
+                room = null;
+            }
+            E.localVideo.classList.add('hidden');
+            E.localTag.classList.add('hidden');
+            E.remoteVideos.innerHTML = '';
+            E.btnEnd.classList.add('hidden');
+            currentSessionId = null;
+        }
+    </script>
+</body>
+</html>
