@@ -1,33 +1,390 @@
 import prisma from '../../config/prisma.js';
+import { client as redisClient } from '../../config/redis.js';
 import crypto from 'crypto';
+import { LevelType } from '@prisma/client';
+import { getBannedWords, censorTextWithFuzzyMatch } from '../../utils/censor.js';
+import { getChatPermissionService, isStreamAdminService, getUserPrivacyService } from './serviceLive.js';
+import { isUserRestrictedFast } from './serviceAdmin.js';
+
+export const SYSTEM_SENDER_ID = "00000000-0000-0000-0000-000000000000";
+
+const STEALTH_PREFIXES = ['Shadow', 'Mystic', 'Phantom', 'Cipher', 'Vortex', 'Falcon', 'Spectre', 'Stealth', 'Cobalt', 'Mirage'];
+
+export const getOrCreateSessionAlias = async (streamId, userId) => {
+    if (!streamId || !userId) return null;
+    const redisKey = `stream:alias:${streamId}:${userId}`;
+    try {
+        let alias = await redisClient.get(redisKey);
+        if (!alias) {
+            const prefix = STEALTH_PREFIXES[Math.floor(Math.random() * STEALTH_PREFIXES.length)];
+            const randomNum = Math.floor(1000 + Math.random() * 9000);
+            alias = `${prefix}${randomNum}`;
+            await redisClient.set(redisKey, alias, 'EX', 86400); // 24 Hours TTL
+        }
+        return alias;
+    } catch (err) {
+        console.error("[StealthAlias] Failed to get or create session alias:", err.message);
+        return "Mystery User";
+    }
+};
+
+export const removeSessionAlias = async (streamId, userId) => {
+    if (!streamId || !userId) return;
+    try {
+        await redisClient.del(`stream:alias:${streamId}:${userId}`);
+    } catch (err) {
+        console.error("[StealthAlias] Failed to remove session alias:", err.message);
+    }
+};
 
 export const sendMessageService = async ({
     streamId,
     senderId,
-    message
+    message,
+    replyToMessageId = null,
+    replyToUserId = null,
+    replyToUsername = null,
+    replyToText = null
 }) => {
+    let user = null;
+    let filteredMessage = message;
+    let chatBubble = null;
+    let senderWealthLevel = 0;
+    let senderLivestreamLevel = 0;
+    let targetUserObj = null;
+    let targetWealthLevel = 0;
+    let targetLivestreamLevel = 0;
 
-    return prisma.liveMessage.create({
-        data: {
-            streamId,
-            senderId,
-            message
+    if (senderId !== SYSTEM_SENDER_ID) {
+        const chatMute = await isUserRestrictedFast(senderId, 'LIVE_CHAT_MUTE');
+        if (chatMute) {
+            throw new Error(`You are muted from sending chat messages until ${new Date(chatMute.restrictedUntil).toLocaleString()}`);
         }
-    });
+        const msgDisable = await isUserRestrictedFast(senderId, 'MESSAGING_DISABLE');
+        if (msgDisable) {
+            throw new Error(`Messaging has been disabled for your account until ${new Date(msgDisable.restrictedUntil).toLocaleString()}`);
+        }
+
+        // Validate chat permission
+        const mode = await getChatPermissionService({ streamId });
+        if (mode !== "EVERYONE") {
+            const stream = await prisma.liveStream.findUnique({
+                where: { streamId },
+                select: { userId: true }
+            });
+            const isHost = stream && stream.userId === senderId;
+            const isAdmin = await isStreamAdminService({ streamId, userId: senderId });
+
+            if (mode === "ALL_MUTED") {
+                if (!isHost) {
+                    throw new Error("Chat is muted by the host.");
+                }
+            } else if (mode === "ADMINS_ONLY") {
+                if (!isHost && !isAdmin) {
+                    throw new Error("Only the host and admins are allowed to send messages.");
+                }
+            } else if (mode === "FOLLOWERS_ONLY") {
+                const isFollowing = await prisma.userFollow.findUnique({
+                    where: {
+                        followerId_followingId: {
+                            followerId: senderId,
+                            followingId: stream.userId
+                        }
+                    }
+                });
+                if (!isFollowing) {
+                    throw new Error("Only followers of the host are allowed to send messages.");
+                }
+            }
+        }
+
+        const [dbUser, walletLevels] = await Promise.all([
+            prisma.user.findUnique({
+                where: { id: senderId },
+                select: {
+                    id: true,
+                    publicId: true,
+                    username: true,
+                    avatarUrl: true,
+                    privacyMysteryLive: true,
+                    vipSubscriptionActive: true,
+                    userLevel: {
+                        select: {
+                            wealthLevel: true,
+                            livestreamLevel: true
+                        }
+                    }
+                }
+            }),
+            prisma.walletUserLevel.findMany({
+                where: { userId: senderId },
+                select: { levelType: true, currentLevel: true }
+            })
+        ]);
+
+        user = dbUser;
+        const levelMap = new Map(walletLevels.map(w => [w.levelType, w.currentLevel]));
+        senderWealthLevel = levelMap.get(LevelType.WEALTH) ?? dbUser?.userLevel?.wealthLevel ?? 0;
+        senderLivestreamLevel = levelMap.get(LevelType.LIVESTREAM) ?? dbUser?.userLevel?.livestreamLevel ?? 0;
+
+        // Apply fuzzy censorship with 60% threshold
+        try {
+            const bannedList = await getBannedWords();
+            // Guarantee "curve" is in the search list even if not in DB yet
+            const searchList = [...bannedList];
+            if (!searchList.some(b => b.word.toLowerCase() === 'curve')) {
+                searchList.push({ word: 'curve' });
+            }
+            filteredMessage = censorTextWithFuzzyMatch(message, searchList, 0.6);
+        } catch (err) {
+            console.error("[Censor] Live chat message censoring failed:", err);
+        }
+
+        // Fetch active CHAT_BUBBLE
+        try {
+            const activeBubble = await prisma.userActiveStoreItems.findUnique({
+                where: {
+                    userId_category: {
+                        userId: senderId,
+                        category: "CHAT_BUBBLE"
+                    }
+                },
+                include: {
+                    userStoreItem: {
+                        include: {
+                            storeItem: true
+                        }
+                    }
+                }
+            });
+
+            if (activeBubble && activeBubble.userStoreItem && activeBubble.userStoreItem.isActive) {
+                const expiresAt = new Date(activeBubble.userStoreItem.expiresAt);
+                if (expiresAt > new Date()) {
+                    chatBubble = {
+                        name: activeBubble.userStoreItem.storeItem.name,
+                        effectUrl: activeBubble.userStoreItem.storeItem.effectUrl
+                    };
+                }
+            }
+        } catch (err) {
+            console.error("[ChatBubble] Failed to load active chat bubble:", err);
+        }
+    } else if (replyToUserId) {
+        try {
+            const [tUser, tLevels] = await Promise.all([
+                prisma.user.findUnique({
+                    where: { id: replyToUserId },
+                    select: {
+                        id: true,
+                        publicId: true,
+                        username: true,
+                        avatarUrl: true,
+                        userLevel: {
+                            select: {
+                                wealthLevel: true,
+                                livestreamLevel: true
+                            }
+                        }
+                    }
+                }),
+                prisma.walletUserLevel.findMany({
+                    where: { userId: replyToUserId },
+                    select: { levelType: true, currentLevel: true }
+                })
+            ]);
+            if (tUser) {
+                targetUserObj = tUser;
+                const lvlMap = new Map(tLevels.map(w => [w.levelType, w.currentLevel]));
+                targetWealthLevel = lvlMap.get(LevelType.WEALTH) ?? tUser.userLevel?.wealthLevel ?? 0;
+                targetLivestreamLevel = lvlMap.get(LevelType.LIVESTREAM) ?? tUser.userLevel?.livestreamLevel ?? 0;
+            }
+        } catch (err) {
+            console.error("[SystemMessage] Failed to load target user details:", err);
+        }
+    }
+
+    const messageData = {
+        id: crypto.randomUUID(),
+        streamId,
+        senderId,
+        message: filteredMessage,
+        createdAt: new Date().toISOString(),
+        replyToMessageId: replyToMessageId || null,
+        replyToUserId: replyToUserId || null,
+        replyToUsername: replyToUsername || null,
+        replyToText: replyToText || null,
+        chatBubble: chatBubble || null
+    };
+
+    const listKey = `stream:chats:${streamId}`;
+    await redisClient.rPush(listKey, JSON.stringify(messageData));
+    await redisClient.lTrim(listKey, -200, -1);
+
+    const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
+    let stealthAlias = null;
+    if (isStealth) {
+        stealthAlias = await getOrCreateSessionAlias(streamId, senderId);
+    }
+
+    return {
+        ...messageData,
+        createdAt: new Date(messageData.createdAt),
+        sender: senderId === SYSTEM_SENDER_ID
+            ? (targetUserObj ? {
+                id: targetUserObj.id,
+                publicId: targetUserObj.publicId ? targetUserObj.publicId.toString() : null,
+                username: targetUserObj.username,
+                avatarUrl: targetUserObj.avatarUrl || null,
+                wealthLevel: targetWealthLevel,
+                livestreamLevel: targetLivestreamLevel
+            } : { id: SYSTEM_SENDER_ID, username: 'System', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
+            : (user ? {
+                id: isStealth ? null : user.id,
+                publicId: isStealth ? null : (user.publicId ? user.publicId.toString() : null),
+                username: isStealth ? (stealthAlias || 'Mystery User') : user.username,
+                avatarUrl: isStealth ? null : (user.avatarUrl || null),
+                wealthLevel: senderWealthLevel,
+                livestreamLevel: senderLivestreamLevel,
+                isMystery: isStealth
+            } : { username: 'Unknown User', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
+    };
 };
 
 export const getMessagesService = async ({
-    streamId
+    streamId,
+    filter = 'all',
+    chatsOnly = false
 }) => {
+    let effectiveFilter = filter;
+    if (filter === 'all' && chatsOnly) {
+        effectiveFilter = 'chat';
+    }
 
-    return prisma.liveMessage.findMany({
-        where: {
-            streamId
-        },
-        orderBy: {
-            createdAt: 'asc'
-        },
-        take: 100
+    const listKey = `stream:chats:${streamId}`;
+    const rawMessages = await redisClient.lRange(listKey, 0, -1);
+
+    let messages = [];
+    if (rawMessages.length > 0) {
+        messages = rawMessages.map(m => {
+            const parsed = JSON.parse(m);
+            return {
+                ...parsed,
+                createdAt: new Date(parsed.createdAt)
+            };
+        });
+    } else {
+        const dbMessages = await prisma.liveMessage.findMany({
+            where: { streamId },
+            orderBy: { createdAt: 'asc' }
+        });
+        messages = dbMessages.map(m => ({
+            id: m.id,
+            streamId: m.streamId,
+            senderId: m.senderId,
+            message: m.message,
+            createdAt: m.createdAt,
+            replyToMessageId: m.replyToMessageId,
+            replyToUserId: m.replyToUserId,
+            replyToUsername: m.replyToUsername,
+            replyToText: m.replyToText
+        }));
+    }
+
+    const clearedAtTime = await redisClient.get(`stream:chat_cleared:${streamId}`);
+    if (clearedAtTime) {
+        const clearedTime = new Date(clearedAtTime).getTime();
+        messages = messages.filter(m => new Date(m.createdAt).getTime() > clearedTime);
+    }
+
+    if (effectiveFilter === 'chat') {
+        messages = messages.filter(m => m.senderId !== SYSTEM_SENDER_ID);
+    } else if (effectiveFilter === 'room') {
+        messages = messages.filter(m => m.senderId === SYSTEM_SENDER_ID);
+    }
+
+    const allUserIds = [...new Set(messages.flatMap(m => {
+        const ids = [];
+        if (m.senderId && m.senderId !== SYSTEM_SENDER_ID) ids.push(m.senderId);
+        if (m.replyToUserId) ids.push(m.replyToUserId);
+        return ids;
+    }))];
+
+    const [users, walletLevels] = await Promise.all([
+        prisma.user.findMany({
+            where: {
+                id: { in: allUserIds }
+            },
+            select: {
+                id: true,
+                publicId: true,
+                username: true,
+                avatarUrl: true,
+                userLevel: {
+                    select: {
+                        wealthLevel: true,
+                        livestreamLevel: true
+                    }
+                }
+            }
+        }),
+        prisma.walletUserLevel.findMany({
+            where: {
+                userId: { in: allUserIds }
+            },
+            select: {
+                userId: true,
+                levelType: true,
+                currentLevel: true
+            }
+        })
+    ]);
+
+    const userMap = new Map(users.map(u => [u.id, u]));
+    const levelMap = new Map(walletLevels.map(w => [`${w.userId}_${w.levelType}`, w.currentLevel]));
+
+    return messages.map(m => {
+        const targetId = (m.senderId === SYSTEM_SENDER_ID && m.replyToUserId) ? m.replyToUserId : m.senderId;
+        const userObj = userMap.get(targetId);
+        const wealthLevel = levelMap.get(`${targetId}_${LevelType.WEALTH}`) ?? userObj?.userLevel?.wealthLevel ?? 0;
+        const livestreamLevel = levelMap.get(`${targetId}_${LevelType.LIVESTREAM}`) ?? userObj?.userLevel?.livestreamLevel ?? 0;
+
+        let senderObj;
+        if (m.senderId === SYSTEM_SENDER_ID) {
+            senderObj = userObj ? {
+                id: userObj.id,
+                publicId: userObj.publicId ? userObj.publicId.toString() : null,
+                username: userObj.username,
+                avatarUrl: userObj.avatarUrl || null,
+                wealthLevel,
+                livestreamLevel
+            } : {
+                id: SYSTEM_SENDER_ID,
+                username: 'System',
+                avatarUrl: null,
+                wealthLevel: 0,
+                livestreamLevel: 0
+            };
+        } else {
+            senderObj = userObj ? {
+                id: userObj.id,
+                publicId: userObj.publicId ? userObj.publicId.toString() : null,
+                username: userObj.username,
+                avatarUrl: userObj.avatarUrl || null,
+                wealthLevel,
+                livestreamLevel
+            } : {
+                username: 'Unknown User',
+                avatarUrl: null,
+                wealthLevel: 0,
+                livestreamLevel: 0
+            };
+        }
+
+        return {
+            ...m,
+            sender: senderObj
+        };
     });
 };
 
@@ -35,35 +392,36 @@ export const joinStreamService = async ({
     streamId,
     userId
 }) => {
+    const { isStealth } = await getUserPrivacyService({ userId });
 
-    return prisma.streamViewer.create({
-        data: {
-            streamId,
-            userId
-        }
-    });
+    // Always add to history set in Redis for admin records
+    await redisClient.sAdd(`stream:history:${streamId}`, userId);
+
+    // Add to active set ONLY if NOT stealth
+    if (!isStealth) {
+        await redisClient.sAdd(`stream:active:${streamId}`, userId);
+    }
+    return { success: true };
 };
 
 export const leaveStreamService = async ({
     streamId,
     userId
 }) => {
-
-    return prisma.streamViewer.deleteMany({
-        where: {
-            streamId,
-            userId
-        }
-    });
+    await redisClient.sRem(`stream:active:${streamId}`, userId);
+    return { success: true };
 };
 
 export const getViewerCountService = async ({
     streamId
 }) => {
+    const count = await redisClient.sCard(`stream:active:${streamId}`);
+    return count;
+};
 
-    return prisma.streamViewer.count({
-        where: {
-            streamId
-        }
-    });
+export const getStreamViewersService = async ({
+    streamId
+}) => {
+    const viewers = await redisClient.sMembers(`stream:active:${streamId}`);
+    return viewers;
 };

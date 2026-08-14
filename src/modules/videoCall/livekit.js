@@ -9,7 +9,7 @@ const livekitHost = process.env.LIVEKIT_URL || "http://localhost:7880";
 
 export const roomService = new RoomServiceClient(livekitHost, apiKey, apiSecret);
 
-export const generateLivekitToken = (roomName, participantName, isHost) => {
+export const generateLivekitToken = async (roomName, participantName, isHost) => {
     const at = new AccessToken(apiKey, apiSecret, {
         identity: participantName,
     });
@@ -21,7 +21,7 @@ export const generateLivekitToken = (roomName, participantName, isHost) => {
         canSubscribe: true,
     });
 
-    return at.toJwt();
+    return await at.toJwt();
 };
 
 export const closeLivekitRoom = async (roomName) => {

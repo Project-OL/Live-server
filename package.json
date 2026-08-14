@@ -8,12 +8,17 @@
     "dev": "nodemon server.js",
     "test": "nodemon server.js",
     "kill-port": "kill-port $PORT",
-    "start": "node server.js"
+    "start": "node server.js",
+    "postinstall": "prisma generate"
   },
   "keywords": [],
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@aws-sdk/client-rekognition": "^3.1081.0",
+    "@aws-sdk/client-s3": "^3.1083.0",
+    "@aws-sdk/s3-request-presigner": "^3.1083.0",
+    "@google-cloud/translate": "^9.4.2",
     "@prisma/client": "^6.16.2",
     "cors": "^2.8.6",
     "dotenv": "^17.4.2",
@@ -28,6 +33,8 @@
     "socket.io": "^4.8.3"
   },
   "devDependencies": {
-    "nodemon": "^3.1.14"
+    "node-fetch": "^3.3.2",
+    "nodemon": "^3.1.14",
+    "socket.io-client": "^4.8.3"
   }
 }

@@ -1,0 +1,376 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>🎲 Lucky Gift Test Panel - Offoo Live</title>
+    <!-- Google Fonts -->
+    <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;600;700;800&family=JetBrains+Mono:wght@400;600&display=swap" rel="stylesheet">
+    <!-- Socket.IO Client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+    <style>
+        :root {
+            --bg-color: #0b0e17;
+            --card-bg: #151b28;
+            --accent-purple: #8b5cf6;
+            --accent-gold: #fbbf24;
+            --accent-pink: #ec4899;
+            --accent-green: #10b981;
+            --text-primary: #f3f4f6;
+            --text-secondary: #9ca3af;
+            --border-color: #232d42;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            font-family: 'Outfit', sans-serif;
+        }
+
+        body {
+            background-color: var(--bg-color);
+            color: var(--text-primary);
+            min-height: 100vh;
+            padding: 24px;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+        }
+
+        .container {
+            width: 100%;
+            max-width: 900px;
+            background: var(--card-bg);
+            border-radius: 24px;
+            border: 1px solid var(--border-color);
+            box-shadow: 0 20px 50px rgba(0, 0, 0, 0.5);
+            padding: 32px;
+            display: flex;
+            flex-direction: column;
+            gap: 24px;
+        }
+
+        header {
+            text-align: center;
+            border-bottom: 1px solid var(--border-color);
+            padding-bottom: 20px;
+        }
+
+        header h1 {
+            font-size: 2rem;
+            font-weight: 800;
+            background: linear-gradient(135deg, var(--accent-gold), var(--accent-pink));
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+        }
+
+        header p {
+            color: var(--text-secondary);
+            font-size: 0.95rem;
+            margin-top: 6px;
+        }
+
+        .grid-2 {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group.full-width {
+            grid-column: span 2;
+        }
+
+        label {
+            font-size: 0.85rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        input {
+            background: #0f1420;
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            padding: 12px 16px;
+            color: var(--text-primary);
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+        }
+
+        input:focus {
+            outline: none;
+            border-color: var(--accent-purple);
+        }
+
+        .btn-group {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-top: 8px;
+        }
+
+        button {
+            padding: 14px 20px;
+            border-radius: 14px;
+            border: none;
+            font-weight: 700;
+            font-size: 0.95rem;
+            cursor: pointer;
+            transition: all 0.2s ease;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+        }
+
+        .btn-1x {
+            background: #2563eb;
+            color: white;
+        }
+        .btn-10x {
+            background: #7c3aed;
+            color: white;
+        }
+        .btn-100x {
+            background: #db2777;
+            color: white;
+        }
+        .btn-1000x {
+            background: linear-gradient(135deg, #f59e0b, #ef4444);
+            color: white;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 0, 0, 0.4);
+        }
+
+        /* Animation Popup Box */
+        .popup-box {
+            background: linear-gradient(135deg, #1e1b4b, #311042);
+            border: 2px solid var(--accent-gold);
+            border-radius: 20px;
+            padding: 24px;
+            text-align: center;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            gap: 12px;
+            box-shadow: 0 10px 30px rgba(251, 191, 36, 0.2);
+            position: relative;
+            overflow: hidden;
+        }
+
+        .popup-badge {
+            background: var(--accent-gold);
+            color: #000;
+            font-weight: 800;
+            font-size: 0.75rem;
+            padding: 4px 12px;
+            border-radius: 20px;
+            text-transform: uppercase;
+        }
+
+        .popup-title {
+            font-size: 1.2rem;
+            font-weight: 600;
+            color: var(--text-secondary);
+        }
+
+        .popup-reward {
+            font-size: 2.8rem;
+            font-weight: 800;
+            color: var(--accent-gold);
+            text-shadow: 0 0 20px rgba(251, 191, 36, 0.5);
+            font-family: 'JetBrains Mono', monospace;
+        }
+
+        .popup-details {
+            display: flex;
+            gap: 20px;
+            font-size: 0.9rem;
+            color: var(--text-secondary);
+        }
+
+        .popup-details span strong {
+            color: var(--text-primary);
+        }
+
+        /* Terminal Console Logs */
+        .terminal {
+            background: #080a10;
+            border: 1px solid var(--border-color);
+            border-radius: 14px;
+            padding: 16px;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 0.85rem;
+            max-height: 200px;
+            overflow-y: auto;
+            color: #4ade80;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .log-item {
+            border-bottom: 1px dashed #1e293b;
+            padding-bottom: 4px;
+        }
+    </style>
+</head>
+<body>
+
+    <div class="container">
+        <header>
+            <h1>🎲 Lucky Gift Testing Panel</h1>
+            <p>Realtime 92% RTP Lucky Gift Engine Test Bench for Offoo Live Streaming</p>
+        </header>
+
+        <!-- Fixed IDs Section -->
+        <div class="grid-2">
+            <div class="form-group">
+                <label>Viewer / Sender ID (Sahil)</label>
+                <input type="text" id="senderId" value="ab02afd3-663b-41f0-9cc5-db22c134dd04">
+            </div>
+            <div class="form-group">
+                <label>Host / Receiver ID (Businessmanagersks)</label>
+                <input type="text" id="receiverId" value="2e417fba-001f-4bec-bcd2-bc2271241e70">
+            </div>
+            <div class="form-group">
+                <label>Gift ID (Crown 👑 - 200 Coins)</label>
+                <input type="text" id="giftId" value="f70f6247-2d82-450d-a75c-85ea4cfbe308">
+            </div>
+            <div class="form-group">
+                <label>Stream Room ID</label>
+                <input type="text" id="streamId" value="test-room-101">
+            </div>
+            <div class="form-group full-width">
+                <label>Auth JWT Token (Bearer)</label>
+                <input type="text" id="authToken" value="eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOiJhYjAyYWZkMy02NjNiLTQxZjAtOWNjNS1kYjIyYzEzNGRkMDQiLCJ0b2tlblZlcnNpb24iOjAsImlhdCI6MTc4NTMyMDA0MywiZXhwIjoxNzg1OTI0ODQzfQ.VvxyLmX4xev49un6FB4o3RPkIUMo8E6f-kFMttv2OLk">
+            </div>
+        </div>
+
+        <!-- Action Preset Buttons -->
+        <div class="btn-group">
+            <button class="btn-1x" onclick="sendGift(1)">🎁 Send 1x Gift</button>
+            <button class="btn-10x" onclick="sendGift(10)">⚡ Send 10x Combo</button>
+            <button class="btn-100x" onclick="sendGift(100)">🚀 Send 100x Combo</button>
+            <button class="btn-1000x" onclick="sendGift(1000)">💥 Send 1000x Combo</button>
+        </div>
+
+        <!-- Realtime Socket Animation Display Box -->
+        <div class="popup-box" id="popupBox">
+            <div class="popup-badge" id="popupCategory">READY</div>
+            <div class="popup-title" id="popupTitle">Press any button above to send Lucky Gift</div>
+            <div class="popup-reward" id="popupReward">0 COINS</div>
+            <div class="popup-details">
+                <span>Progress: <strong id="popupProgress">0 / 0</strong></span>
+                <span>Host 4% Cut: <strong id="popupHostPoints">0 Pts</strong></span>
+                <span>Category: <strong id="popupCatName">-</strong></span>
+            </div>
+        </div>
+
+        <!-- Console Audit Log -->
+        <div class="terminal" id="terminalLogs">
+            <div class="log-item">[System] Initializing Socket.IO connection to server...</div>
+        </div>
+    </div>
+
+    <script>
+        const hostUrl = window.location.origin;
+        const initialToken = document.getElementById("authToken").value;
+        const socket = io(hostUrl, {
+            auth: { token: initialToken },
+            query: { token: initialToken }
+        });
+
+        function log(msg) {
+            const term = document.getElementById("terminalLogs");
+            const div = document.createElement("div");
+            div.className = "log-item";
+            div.innerText = `[${new Date().toLocaleTimeString()}] ${msg}`;
+            term.appendChild(div);
+            term.scrollTop = term.scrollHeight;
+        }
+
+        socket.on("connect", () => {
+            log(`Socket connected successfully! Socket ID: ${socket.id}`);
+            const streamId = document.getElementById("streamId").value;
+            socket.emit("join_stream", { streamId });
+        });
+
+        socket.on("lucky_gift_single_result", (data) => {
+            log(`[SOCKET SINGLE] Reward: ${data.totalRewardCoins} Coins | Category: ${data.category}`);
+            document.getElementById("popupCategory").innerText = data.category || "WIN";
+            document.getElementById("popupTitle").innerText = `${data.senderName} sent ${data.gift.name}`;
+            document.getElementById("popupReward").innerText = `+${data.totalRewardCoins} COINS`;
+            document.getElementById("popupProgress").innerText = `1 / 1`;
+            document.getElementById("popupHostPoints").innerText = `${Math.round(data.totalCost * 0.04)} Pts`;
+            document.getElementById("popupCatName").innerText = data.category;
+        });
+
+        socket.on("lucky_gift_combo_step", (data) => {
+            log(`[SOCKET COMBO STEP ${data.stepIndex}/${data.totalSteps}] Step Reward: ${data.stepRewardCoins} | Total Accumulated: ${data.accumulatedRewardCoins}`);
+            document.getElementById("popupCategory").innerText = `COMBO STEP ${data.stepIndex}/${data.totalSteps}`;
+            document.getElementById("popupTitle").innerText = `Animating Combo Gift for ${data.senderName}...`;
+            document.getElementById("popupReward").innerText = `+${data.accumulatedRewardCoins} COINS`;
+            document.getElementById("popupProgress").innerText = `${data.stepIndex} / ${data.totalSteps}`;
+            document.getElementById("popupHostPoints").innerText = `${Math.round(data.totalRewardCoins * 0.04)} Pts`;
+            document.getElementById("popupCatName").innerText = `Step Win: +${data.stepRewardCoins}`;
+        });
+
+        async function sendGift(comboCount) {
+            const senderId = document.getElementById("senderId").value;
+            const receiverId = document.getElementById("receiverId").value;
+            const giftId = document.getElementById("giftId").value;
+            const streamId = document.getElementById("streamId").value;
+            const token = document.getElementById("authToken").value;
+
+            log(`Sending ${comboCount}x Lucky Gift REST request...`);
+
+            try {
+                const response = await fetch(`/api/live-stream/lucky-gift/send`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        senderId,
+                        receiverId,
+                        streamId,
+                        giftId,
+                        comboCount,
+                        clientTxId: `tx-${Date.now()}`
+                    })
+                });
+
+                const data = await response.json();
+                if (data.success) {
+                    log(`[REST SUCCESS] Total Cost: ${data.totalCost} | Total Won: ${data.totalRewardCoins} Coins | Host Cut: ${data.hostEarningPoints} Pts | Category: ${data.category}`);
+                    
+                    // Also emit via socket for room animation demonstration
+                    socket.emit("send_lucky_gift", {
+                        streamId,
+                        receiverId,
+                        giftId,
+                        comboCount
+                    });
+                } else {
+                    log(`[REST ERROR] ${data.message}`);
+                }
+            } catch (err) {
+                log(`[REST EXCEPTION] ${err.message}`);
+            }
+        }
+    </script>
+</body>
+</html>

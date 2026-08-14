@@ -1,0 +1,2601 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>offoo Viewer Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        .gift-pop {
+            animation: giftPopUp 3s ease-out forwards;
+        }
+
+        @keyframes giftPopUp {
+            0% {
+                transform: scale(0) translateY(100px);
+                opacity: 0;
+            }
+
+            15% {
+                transform: scale(1.4) translateY(-20px);
+                opacity: 1;
+            }
+
+            30% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            85% {
+                transform: scale(1) translateY(-10px);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.5) translateY(-150px);
+                opacity: 0;
+            }
+        }
+
+        .level-up-toast {
+            animation: levelUpFade 4s ease-in-out forwards;
+        }
+
+        @keyframes levelUpFade {
+            0% {
+                transform: scale(0.8) translateY(50px);
+                opacity: 0;
+            }
+
+            10% {
+                transform: scale(1.1) translateY(0);
+                opacity: 1;
+            }
+
+            15% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            90% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.8) translateY(-50px);
+                opacity: 0;
+            }
+        }
+
+        /* Custom scrollbar for gift grid */
+        .gift-scrollbar::-webkit-scrollbar {
+            width: 4px;
+        }
+
+        .gift-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .gift-scrollbar::-webkit-scrollbar-thumb {
+            background: #374151;
+            border-radius: 2px;
+        }
+
+        .gift-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #4b5563;
+        }
+
+        /* Premium Chat Bubbles styles */
+        .bubble-gradient-gold {
+            background: linear-gradient(135deg, #fce0ad 0%, #dfa841 50%, #b17d1e 100%) !important;
+            border: 1.5px solid #ffd700 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(253, 224, 71, 0.4) !important;
+        }
+
+        .bubble-gradient-gold span {
+            color: #1f2937 !important;
+        }
+
+        .bubble-gradient-gold button {
+            color: #4b5563 !important;
+        }
+
+        .bubble-gradient-gold p {
+            color: #111827 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-green {
+            background: linear-gradient(135deg, #bbf7d0 0%, #22c55e 100%) !important;
+            border: 1.5px solid #4ade80 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(34, 197, 94, 0.3) !important;
+        }
+
+        .bubble-gradient-green span {
+            color: #14532d !important;
+        }
+
+        .bubble-gradient-green button {
+            color: #14532d !important;
+        }
+
+        .bubble-gradient-green p {
+            color: #052e16 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-blue {
+            background: linear-gradient(135deg, #bae6fd 0%, #0284c7 100%) !important;
+            border: 1.5px solid #38bdf8 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(14, 165, 233, 0.3) !important;
+        }
+
+        .bubble-gradient-blue span {
+            color: #0369a1 !important;
+        }
+
+        .bubble-gradient-blue button {
+            color: #0369a1 !important;
+        }
+
+        .bubble-gradient-blue p {
+            color: #0c4a6e !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-orange {
+            background: linear-gradient(135deg, #ffedd5 0%, #ea580c 100%) !important;
+            border: 1.5px solid #fb923c !important;
+            border-radius: 20px 20px 20px 4px !important;
+            box-shadow: 0 0 8px rgba(234, 88, 12, 0.3) !important;
+        }
+
+        .bubble-gradient-orange span {
+            color: #7c2d12 !important;
+        }
+
+        .bubble-gradient-orange button {
+            color: #7c2d12 !important;
+        }
+
+        .bubble-gradient-orange p {
+            color: #431407 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-purple {
+            background: linear-gradient(135deg, #f3e8ff 0%, #9333ea 100%) !important;
+            border: 1.5px solid #c084fc !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(147, 51, 234, 0.3) !important;
+        }
+
+        .bubble-gradient-purple span {
+            color: #581c87 !important;
+        }
+
+        .bubble-gradient-purple button {
+            color: #581c87 !important;
+        }
+
+        .bubble-gradient-purple p {
+            color: #3b0764 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-turquoise {
+            background: linear-gradient(135deg, #ccfbf1 0%, #0d9488 100%) !important;
+            border: 1.5px solid #2dd4bf !important;
+            border-radius: 20px 20px 20px 20px !important;
+            box-shadow: 0 0 8px rgba(13, 148, 136, 0.3) !important;
+        }
+
+        .bubble-gradient-turquoise span {
+            color: #0f766e !important;
+        }
+
+        .bubble-gradient-turquoise button {
+            color: #0f766e !important;
+        }
+
+        .bubble-gradient-turquoise p {
+            color: #042f2e !important;
+            font-weight: 600 !important;
+        }
+
+        /* VIP Ride Entry CSS Animations */
+        @keyframes rideSlideRight {
+            0% {
+                transform: translateX(-120%) scale(0.9);
+                opacity: 0;
+            }
+
+            15% {
+                transform: translateX(0) scale(1.1);
+                opacity: 1;
+            }
+
+            30% {
+                transform: translateX(0) scale(1);
+                opacity: 1;
+            }
+
+            75% {
+                transform: translateX(0) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateX(120%) scale(0.9);
+                opacity: 0;
+            }
+        }
+
+        @keyframes rideFlyDown {
+            0% {
+                transform: translate(120%, -120%) rotate(-15deg) scale(0.8);
+                opacity: 0;
+            }
+
+            20% {
+                transform: translate(0, 0) rotate(0deg) scale(1.1);
+                opacity: 1;
+            }
+
+            35% {
+                transform: translate(0, 0) rotate(0deg) scale(1);
+                opacity: 1;
+            }
+
+            75% {
+                transform: translate(0, 0) rotate(0deg) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-120%, 120%) rotate(15deg) scale(0.8);
+                opacity: 0;
+            }
+        }
+
+        @keyframes rideWarpIn {
+            0% {
+                transform: scale(0) rotate(-180deg);
+                filter: blur(10px);
+                opacity: 0;
+            }
+
+            25% {
+                transform: scale(1.3) rotate(10deg);
+                filter: blur(0);
+                opacity: 1;
+            }
+
+            40% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+
+            80% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.5);
+                filter: blur(5px);
+                opacity: 0;
+            }
+        }
+
+        .ride-animation-slide {
+            animation: rideSlideRight 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        .ride-animation-fly {
+            animation: rideFlyDown 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        .ride-animation-warp {
+            animation: rideWarpIn 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-950 text-white min-h-screen p-6 font-sans">
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-gray-900 pb-4">
+            <div>
+                <h1
+                    class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-pink-400 to-purple-500">
+                    offoo Viewer Studio 📱
+                </h1>
+                <p class="text-gray-400 text-xs mt-1">Select an account, browse active streams, and join the room</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="lblConnectionStatus"
+                    class="bg-red-950/60 border border-red-800 text-red-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider">
+                    Offline
+                </span>
+            </div>
+        </div>
+
+        <!-- Workspace Panels -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Left Panel: Viewer Controls & Accounts -->
+            <div class="lg:col-span-1 space-y-6">
+                <div class="bg-gray-900 border border-gray-850 rounded-xl p-5 space-y-4 shadow-xl">
+                    <div class="flex items-center justify-between border-b border-gray-800 pb-2.5">
+                        <h2 class="text-sm font-bold text-pink-400 flex items-center space-x-2">
+                            <span>👥</span> <span>Viewer Workspace</span>
+                        </h2>
+                        <span class="bg-pink-950/40 text-pink-400 text-[10px] px-2 py-0.5 rounded font-mono font-bold"
+                            id="lblViewerName">No Viewer Selected</span>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Select Viewer
+                                Account</label>
+                            <select id="selViewerAccount"
+                                class="w-full bg-gray-950 p-2.5 rounded border border-gray-800 text-xs focus:border-pink-500 outline-none text-pink-400 font-semibold">
+                                <option value="">-- Choose Viewer --</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Viewer User
+                                ID</label>
+                            <input id="txtViewerId" type="text"
+                                class="w-full bg-gray-950 p-2 rounded border border-gray-850 text-xs font-mono text-gray-650 outline-none"
+                                readonly placeholder="Select a viewer first">
+                        </div>
+
+                        <div class="space-y-2">
+                            <div class="flex items-center justify-between">
+                                <label class="block text-[11px] text-gray-400 uppercase tracking-wider">Active Live
+                                    Streams</label>
+                                <button id="btnRefreshList" class="text-[10px] text-purple-400 hover:underline">🔄
+                                    Refresh List</button>
+                            </div>
+
+                            <!-- Stream Filter Bar -->
+                            <div
+                                class="flex items-center space-x-2 bg-gray-900/80 p-2 rounded-lg border border-gray-800 text-xs">
+                                <span
+                                    class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Filter:</span>
+                                <select id="selStreamCountryFilter"
+                                    class="bg-gray-950 border border-gray-800 text-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500 flex-1">
+                                    <option value="all">🌐 All Countries (Global)</option>
+                                    <option value="India">🇮🇳 India</option>
+                                    <option value="Nepal">🇳🇵 Nepal</option>
+                                    <option value="my_country">👤 My Country Only</option>
+                                </select>
+                            </div>
+
+                            <div id="divActiveStreams"
+                                class="bg-gray-950 rounded-lg p-2.5 border border-gray-855 min-h-[120px] max-h-[300px] overflow-y-auto grid grid-cols-1 gap-3 text-xs w-full">
+                                <p class="text-center text-gray-500 my-4 w-full col-span-full">No active live streams
+                                    found.</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 pt-2">
+                        <button id="btnViewerJoin"
+                            class="bg-pink-600 hover:bg-pink-500 py-2.5 rounded-lg text-xs font-bold transition disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                            disabled>
+                            <span>📺</span> <span>Join Stream</span>
+                        </button>
+                        <button id="btnViewerLeave"
+                            class="bg-gray-700 hover:bg-gray-600 py-2.5 rounded-lg text-xs font-bold transition hidden flex items-center justify-center space-x-1.5">
+                            <span>🚪</span> <span>Leave Room</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Active Viewers Panel -->
+                <div id="cardActiveViewers"
+                    class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 shadow-xl hidden">
+                    <h3
+                        class="font-bold text-sm text-purple-400 flex justify-between items-center border-b border-gray-850 pb-2">
+                        <span class="flex items-center space-x-1.5">👥 <span>Active Viewers</span></span>
+                    </h3>
+                    <div id="divViewerList" class="space-y-2 pr-1" style="max-height: 200px; overflow-y: auto;">
+                        <p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Right Panel: Remote Video Stream & Live Chat -->
+            <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Video Player Container -->
+                <div
+                    class="md:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col space-y-4 min-h-[360px] shadow-xl">
+                    <div class="flex items-center justify-between border-b border-gray-855 pb-3">
+                        <div>
+                            <h3 class="font-extrabold text-sm text-gray-200" id="lblRoomTitle">Offline Console</h3>
+                            <p class="text-[11px] text-gray-500 mt-0.5" id="lblRoomId">Please select a stream and click
+                                Join</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <div class="bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1.5 cursor-pointer hover:bg-indigo-500/20 transition hidden"
+                                id="divGiftGalleryBadge" onclick="openGiftGalleryModal()">
+                                <span>🎁 Target: <span id="lblGiftGalleryProgress">0/0</span></span>
+                            </div>
+                            <div class="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1.5 hidden"
+                                id="divLiveBadge">
+                                <span class="h-2 w-2 rounded-full bg-red-500 animate-ping"></span>
+                                <span>LIVE</span>
+                                <span class="text-gray-400 font-normal">|</span>
+                                <span>👥 <span id="lblViewerCount">0</span></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Video Frame -->
+                    <div
+                        class="flex-grow bg-black rounded-lg border border-gray-800 relative flex items-center justify-center overflow-hidden aspect-video shadow-inner">
+                        <div id="lblRemoteFeedPlaceholder"
+                            class="absolute inset-0 z-0 flex items-center justify-center text-gray-700 font-bold uppercase tracking-widest text-[10px]">
+                            🎥 Video Stream Feed
+                        </div>
+                        <div id="divRemoteVideo" class="absolute z-10 w-full h-full hidden"></div>
+                    </div>
+                </div>
+
+                <!-- Chat & Audio Sheet Column -->
+                <div class="md:col-span-1 space-y-6 flex flex-col">
+                    <!-- Chat Feed Container -->
+                    <div
+                        class="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col space-y-3 min-h-[360px] shadow-xl">
+                        <h3
+                            class="font-bold text-sm text-gray-300 flex justify-between items-center border-b border-gray-800 pb-2">
+                            <div class="flex items-center space-x-1.5">
+                                <span>💬</span> <span>Live Room Chat</span>
+                            </div>
+                            <div class="flex items-center space-x-2.5">
+                                <button id="btnClearChat"
+                                    class="text-[10px] text-red-400 hover:text-red-300 bg-red-950/40 border border-red-900/60 px-1.5 py-0.5 rounded font-semibold hidden">🗑️
+                                    Clear</button>
+                                <label
+                                    class="flex items-center space-x-1 text-[10px] text-gray-500 font-normal cursor-pointer select-none">
+                                    <input id="chkChatsOnly" type="checkbox" class="accent-purple-600 rounded">
+                                    <span>Chats Only</span>
+                                </label>
+                            </div>
+                        </h3>
+
+                        <!-- Message Feed -->
+                        <div id="divChatBox"
+                            class="flex-grow bg-gray-950 rounded-lg p-2.5 border border-gray-850 overflow-y-auto space-y-3 text-xs max-h-[250px] min-h-[180px]">
+                            <p class="text-gray-650 text-center italic my-4">Select an account to initialize chat.</p>
+                        </div>
+
+                        <!-- Reply Banner -->
+                        <div id="replyBanner"
+                            class="hidden bg-purple-950/30 border border-purple-900/60 rounded p-1.5 flex items-center justify-between text-[11px] text-gray-450 mb-1">
+                            <span id="replyBannerText" class="truncate flex-grow text-purple-300">Replying to
+                                @username</span>
+                            <button id="btnCancelReply"
+                                class="text-red-400 hover:text-red-350 font-bold ml-2">✕</button>
+                        </div>
+
+                        <!-- Chat Message Input -->
+                        <div class="flex space-x-1.5">
+                            <input id="txtChatMessage" type="text"
+                                class="flex-grow bg-gray-950 p-2 rounded border border-gray-855 text-xs focus:border-purple-500 outline-none disabled:opacity-50"
+                                placeholder="Send a message..." disabled>
+                            <button id="btnSendChat"
+                                class="bg-purple-600 hover:bg-purple-500 px-3.5 py-2 rounded text-xs font-bold transition disabled:opacity-50"
+                                disabled>
+                                Send
+                            </button>
+                        </div>
+
+                        <!-- Global Broadcast Message Input -->
+                        <div class="flex space-x-1.5 mt-2">
+                            <input id="txtGlobalMsg" type="text"
+                                class="flex-grow bg-gray-950 p-2 rounded border border-gray-855 text-xs focus:border-pink-500 outline-none disabled:opacity-50"
+                                placeholder="Global Broadcast Announcement (Costs 2000c)..." disabled>
+                            <button id="btnSendGlobalMsg"
+                                class="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white px-3.5 py-2 rounded text-xs font-bold transition disabled:opacity-50 flex items-center space-x-1"
+                                disabled>
+                                <span>📢</span> <span>Broadcast</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Gift Box Container (Only shown when viewer joins active stream) -->
+                    <div id="giftBoxContainer"
+                        class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 shadow-xl hidden">
+                        <h3
+                            class="font-bold text-sm text-pink-400 flex justify-between items-center border-b border-gray-850 pb-2">
+                            <span class="flex items-center space-x-1.5">🎁 <span>Send Gift to Host</span></span>
+                        </h3>
+                        <!-- Tagged User Badge -->
+                        <div id="giftTagBadge"
+                            class="hidden bg-purple-950/40 border border-purple-900/60 p-2 rounded-lg flex items-center justify-between text-xs">
+                            <span id="lblTaggedUser" class="text-purple-400 font-bold"></span>
+                            <button onclick="clearTaggedUser()"
+                                class="text-gray-400 hover:text-white transition cursor-pointer text-[10px] font-bold px-1.5 py-0.5 rounded bg-gray-800 border border-gray-700">✕
+                                Cancel</button>
+                        </div>
+                        <!-- List of gifts -->
+                        <div id="giftsGrid"
+                            class="grid grid-cols-4 gap-2 max-h-[160px] overflow-y-auto pr-1 gift-scrollbar">
+                            <div class="col-span-full text-center text-xs text-gray-500 py-3 font-semibold">
+                                Loading gifts...
+                            </div>
+                        </div>
+                        <!-- Send button & Combo Quantity Selector -->
+                        <div class="flex justify-between items-center pt-2.5 border-t border-gray-850">
+                            <span id="lblCoinsDisplay"
+                                class="text-xs text-yellow-450 font-bold bg-yellow-950/40 border border-yellow-900/60 px-2.5 py-1 rounded">Coins:
+                                --</span>
+                            <div class="flex items-center space-x-1.5">
+                                <select id="selGiftCount"
+                                    class="bg-gray-800 text-yellow-400 text-[11px] font-bold px-2 py-1.5 rounded border border-gray-700 focus:outline-none cursor-pointer">
+                                    <option value="1">x1 (Single)</option>
+                                    <option value="5">x5 (Combo)</option>
+                                    <option value="10">x10 (Combo)</option>
+                                    <option value="100">x100 (Combo)</option>
+                                </select>
+                                <button id="btnSendGift" disabled
+                                    class="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white px-4 py-2 rounded-lg text-xs font-bold transition disabled:opacity-50 disabled:cursor-not-allowed">
+                                    Send Gift
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Audio Sheet Panel -->
+                    <div id="cardAudioSheet"
+                        class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 shadow-xl hidden">
+                        <h3
+                            class="font-bold text-sm text-yellow-450 flex justify-between items-center border-b border-gray-855 pb-2">
+                            <span class="flex items-center space-x-1.5">🎙️ <span>Audio Sheet</span></span>
+                        </h3>
+
+                        <!-- Viewer's personal status controls -->
+                        <div id="divViewerSheetControl"
+                            class="bg-gray-950 p-2.5 rounded border border-gray-850 space-y-2">
+                            <span class="text-[10px] uppercase font-extrabold tracking-wider text-yellow-500">My
+                                Status</span>
+                            <div id="divViewerSheetActions" class="flex flex-col space-y-2">
+                                <button id="btnRequestSpeak"
+                                    class="w-full bg-yellow-600 hover:bg-yellow-500 text-xs py-2 rounded-lg font-bold transition text-white">Request
+                                    to Speak</button>
+                            </div>
+                        </div>
+
+                        <div id="divSheetUserList" class="space-y-2 max-h-[160px] overflow-y-auto pr-1">
+                            <p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    </div>
+    </div>
+    <!-- Room Password Prompt Modal -->
+    <div id="passwordModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden z-50 transition-all duration-300">
+        <div class="bg-gray-900 border border-gray-800 w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
+            <button id="btnClosePassword"
+                class="absolute top-4 right-4 text-gray-500 hover:text-gray-300 transition text-lg">&times;</button>
+            <h3 class="text-base font-extrabold text-gray-100 flex items-center space-x-2 mb-4">
+                <span>🔒</span> <span>Private Room Password</span>
+            </h3>
+
+            <div class="space-y-4">
+                <p class="text-xs text-gray-400 leading-relaxed">This stream is password protected by the host. Please
+                    enter the password to join and watch.</p>
+                <div class="space-y-1.5">
+                    <label class="block text-[11px] text-gray-400 uppercase tracking-wider">Password</label>
+                    <input id="txtJoinPassword" type="password"
+                        class="w-full bg-gray-950 p-2.5 rounded border border-gray-800 text-xs text-gray-250 focus:border-purple-500 outline-none"
+                        placeholder="Enter password to join">
+                </div>
+                <button id="btnSubmitPassword"
+                    class="w-full bg-pink-600 hover:bg-pink-500 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 mt-2">
+                    Verify & Join Room
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Audio Sheet Invite Modal -->
+    <div id="sheetInviteModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden z-50 transition-all duration-300">
+        <div class="bg-gray-900 border border-gray-800 w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
+            <h3 class="text-base font-extrabold text-yellow-400 flex items-center space-x-2 mb-4">
+                <span>🎙️</span> <span>Audio Sheet Invite</span>
+            </h3>
+            <div class="space-y-4">
+                <p id="lblSheetInviteText" class="text-xs text-gray-400 leading-relaxed">The host has invited you to
+                    join the speaking sheet as a co-host speaker.</p>
+                <div class="grid grid-cols-2 gap-2.5 pt-2">
+                    <button id="btnAcceptSheetInvite"
+                        class="bg-green-600 hover:bg-green-500 py-2.5 rounded-lg text-xs font-bold transition text-white">Accept
+                        & Speak</button>
+                    <button id="btnDeclineSheetInvite"
+                        class="bg-red-650 hover:bg-red-500 py-2.5 rounded-lg text-xs font-bold transition text-white">Decline</button>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global Error Boundary for Debugging
+        window.onerror = function (message, source, lineno, colno, error) {
+            const errDiv = document.createElement("div");
+            errDiv.style.position = "fixed";
+            errDiv.style.top = "10px";
+            errDiv.style.left = "10px";
+            errDiv.style.backgroundColor = "rgba(220, 38, 38, 0.95)";
+            errDiv.style.color = "white";
+            errDiv.style.padding = "15px";
+            errDiv.style.zIndex = "99999";
+            errDiv.style.borderRadius = "8px";
+            errDiv.style.fontFamily = "monospace";
+            errDiv.style.fontSize = "12px";
+            errDiv.style.maxWidth = "80%";
+            errDiv.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
+            errDiv.innerHTML = `<strong>JS Error:</strong> ${message}<br><small>at ${source}:${lineno}:${colno}</small>`;
+            document.body.appendChild(errDiv);
+            return false;
+        };
+
+        window.onunhandledrejection = function (event) {
+            const errDiv = document.createElement("div");
+            errDiv.style.position = "fixed";
+            errDiv.style.top = "10px";
+            errDiv.style.left = "10px";
+            errDiv.style.backgroundColor = "rgba(220, 38, 38, 0.95)";
+            errDiv.style.color = "white";
+            errDiv.style.padding = "15px";
+            errDiv.style.zIndex = "99999";
+            errDiv.style.borderRadius = "8px";
+            errDiv.style.fontFamily = "monospace";
+            errDiv.style.fontSize = "12px";
+            errDiv.style.maxWidth = "80%";
+            errDiv.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
+            errDiv.innerHTML = `<strong>Unhandled Rejection:</strong> ${event.reason}`;
+            document.body.appendChild(errDiv);
+        };
+
+        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        const SERVER_URL = isLocal ? "http://localhost:5000" : window.location.origin;
+        const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
+        const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
+        const LIVEKIT_URL = "wss://ofo-rjyi95u0.livekit.cloud";
+
+        let socket = null;
+        let room = null;
+        let testUsers = [];
+        let viewerUser = null;
+
+        let selectedStreamRecord = null;
+        let currentRoomUuid = null;
+        let roomActiveViewerIds = [];
+        let messageHistory = [];
+        let currentHostDetails = null;
+        let isRequestPending = false;
+        let isLocalMicEnabled = false;
+        let sheetUsers = [];
+        let amIAdminGlobal = false;
+        let currentViewers = [];
+        let activeReplyState = null;
+        const locallyMutedParticipants = new Set();
+
+        const E = {
+            lblConnectionStatus: document.getElementById('lblConnectionStatus'),
+            lblViewerName: document.getElementById('lblViewerName'),
+            selViewerAccount: document.getElementById('selViewerAccount'),
+            txtViewerId: document.getElementById('txtViewerId'),
+            btnRefreshList: document.getElementById('btnRefreshList'),
+            selStreamCountryFilter: document.getElementById('selStreamCountryFilter'),
+            divActiveStreams: document.getElementById('divActiveStreams'),
+            btnViewerJoin: document.getElementById('btnViewerJoin'),
+            btnViewerLeave: document.getElementById('btnViewerLeave'),
+            lblRoomTitle: document.getElementById('lblRoomTitle'),
+            lblRoomId: document.getElementById('lblRoomId'),
+            divLiveBadge: document.getElementById('divLiveBadge'),
+            lblViewerCount: document.getElementById('lblViewerCount'),
+            divRemoteVideo: document.getElementById('divRemoteVideo'),
+            divChatBox: document.getElementById('divChatBox'),
+            txtChatMessage: document.getElementById('txtChatMessage'),
+            btnSendChat: document.getElementById('btnSendChat'),
+            txtGlobalMsg: document.getElementById('txtGlobalMsg'),
+            btnSendGlobalMsg: document.getElementById('btnSendGlobalMsg'),
+            chkChatsOnly: document.getElementById('chkChatsOnly'),
+            btnClearChat: document.getElementById('btnClearChat'),
+            cardActiveViewers: document.getElementById('cardActiveViewers'),
+            divViewerList: document.getElementById('divViewerList'),
+            passwordModal: document.getElementById('passwordModal'),
+            btnClosePassword: document.getElementById('btnClosePassword'),
+            txtJoinPassword: document.getElementById('txtJoinPassword'),
+            btnSubmitPassword: document.getElementById('btnSubmitPassword'),
+            cardAudioSheet: document.getElementById('cardAudioSheet'),
+            divViewerSheetControl: document.getElementById('divViewerSheetControl'),
+            divViewerSheetActions: document.getElementById('divViewerSheetActions'),
+            divSheetUserList: document.getElementById('divSheetUserList'),
+            sheetInviteModal: document.getElementById('sheetInviteModal'),
+            lblSheetInviteText: document.getElementById('lblSheetInviteText'),
+            btnAcceptSheetInvite: document.getElementById('btnAcceptSheetInvite'),
+            btnDeclineSheetInvite: document.getElementById('btnDeclineSheetInvite'),
+            btnCancelReply: document.getElementById('btnCancelReply')
+        };
+
+        async function initViewer() {
+            try {
+                const res = await fetch(`${VIDEO_API_BASE}/test-users`);
+                const data = await res.json();
+                if (data.success && data.users && data.users.length >= 2) {
+                    testUsers = data.users;
+                    rebuildViewerDropdown();
+                    refreshActiveStreamsList();
+                } else {
+                    alert("Failed to load test accounts!");
+                }
+            } catch (err) {
+                console.error("Viewer initialization failed:", err);
+            }
+        }
+
+        function rebuildViewerDropdown() {
+            E.selViewerAccount.innerHTML = '<option value="">-- Choose Viewer --</option>';
+
+            // Loop through all users in DB
+            testUsers.forEach(u => {
+                if (!roomActiveViewerIds.includes(u.id) || (viewerUser && u.id === viewerUser.id)) {
+                    const opt = document.createElement("option");
+                    opt.value = u.id;
+                    opt.innerText = `${u.name.toUpperCase()} (ID: ${u.id.substring(0, 8)})`;
+                    E.selViewerAccount.appendChild(opt);
+                }
+            });
+
+            if (!currentRoomUuid && viewerUser && roomActiveViewerIds.includes(viewerUser.id)) {
+                viewerUser = null;
+                E.lblViewerName.innerText = "No Viewer Selected";
+                E.txtViewerId.value = "";
+                E.btnViewerJoin.disabled = true;
+            }
+        }
+
+        E.selViewerAccount.onchange = async () => {
+            const selectedId = E.selViewerAccount.value;
+            if (!selectedId) {
+                viewerUser = null;
+                E.lblViewerName.innerText = "No Viewer Selected";
+                E.txtViewerId.value = "";
+                E.btnViewerJoin.disabled = true;
+                cleanupContext();
+                return;
+            }
+
+            viewerUser = testUsers.find(u => u.id === selectedId);
+            if (viewerUser) {
+                E.lblViewerName.innerText = viewerUser.name.toUpperCase();
+                E.txtViewerId.value = viewerUser.id;
+                E.btnViewerJoin.disabled = !selectedStreamRecord;
+
+                await connectSocket(viewerUser.id);
+            }
+        };
+
+        async function connectSocket(userId) {
+            if (socket) socket.disconnect();
+            socket = io(SERVER_URL, { auth: { userId } });
+
+            socket.on("connect", () => {
+                E.lblConnectionStatus.innerText = "Online";
+                E.lblConnectionStatus.className = "bg-green-950 border border-green-800 text-green-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+                if (currentRoomUuid) {
+                    socket.emit("join_stream", { streamId: currentRoomUuid });
+                    console.log("[Socket] Reconnected and rejoined room:", currentRoomUuid);
+                }
+            });
+
+            socket.on("disconnect", () => {
+                E.lblConnectionStatus.innerText = "Offline";
+                E.lblConnectionStatus.className = "bg-red-950/60 border border-red-800 text-red-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+            });
+
+            socket.on("new_message", (msg) => {
+                appendMessage(msg);
+            });
+
+            socket.on("GIFT_SENT", (data) => {
+                if (data && data.gift) {
+                    showGiftAnimation(data.senderName, data.gift.name, data.wealthLevel, data.isLevelUp, data.gift.effectUrl, data.targetUserName);
+                }
+            });
+
+            socket.on("LUCKY_GIFT_WIN", (data) => {
+                if (data && data.rewardCoins) {
+                    appendSystemAlert(`🎰 LUCKY WIN! Winner won ${data.rewardCoins} Coins! (${data.category})`);
+                }
+            });
+
+            socket.on("lucky_gift_win", (data) => {
+                if (data && data.rewardCoins) {
+                    appendSystemAlert(`🎰 LUCKY WIN! Winner won ${data.rewardCoins} Coins! (${data.category})`);
+                }
+            });
+
+            socket.on("GIFT_GALLERY_UPDATE", (data) => {
+                if (data && data.hostUserId) {
+                    updateGiftGalleryTargetsUI(data.currentProgress, data.totalTarget, data.unlockedGiftId);
+                }
+            });
+
+            socket.on("GLOBAL_MESSAGE_SENT", (data) => {
+                showGlobalMessageToast(data.senderName, data.message, data.wealthLevel);
+            });
+
+            socket.on("GLOBAL_ANNOUNCEMENT", (announcement) => {
+                showGlobalAnnouncement(announcement);
+            });
+
+            socket.on("chat_cleared", () => {
+                messageHistory = [];
+                renderChatBox();
+                appendSystemAlert("✨ Chat was cleared by host/admin.");
+            });
+
+            socket.on("user_joined", (data) => {
+                E.lblViewerCount.innerText = data.viewerCount;
+                syncStreamViewers();
+                if (data.ride) {
+                    showEntryRideAnimation(data.username, data.ride);
+                }
+            });
+
+            socket.on("user_left", (data) => {
+                E.lblViewerCount.innerText = data.viewerCount;
+                syncStreamViewers();
+            });
+
+            socket.on("admin_status_changed", (data) => {
+                syncStreamViewers();
+            });
+
+            socket.on("user_kicked", (data) => {
+                syncStreamViewers();
+            });
+
+            socket.on("kicked_from_room", (data) => {
+                alert(data.message || "You have been kicked from the stream.");
+                cleanupContext();
+            });
+
+            socket.on("stream_ended", () => {
+                appendSystemAlert("⚠️ Host has ended the stream.");
+                cleanupContext();
+            });
+
+            socket.on("stream_blocked", (data) => {
+                alert(data.message || "This stream has been terminated by moderation due to explicit content violation.");
+                cleanupContext();
+            });
+
+            socket.on("stream_warning", (data) => {
+                appendSystemAlert(`⚠️ Moderation Warning: ${data.message}`);
+            });
+
+            // Audio sheet events
+            socket.on("sheet_invite_received", ({ streamId, hostUsername }) => {
+                E.lblSheetInviteText.innerText = `${hostUsername} has invited you to join the speaking sheet as a co-host speaker.`;
+                E.sheetInviteModal.classList.remove('hidden');
+            });
+
+            socket.on("sheet_request_accepted", ({ streamId }) => {
+                appendSystemAlert("🎙️ Your request to speak has been approved!");
+                isRequestPending = false;
+                joinAudioSheet();
+            });
+
+            socket.on("sheet_request_rejected", ({ streamId }) => {
+                appendSystemAlert("❌ Your request to speak was declined by the host.");
+                isRequestPending = false;
+                updateViewerSheetControls();
+            });
+
+            socket.on("user_joined_sheet", (data) => {
+                appendSystemAlert(`🎙️ ${data.username} joined the sheet.`);
+                syncSheetUsers();
+            });
+
+            socket.on("user_left_sheet", (data) => {
+                if (viewerUser && data.userId === viewerUser.id) {
+                    leaveAudioSheet();
+                }
+                syncSheetUsers();
+            });
+
+            socket.on("sheet_mute_changed", async (data) => {
+                if (viewerUser && data.userId === viewerUser.id) {
+                    if (data.isMuted) {
+                        isLocalMicEnabled = false;
+                        if (room) {
+                            await room.localParticipant.setMicrophoneEnabled(false);
+                        }
+                        appendSystemAlert("🔇 The host muted your microphone.");
+                    } else {
+                        isLocalMicEnabled = true;
+                        if (room) {
+                            await room.localParticipant.setMicrophoneEnabled(true);
+                        }
+                        appendSystemAlert("🎙️ The host unmuted your microphone.");
+                    }
+                    updateViewerSheetControls();
+                }
+                syncSheetUsers();
+            });
+        }
+
+        async function syncStreamViewers() {
+            const token = viewerUser ? viewerUser.token : (testUsers[1] ? testUsers[1].token : null);
+            if (!token || !selectedStreamRecord) return;
+
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    E.lblViewerCount.innerText = data.viewerCount;
+                    if (selectedStreamRecord) {
+                        selectedStreamRecord.isPasswordProtected = data.isPasswordProtected;
+                    }
+                    if (data.viewers) {
+                        roomActiveViewerIds = data.viewers.map(v => v.id);
+                        rebuildViewerDropdown();
+                        if (data.sheetUsers) {
+                            sheetUsers = data.sheetUsers;
+                        }
+                        currentViewers = data.viewers;
+                        renderViewerList(data.viewers);
+                        renderSheetUsers();
+                    }
+                    if (data.host) {
+                        currentHostDetails = data.host;
+                        if (currentRoomUuid) {
+                            E.lblRoomId.innerHTML = `Host: <span id="btnViewHostProfile" class="text-pink-400 font-bold hover:underline cursor-pointer">${data.host.username}</span> | Room UUID: ${currentRoomUuid}`;
+                            const btnHost = document.getElementById('btnViewHostProfile');
+                            if (btnHost) {
+                                btnHost.onclick = () => showUserProfileModal(data.host, "Host / Broadcaster");
+                            }
+                        }
+                    }
+                }
+            } catch (err) {
+                console.error("Sync viewers failed:", err);
+            }
+        }
+
+        E.btnRefreshList.onclick = refreshActiveStreamsList;
+
+        E.btnClearChat.onclick = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("clear_chat", { streamId: currentRoomUuid });
+            }
+        };
+
+        async function refreshActiveStreamsList() {
+            const fallbackToken = testUsers[1] ? testUsers[1].token : null;
+            const token = viewerUser ? viewerUser.token : fallbackToken;
+            if (!token) return;
+
+            const selectedFilter = (E.selStreamCountryFilter ? E.selStreamCountryFilter.value : 'all') || 'all';
+            let listUrl = `${STREAM_API_BASE}/list?country=${encodeURIComponent(selectedFilter)}`;
+            if (selectedFilter === 'my_country') {
+                listUrl = `${STREAM_API_BASE}/list`;
+            }
+
+            try {
+                const res = await fetch(listUrl, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.data) {
+                    E.divActiveStreams.innerHTML = "";
+                    if (data.data.length === 0) {
+                        E.divActiveStreams.innerHTML = '<p class="text-center text-gray-500 my-4 w-full col-span-full">No active live streams.</p>';
+                        return;
+                    }
+                    data.data.forEach(stream => {
+                        const div = document.createElement("div");
+                        div.className = "w-full p-2.5 bg-gray-900 border border-gray-800 rounded-xl hover:border-pink-500 cursor-pointer transition flex items-center space-x-3 text-left";
+                        div.innerHTML = `
+                            <div class="w-14 h-14 rounded-lg bg-gray-950 overflow-hidden flex-shrink-0 border border-gray-855 relative">
+                                <img class="w-full h-full object-cover" src="${stream.coverImageUrl || 'https://images.unsplash.com/photo-1618005182384-a83a8bd57fbe?w=150'}" alt="cover">
+                            </div>
+                            <div class="flex-grow min-w-0">
+                                <div class="flex items-center space-x-1.5 mb-1 flex-wrap gap-y-0.5">
+                                    <span class="bg-pink-600/10 border border-pink-500/30 text-pink-400 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">${stream.heading || 'Chatting'}</span>
+                                    ${stream.isPasswordProtected ? `<span class="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">🔒 Private</span>` : ''}
+                                </div>
+                                <h4 class="font-bold text-gray-250 truncate text-[11px] leading-tight">${stream.title}</h4>
+                                <span class="text-gray-500 block font-mono text-[8px] mt-0.5 truncate">ID: ${stream.id}</span>
+                            </div>
+                            <span class="text-pink-400 font-extrabold text-[9px] pr-1 flex-shrink-0 animate-pulse">🔴 WATCH</span>
+                        `;
+                        div.onclick = () => selectStream(stream);
+                        E.divActiveStreams.appendChild(div);
+                    });
+                }
+            } catch (err) {
+                console.error("Refresh list failed:", err);
+            }
+        }
+
+        async function selectStream(stream) {
+            selectedStreamRecord = stream;
+            appendSystemAlert(`Selected stream: "${stream.title}"`);
+
+            if (viewerUser) {
+                E.btnViewerJoin.disabled = false;
+            }
+            await syncStreamViewers();
+        }
+
+        async function performJoinRoom(password = "") {
+            if (!selectedStreamRecord || !viewerUser) return;
+            const token = viewerUser.token;
+
+            try {
+                appendSystemAlert("Connecting to Stream...");
+                const payload = password ? { password } : {};
+                const res = await fetch(`${STREAM_API_BASE}/join/${selectedStreamRecord.id}`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    currentRoomUuid = selectedStreamRecord.streamId;
+
+                    E.lblRoomTitle.innerText = selectedStreamRecord.title;
+                    if (data.host) {
+                        currentHostDetails = data.host;
+                        E.lblRoomId.innerHTML = `Host: <span id="btnViewHostProfile" class="text-pink-400 font-bold hover:underline cursor-pointer">${data.host.username}</span> | Room UUID: ${currentRoomUuid}`;
+                        const btnHost = document.getElementById('btnViewHostProfile');
+                        if (btnHost) {
+                            btnHost.onclick = () => showUserProfileModal(data.host, "Host / Broadcaster");
+                        }
+                    } else {
+                        E.lblRoomId.innerText = `Stream UUID: ${currentRoomUuid}`;
+                    }
+                    E.divLiveBadge.classList.remove('hidden');
+                    E.lblViewerCount.innerText = data.viewerCount;
+
+                    E.btnViewerJoin.classList.add('hidden');
+                    E.btnViewerLeave.classList.remove('hidden');
+                    E.selViewerAccount.disabled = true;
+                    E.cardActiveViewers.classList.remove('hidden');
+                    E.cardAudioSheet.classList.remove('hidden');
+                    await syncSheetUsers();
+                    updateViewerSheetControls();
+
+                    roomActiveViewerIds = (data.viewers || []).map(v => v.id);
+                    currentViewers = data.viewers || [];
+                    renderViewerList(data.viewers);
+                    rebuildViewerDropdown();
+
+                    socket.emit("join_stream", { streamId: currentRoomUuid });
+                    await connectLiveKitViewer(data.token);
+
+                    E.txtChatMessage.disabled = false;
+                    E.btnSendChat.disabled = false;
+                    E.txtGlobalMsg.disabled = false;
+                    E.btnSendGlobalMsg.disabled = false;
+                    await fetchChatHistory(selectedStreamRecord.id);
+
+                    // Show Gift container, fetch gifts & user wallet coins
+                    document.getElementById('giftBoxContainer').classList.remove('hidden');
+                    await loadGifts();
+                    await fetchCoins();
+                    await fetchGiftGalleryTargets(selectedStreamRecord.userId);
+
+                    // Close password modal
+                    E.passwordModal.classList.add('hidden');
+                } else {
+                    alert(`Join failed: ${data.message}`);
+                }
+            } catch (err) {
+                console.error("Join stream error:", err);
+            }
+        }
+
+        E.btnViewerJoin.onclick = async () => {
+            if (!selectedStreamRecord || !viewerUser) return;
+
+            E.btnViewerJoin.disabled = true;
+            try {
+                const token = viewerUser.token;
+                const res = await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    selectedStreamRecord.isPasswordProtected = data.isPasswordProtected;
+                }
+            } catch (err) {
+                console.error("Failed to check stream password protection status before join:", err);
+            }
+            E.btnViewerJoin.disabled = false;
+
+            if (selectedStreamRecord.isPasswordProtected) {
+                E.txtJoinPassword.value = "";
+                E.passwordModal.classList.remove('hidden');
+                E.txtJoinPassword.focus();
+            } else {
+                await performJoinRoom();
+            }
+        };
+
+        E.btnClosePassword.onclick = () => {
+            E.passwordModal.classList.add('hidden');
+        };
+
+        E.passwordModal.onclick = (e) => {
+            if (e.target === E.passwordModal) {
+                E.passwordModal.classList.add('hidden');
+            }
+        };
+
+        E.btnSubmitPassword.onclick = async () => {
+            const password = E.txtJoinPassword.value.trim();
+            if (!password) {
+                alert("Please enter the room password.");
+                return;
+            }
+            await performJoinRoom(password);
+        };
+
+        E.txtJoinPassword.onkeydown = async (e) => {
+            if (e.key === "Enter") {
+                const password = E.txtJoinPassword.value.trim();
+                if (!password) {
+                    alert("Please enter the room password.");
+                    return;
+                }
+                await performJoinRoom(password);
+            }
+        };
+
+        E.btnViewerLeave.onclick = async () => {
+            if (!selectedStreamRecord || !viewerUser) return;
+            const token = viewerUser.token;
+
+            try {
+                appendSystemAlert("Leaving Room...");
+                await fetch(`${STREAM_API_BASE}/leave/${selectedStreamRecord.id}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+
+                roomActiveViewerIds = roomActiveViewerIds.filter(id => id !== viewerUser.id);
+                E.selViewerAccount.disabled = false;
+                cleanupContext();
+            } catch (err) {
+                console.error("Leave stream error:", err);
+            }
+        };
+
+        async function connectLiveKitViewer(livekitToken) {
+            try {
+                if (room) room.disconnect();
+                room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+
+                room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
+                    const placeholder = document.getElementById('lblRemoteFeedPlaceholder');
+                    if (track.kind === 'video' || track.kind === 'audio') {
+                        const el = track.attach();
+                        if (track.kind === 'video') {
+                            el.className = "w-full h-full object-cover shadow-inner";
+                            E.divRemoteVideo.innerHTML = "";
+                            E.divRemoteVideo.appendChild(el);
+
+                            if (publication.isMuted) {
+                                E.divRemoteVideo.classList.add('hidden');
+                                placeholder.innerText = "🚫 Camera is Off (Host)";
+                            } else {
+                                E.divRemoteVideo.classList.remove('hidden');
+                                placeholder.innerText = "🎥 Video Stream Feed";
+                            }
+                        } else if (track.kind === 'audio') {
+                            el.id = `audio-track-${participant.identity}`;
+                            if (locallyMutedParticipants.has(participant.identity)) {
+                                el.muted = true;
+                            }
+                            document.body.appendChild(el);
+                        }
+                    }
+                });
+
+                room.on(LivekitClient.RoomEvent.TrackUnsubscribed, (track) => {
+                    track.detach().forEach(el => el.remove());
+                });
+
+                room.on(LivekitClient.RoomEvent.TrackMuted, (publication, participant) => {
+                    const placeholder = document.getElementById('lblRemoteFeedPlaceholder');
+                    if (publication.kind === 'video') {
+                        E.divRemoteVideo.classList.add('hidden');
+                        placeholder.innerText = "🚫 Camera is Off (Host)";
+                        appendSystemAlert("📷 Host turned off camera.");
+                    }
+                    if (publication.kind === 'audio') {
+                        appendSystemAlert("🔇 Host muted microphone.");
+                    }
+                });
+
+                room.on(LivekitClient.RoomEvent.TrackUnmuted, (publication, participant) => {
+                    const placeholder = document.getElementById('lblRemoteFeedPlaceholder');
+                    if (publication.kind === 'video') {
+                        E.divRemoteVideo.classList.remove('hidden');
+                        placeholder.innerText = "🎥 Video Stream Feed";
+                        appendSystemAlert("📷 Host turned on camera.");
+                    }
+                    if (publication.kind === 'audio') {
+                        appendSystemAlert("🎙️ Host unmuted microphone.");
+                    }
+                });
+
+                await room.connect(LIVEKIT_URL, livekitToken);
+                appendSystemAlert("🔌 Subscribed to Broadcast Feed.");
+            } catch (err) {
+                console.error("LiveKit connection error:", err);
+                appendSystemAlert("❌ Subscription Failed.");
+            }
+        }
+
+        E.chkChatsOnly.onchange = async () => {
+            if (selectedStreamRecord) {
+                await fetchChatHistory(selectedStreamRecord.id);
+            } else {
+                renderChatBox();
+            }
+        };
+
+        async function fetchChatHistory(streamDbId) {
+            try {
+                const chatsOnly = E.chkChatsOnly.checked;
+                const token = viewerUser ? viewerUser.token : (testUsers[1] ? testUsers[1].token : null);
+                const res = await fetch(`${STREAM_API_BASE}/${streamDbId}/messages?chatsOnly=${chatsOnly}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.data) {
+                    messageHistory = data.data;
+                    renderChatBox();
+                }
+            } catch (err) {
+                console.error("Fetch chat history error:", err);
+            }
+        }
+
+        if (E.selStreamCountryFilter) {
+            E.selStreamCountryFilter.onchange = refreshActiveStreamsList;
+        }
+
+        E.btnSendChat.onclick = sendChatMessage;
+        E.txtChatMessage.onkeydown = (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        };
+        E.btnCancelReply.onclick = cancelReply;
+
+        E.btnSendGlobalMsg.onclick = sendGlobalMessage;
+        E.txtGlobalMsg.onkeydown = (e) => {
+            if (e.key === 'Enter') sendGlobalMessage();
+        };
+
+        async function sendGlobalMessage() {
+            const text = E.txtGlobalMsg.value.trim();
+            if (!text || !viewerUser) return;
+
+            try {
+                E.btnSendGlobalMsg.disabled = true;
+                E.txtGlobalMsg.disabled = true;
+
+                const res = await fetch(`${SERVER_URL}/api/live-stream/global-message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${viewerUser.token}`
+                    },
+                    body: JSON.stringify({ message: text })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    E.txtGlobalMsg.value = "";
+                    await fetchCoins(); // Refresh viewer coins count
+                } else {
+                    alert(`Failed to send global message: ${data.message}`);
+                }
+            } catch (err) {
+                console.error("Error sending global message:", err);
+                alert("Network error sending global message.");
+            } finally {
+                E.btnSendGlobalMsg.disabled = false;
+                E.txtGlobalMsg.disabled = false;
+                E.txtGlobalMsg.focus();
+            }
+        }
+
+        async function sendChatMessage() {
+            const text = E.txtChatMessage.value.trim();
+            if (!text || !selectedStreamRecord || !viewerUser) return;
+
+            const payload = { message: text };
+            if (activeReplyState) {
+                payload.replyToMessageId = activeReplyState.messageId;
+                payload.replyToUserId = activeReplyState.userId;
+                payload.replyToUsername = activeReplyState.username;
+                payload.replyToText = activeReplyState.text;
+            }
+
+            try {
+                await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}/message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${viewerUser.token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                E.txtChatMessage.value = "";
+                cancelReply();
+            } catch (err) {
+                console.error("Send message error:", err);
+            }
+        }
+
+        const SYSTEM_SENDER_ID = "00000000-0000-0000-0000-000000000000";
+
+        function renderChatBox() {
+            E.divChatBox.innerHTML = "";
+            const chatsOnly = E.chkChatsOnly.checked;
+
+            messageHistory.forEach(msg => {
+                if (chatsOnly && msg.senderId === SYSTEM_SENDER_ID) {
+                    return;
+                }
+
+                if (msg.senderId === SYSTEM_SENDER_ID) {
+                    const div = document.createElement("div");
+                    div.className = "p-1.5 bg-pink-950/20 text-pink-300 rounded border border-pink-900/30 text-center text-[10px] italic my-1";
+                    div.innerText = msg.message;
+                    E.divChatBox.appendChild(div);
+                } else {
+                    const div = document.createElement("div");
+                    let customBubbleClass = "bg-gray-900 border border-gray-855";
+                    if (msg.chatBubble && msg.chatBubble.effectUrl) {
+                        customBubbleClass = `bubble-gradient-${msg.chatBubble.effectUrl}`;
+                    }
+                    div.className = `p-2 ${customBubbleClass} rounded flex flex-col space-y-0.5 text-left my-1`;
+                    const senderName = msg.sender?.username || "Guest";
+                    const dateStr = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    let replyBlockHtml = "";
+                    if (msg.replyToUsername && msg.replyToText) {
+                        replyBlockHtml = `
+                            <div class="bg-gray-950/60 p-1 border-l-2 border-purple-500 rounded text-[9px] text-gray-400 mb-1 truncate">
+                                ↩️ Reply to @${msg.replyToUsername}: "${msg.replyToText}"
+                            </div>
+                        `;
+                    }
+
+                    const cleanMsgText = msg.message.replace(/'/g, "\\'").replace(/"/g, '\\"');
+
+                    div.innerHTML = `
+                        <div class="flex justify-between items-center text-[10px] mb-0.5">
+                            <span class="font-extrabold text-pink-400 cursor-pointer hover:underline" onclick="openUserProfileFromChat('${msg.senderId}', '${senderName}')">${senderName}</span>
+                            <div class="flex items-center space-x-1.5">
+                                <button class="text-purple-400 hover:text-purple-300 font-bold" onclick="setReplyTarget('${msg.id}', '${msg.senderId}', '${senderName}', '${cleanMsgText}')">Reply</button>
+                                <span class="text-gray-500 font-mono">${dateStr}</span>
+                            </div>
+                        </div>
+                        ${replyBlockHtml}
+                        <p class="text-gray-200 leading-tight">${msg.message}</p>
+                    `;
+                    E.divChatBox.appendChild(div);
+                }
+            });
+            E.divChatBox.scrollTop = E.divChatBox.scrollHeight;
+        }
+
+        function appendMessage(msg) {
+            messageHistory.push(msg);
+            renderChatBox();
+        }
+
+        function appendSystemAlert(text) {
+            const div = document.createElement("div");
+            div.className = "p-1.5 bg-pink-950/20 text-pink-300 rounded border border-pink-900/30 text-center text-[10px] italic my-1";
+            div.innerText = text;
+            E.divChatBox.appendChild(div);
+            E.divChatBox.scrollTop = E.divChatBox.scrollHeight;
+        }
+
+        function cleanupContext() {
+            if (socket && currentRoomUuid) {
+                socket.emit("leave_stream", { streamId: currentRoomUuid });
+            }
+            if (room) {
+                room.disconnect();
+                room = null;
+            }
+            E.divRemoteVideo.classList.add('hidden');
+            E.divRemoteVideo.innerHTML = "";
+            E.divLiveBadge.classList.add('hidden');
+            const galleryBadge = document.getElementById("divGiftGalleryBadge");
+            if (galleryBadge) galleryBadge.classList.add("hidden");
+            giftGalleryData = null;
+
+            E.lblRoomTitle.innerText = "Offline Console";
+            E.lblRoomId.innerText = "Please select a stream and click Join";
+
+            E.btnViewerJoin.classList.remove('hidden');
+            E.btnViewerLeave.classList.add('hidden');
+            E.cardActiveViewers.classList.add('hidden');
+            E.cardAudioSheet.classList.add('hidden');
+            document.getElementById('giftBoxContainer').classList.add('hidden');
+            selectedGiftId = null;
+            document.getElementById('btnSendGift').disabled = true;
+
+            E.divViewerList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>';
+            E.divSheetUserList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>';
+            isRequestPending = false;
+            isLocalMicEnabled = false;
+            sheetUsers = [];
+            E.selViewerAccount.disabled = false;
+
+            E.txtChatMessage.disabled = true;
+            E.btnSendChat.disabled = true;
+            E.txtGlobalMsg.disabled = true;
+            E.btnSendGlobalMsg.disabled = true;
+            E.txtGlobalMsg.value = "";
+
+            document.getElementById('lblRemoteFeedPlaceholder').innerText = "🎥 Video Stream Feed";
+
+            selectedStreamRecord = null;
+            currentRoomUuid = null;
+            messageHistory = [];
+            amIAdminGlobal = false;
+            updateChatClearButtonVisibility();
+            appendSystemAlert("🔌 Session ended.");
+            rebuildViewerDropdown();
+            refreshActiveStreamsList();
+        }
+
+        function renderViewerList(viewersList) {
+            E.divViewerList.innerHTML = "";
+
+            if (!viewersList || viewersList.length === 0) {
+                E.divViewerList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>';
+                return;
+            }
+
+            // Find current user's admin status
+            const currentViewerRecord = viewersList.find(v => v.id === (viewerUser ? viewerUser.id : null));
+            const amIAdmin = currentViewerRecord ? currentViewerRecord.isAdmin : false;
+            amIAdminGlobal = amIAdmin;
+
+            viewersList.forEach(v => {
+                const div = document.createElement("div");
+                div.className = "flex items-center justify-between p-2 bg-gray-950 rounded border border-gray-800 text-xs";
+
+                const nameSpan = document.createElement("span");
+                nameSpan.className = "font-semibold flex items-center space-x-1.5 cursor-pointer hover:text-pink-400 transition";
+                nameSpan.innerHTML = `
+                    <span class="text-gray-300">${v.username || 'Guest User'}</span>
+                    ${v.isAdmin ? '<span class="bg-purple-950/80 text-purple-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-purple-800/40">Admin 👑</span>' : ''}
+                `;
+                nameSpan.onclick = () => showUserProfileModal(v, v.isAdmin ? "Room Admin" : "Room Viewer");
+
+                div.appendChild(nameSpan);
+
+                const actionDiv = document.createElement("div");
+                actionDiv.className = "flex items-center space-x-1.5";
+
+                // Show Invite to Sheet / Sheet Badge only if I am an admin, the target is not me, and target is not host
+                const isTargetHost = selectedStreamRecord && v.id === selectedStreamRecord.userId;
+                if (amIAdmin && v.id !== viewerUser.id && !isTargetHost) {
+                    const isOnSheet = sheetUsers.some(su => su.userId === v.id);
+                    if (isOnSheet) {
+                        const sheetBadge = document.createElement("span");
+                        sheetBadge.className = "bg-yellow-950/80 text-yellow-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-yellow-800/40 mr-1";
+                        sheetBadge.innerText = "🎙️ Sheet";
+                        actionDiv.appendChild(sheetBadge);
+                    } else {
+                        const btnInvite = document.createElement("button");
+                        btnInvite.className = "bg-yellow-600 hover:bg-yellow-500 text-white px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer mr-1";
+                        btnInvite.innerText = "Invite";
+                        btnInvite.onclick = () => inviteToSheet(v.id);
+                        actionDiv.appendChild(btnInvite);
+                    }
+                }
+
+                // Show Kick button only if I am an admin, the target is not me, and target is not host/admin
+                if (amIAdmin && v.id !== viewerUser.id && !isTargetHost && !v.isAdmin) {
+                    const btnKick = document.createElement("button");
+                    btnKick.className = "bg-red-950/40 border border-red-900/60 text-red-400 hover:bg-red-900/40 px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer";
+                    btnKick.innerText = "Kick";
+                    btnKick.onclick = () => kickUser(v.id);
+                    actionDiv.appendChild(btnKick);
+                }
+
+                div.appendChild(actionDiv);
+                E.divViewerList.appendChild(div);
+            });
+            updateChatClearButtonVisibility();
+        }
+
+        function updateChatClearButtonVisibility() {
+            if (!E.btnClearChat) return;
+            if (amIAdminGlobal) {
+                E.btnClearChat.classList.remove('hidden');
+            } else {
+                E.btnClearChat.classList.add('hidden');
+            }
+        }
+
+        async function kickUser(targetUserId) {
+            if (!selectedStreamRecord || !viewerUser) return;
+            if (!confirm("Are you sure you want to remove this user from the stream?")) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}/kick`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${viewerUser.token}`
+                    },
+                    body: JSON.stringify({ targetUserId })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    alert(data.message);
+                } else {
+                    await syncStreamViewers();
+                }
+            } catch (err) {
+                console.error("Kick user failed:", err);
+            }
+        }
+
+        function showUserProfileModal(userObj, role) {
+            const existing = document.getElementById('userProfileModal');
+            if (existing) existing.remove();
+
+            const modal = document.createElement("div");
+            modal.id = "userProfileModal";
+            modal.className = "fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4";
+
+            modal.innerHTML = `
+                <div class="bg-gray-950 border border-gray-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-5 relative">
+                    <!-- Close button -->
+                    <button onclick="document.getElementById('userProfileModal').remove()" class="absolute top-4 right-4 text-gray-400 hover:text-white transition cursor-pointer text-lg font-bold">✕</button>
+                    
+                    <!-- Header/Avatar placeholder -->
+                    <div class="flex flex-col items-center text-center space-y-2.5">
+                        <div class="h-16 w-16 bg-gradient-to-tr from-pink-500 to-purple-600 rounded-full flex items-center justify-center text-2xl font-black text-white shadow-lg">
+                            ${userObj.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <h4 class="text-base font-extrabold text-gray-100">${userObj.username}</h4>
+                            <p class="text-[10px] uppercase font-bold tracking-widest text-purple-400 mt-0.5">${role}</p>
+                        </div>
+                    </div>
+
+                    <!-- Details grid -->
+                    <div class="grid grid-cols-2 gap-3 bg-gray-900/60 p-4 rounded-xl border border-gray-800">
+                        <div class="text-center space-y-0.5">
+                            <span class="block text-[10px] text-gray-500 uppercase font-medium">Wealth Level</span>
+                            <span class="block text-base font-black text-yellow-500">🏆 Lvl ${userObj.wealthLevel || 0}</span>
+                        </div>
+                        <div class="text-center space-y-0.5">
+                            <span class="block text-[10px] text-gray-500 uppercase font-medium">Live Level</span>
+                            <span class="block text-base font-black text-pink-500">🔥 Lvl ${userObj.livestreamLevel || 0}</span>
+                        </div>
+                    </div>
+
+                    <!-- Tag System Button -->
+                    ${(viewerUser && userObj.id !== viewerUser.id) ? `
+                    <div class="flex flex-col gap-2 pt-2">
+                        <button onclick="tagUserForGift('${userObj.id}', '${userObj.username}')" class="w-full bg-gradient-to-r from-pink-500 to-purple-600 hover:from-pink-600 hover:to-purple-700 text-white font-semibold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5">
+                            <span>🎁</span> Tag for Gift
+                        </button>
+                        <button onclick="mentionUserInChat('${userObj.username}')" class="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5">
+                            <span>💬</span> Mention in Chat
+                        </button>
+                        <button id="btnFollowToggle" disabled class="w-full text-white font-semibold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5 bg-gray-800 border border-gray-700">
+                            Loading Follow...
+                        </button>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+
+            if (viewerUser && userObj.id !== viewerUser.id) {
+                const btnFollow = document.getElementById("btnFollowToggle");
+                fetch(`${STREAM_API_BASE}/follow-check/${userObj.id}`, {
+                    headers: { 'Authorization': `Bearer ${viewerUser.token}` }
+                })
+                    .then(r => r.json())
+                    .then(data => {
+                        if (data.success) {
+                            updateFollowButtonState(btnFollow, data.isFollowing, userObj.id);
+                        }
+                    })
+                    .catch(err => console.error("Error checking follow status:", err));
+            }
+        }
+
+        function updateFollowButtonState(btn, isFollowing, targetUserId) {
+            if (!btn) return;
+            btn.disabled = false;
+
+            if (isFollowing) {
+                btn.className = "w-full bg-red-950/40 border border-red-900/60 hover:bg-red-900/40 text-red-400 font-bold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5";
+                btn.innerText = "Unfollow";
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    try {
+                        const res = await fetch(`${STREAM_API_BASE}/unfollow/${targetUserId}`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${viewerUser.token}`
+                            },
+                            body: JSON.stringify({ streamId: currentRoomUuid })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            updateFollowButtonState(btn, false, targetUserId);
+                            appendSystemAlert(`Unfollowed successfully.`);
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    } finally {
+                        btn.disabled = false;
+                    }
+                };
+            } else {
+                btn.className = "w-full bg-purple-950/40 border border-purple-900/60 hover:bg-purple-900/40 text-purple-400 font-bold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5";
+                btn.innerText = "Follow";
+                btn.onclick = async () => {
+                    btn.disabled = true;
+                    try {
+                        const res = await fetch(`${STREAM_API_BASE}/follow/${targetUserId}`, {
+                            method: "POST",
+                            headers: {
+                                "Content-Type": "application/json",
+                                "Authorization": `Bearer ${viewerUser.token}`
+                            },
+                            body: JSON.stringify({ streamId: currentRoomUuid })
+                        });
+                        const data = await res.json();
+                        if (data.success) {
+                            updateFollowButtonState(btn, true, targetUserId);
+                            appendSystemAlert(`Followed successfully.`);
+                        }
+                    } catch (err) {
+                        console.error(err);
+                    } finally {
+                        btn.disabled = false;
+                    }
+                };
+            }
+        }
+
+        function setReplyTarget(messageId, userId, username, text) {
+            activeReplyState = { messageId, userId, username, text };
+            const banner = document.getElementById("replyBanner");
+            const bannerText = document.getElementById("replyBannerText");
+            if (banner && bannerText) {
+                bannerText.innerText = `Replying to @${username}: "${text.substring(0, 25)}${text.length > 25 ? '...' : ''}"`;
+                banner.classList.remove("hidden");
+            }
+            const input = document.getElementById("txtChatMessage");
+            if (input) input.focus();
+        }
+        window.setReplyTarget = setReplyTarget;
+
+        function cancelReply() {
+            activeReplyState = null;
+            const banner = document.getElementById("replyBanner");
+            if (banner) {
+                banner.classList.add("hidden");
+            }
+        }
+        window.cancelReply = cancelReply;
+
+        function mentionUserInChat(username) {
+            const input = document.getElementById("txtChatMessage");
+            if (input) {
+                input.value = `@${username} ` + input.value;
+                input.focus();
+            }
+            const modal = document.getElementById('userProfileModal');
+            if (modal) modal.remove();
+        }
+        window.mentionUserInChat = mentionUserInChat;
+
+        window.openUserProfileFromChat = function (userId, username) {
+            if (currentHostDetails && currentHostDetails.id === userId) {
+                showUserProfileModal(currentHostDetails, "Host / Broadcaster");
+                return;
+            }
+            const found = currentViewers.find(v => v.id === userId);
+            if (found) {
+                showUserProfileModal(found, found.isAdmin ? "Room Admin" : "Room Viewer");
+                return;
+            }
+            const testFound = testUsers.find(u => u.id === userId);
+            if (testFound) {
+                showUserProfileModal(testFound, "User");
+                return;
+            }
+            showUserProfileModal({ id: userId, username: username }, "User");
+        };
+
+        let taggedGiftUser = null;
+
+        window.tagUserForGift = function (userId, username) {
+            taggedGiftUser = { id: userId, name: username };
+            const modal = document.getElementById('userProfileModal');
+            if (modal) modal.remove();
+            updateGiftContainerTagBadge();
+        };
+
+        window.clearTaggedUser = function () {
+            taggedGiftUser = null;
+            updateGiftContainerTagBadge();
+        };
+
+        function updateGiftContainerTagBadge() {
+            const badge = document.getElementById('giftTagBadge');
+            const lbl = document.getElementById('lblTaggedUser');
+            if (taggedGiftUser) {
+                badge.classList.remove('hidden');
+                lbl.innerText = `Sending to: @${taggedGiftUser.name}`;
+            } else {
+                badge.classList.add('hidden');
+                lbl.innerText = '';
+            }
+        }
+
+        E.btnAcceptSheetInvite.onclick = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("accept_sheet_invite", { streamId: currentRoomUuid });
+                E.sheetInviteModal.classList.add('hidden');
+                joinAudioSheet();
+            }
+        };
+
+        E.btnDeclineSheetInvite.onclick = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("decline_sheet_invite", { streamId: currentRoomUuid });
+                E.sheetInviteModal.classList.add('hidden');
+            }
+        };
+
+        async function syncSheetUsers() {
+            const token = viewerUser ? viewerUser.token : (testUsers[1] ? testUsers[1].token : null);
+            if (!token || !selectedStreamRecord) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    if (data.viewers) {
+                        const currentViewerRecord = data.viewers.find(v => v.id === (viewerUser ? viewerUser.id : null));
+                        amIAdminGlobal = currentViewerRecord ? currentViewerRecord.isAdmin : false;
+                    }
+                    if (data.sheetUsers) {
+                        sheetUsers = data.sheetUsers;
+                        renderSheetUsers();
+                        updateViewerSheetControls();
+                    }
+                }
+            } catch (err) {
+                console.error("Failed to sync sheet users:", err);
+            }
+        }
+
+        function renderSheetUsers() {
+            if (sheetUsers.length === 0) {
+                E.divSheetUserList.innerHTML = `<p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>`;
+                return;
+            }
+
+            E.divSheetUserList.innerHTML = sheetUsers.map(u => {
+                const muteIcon = u.isMuted ? "🔇" : "🎙️";
+                const muteLabel = u.isMuted ? "Muted" : "Speaking";
+                const muteColor = u.isMuted ? "text-amber-500" : "text-green-450";
+
+                const isTargetHost = selectedStreamRecord && u.userId === selectedStreamRecord.userId;
+                const isTargetMe = viewerUser && u.userId === viewerUser.id;
+
+                let localMuteBtn = "";
+                if (!isTargetHost && !isTargetMe) {
+                    const isLocallyMuted = locallyMutedParticipants.has(u.userId);
+                    const localMuteIcon = isLocallyMuted ? "🔇" : "🔊";
+                    const localMuteClass = isLocallyMuted ? "text-red-500 hover:text-red-400" : "text-gray-400 hover:text-white";
+                    localMuteBtn = `<button onclick="toggleLocalMute('${u.userId}', '${u.username}')" class="${localMuteClass} text-xs ml-2 cursor-pointer transition font-bold" title="Mute locally for me">${localMuteIcon}</button>`;
+                }
+
+                if (amIAdminGlobal && !isTargetMe && !isTargetHost) {
+                    const controlLabel = u.isMuted ? "Unmute" : "Mute";
+                    const controlClass = u.isMuted ? "bg-amber-600 hover:bg-amber-500" : "bg-gray-850 hover:bg-gray-800";
+                    return `
+                        <div class="flex items-center justify-between bg-gray-950 p-2 border border-gray-850 rounded">
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-xs ${muteColor}">${muteIcon}</span>
+                                <span class="text-xs font-semibold text-gray-250">${u.username}</span>
+                                ${localMuteBtn}
+                            </div>
+                            <div class="flex space-x-1.5">
+                                <button onclick="toggleSheetMute('${u.userId}', ${u.isMuted})" class="${controlClass} text-[10px] px-2 py-0.5 rounded cursor-pointer transition text-white font-semibold">${controlLabel}</button>
+                                <button onclick="removeFromSheet('${u.userId}')" class="bg-red-650 hover:bg-red-500 text-[10px] px-2 py-0.5 rounded cursor-pointer transition text-white font-semibold">Remove</button>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    return `
+                        <div class="flex items-center justify-between bg-gray-950 p-2 border border-gray-850 rounded">
+                            <div class="flex items-center space-x-1.5">
+                                <span class="text-xs ${muteColor}">${muteIcon}</span>
+                                <span class="text-xs font-semibold text-gray-250">${u.username}</span>
+                                ${localMuteBtn}
+                            </div>
+                            <span class="text-[9px] uppercase tracking-wider font-bold ${muteColor}">${muteLabel}</span>
+                        </div>
+                    `;
+                }
+            }).join('');
+        }
+
+        window.toggleLocalMute = (userId, username) => {
+            if (locallyMutedParticipants.has(userId)) {
+                locallyMutedParticipants.delete(userId);
+                const audioEl = document.getElementById(`audio-track-${userId}`);
+                if (audioEl) {
+                    audioEl.muted = false;
+                }
+                appendSystemAlert(`🔊 Unmuted ${username} locally.`);
+            } else {
+                locallyMutedParticipants.add(userId);
+                const audioEl = document.getElementById(`audio-track-${userId}`);
+                if (audioEl) {
+                    audioEl.muted = true;
+                }
+                appendSystemAlert(`🔇 Muted ${username} locally.`);
+            }
+            renderSheetUsers();
+        };
+
+        window.inviteToSheet = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("invite_to_sheet", {
+                    streamId: currentRoomUuid,
+                    targetUserId
+                });
+                appendSystemAlert(`🎙️ Sent sheet invitation.`);
+            }
+        };
+
+        window.toggleSheetMute = (targetUserId, currentMutedState) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("toggle_sheet_mute", {
+                    streamId: currentRoomUuid,
+                    targetUserId,
+                    muteState: !currentMutedState
+                });
+            }
+        };
+
+        window.removeFromSheet = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("remove_from_sheet", {
+                    streamId: currentRoomUuid,
+                    targetUserId
+                });
+            }
+        };
+
+        function updateViewerSheetControls() {
+            if (!viewerUser) return;
+            const myEntry = sheetUsers.find(su => su.userId === viewerUser.id);
+            if (myEntry) {
+                if (myEntry.mutedByHost) {
+                    E.divViewerSheetActions.innerHTML = `
+                        <div class="w-full bg-red-950/60 border border-red-800 text-red-400 text-xs py-2 rounded-lg font-bold text-center mb-2 flex items-center justify-center space-x-1">
+                            <span>🔒</span> <span>Muted by Host</span>
+                        </div>
+                        <button onclick="leaveSheetClicked()" class="w-full bg-red-650 hover:bg-red-500 text-xs py-2 rounded-lg font-bold transition text-white">Leave Sheet</button>
+                    `;
+                } else {
+                    const micLabel = isLocalMicEnabled ? "Mute Microphone" : "Unmute Microphone";
+                    const micClass = isLocalMicEnabled ? "bg-amber-600 hover:bg-amber-500" : "bg-green-600 hover:bg-green-500";
+                    E.divViewerSheetActions.innerHTML = `
+                        <button onclick="toggleLocalSheetMic()" class="w-full ${micClass} text-xs py-2 rounded-lg font-bold transition text-white">${micLabel}</button>
+                        <button onclick="leaveSheetClicked()" class="w-full bg-red-650 hover:bg-red-500 text-xs py-2 rounded-lg font-bold transition text-white">Leave Sheet</button>
+                    `;
+                }
+            } else if (isRequestPending) {
+                E.divViewerSheetActions.innerHTML = `
+                    <button onclick="cancelRequestSpeak()" class="w-full bg-gray-700 hover:bg-gray-600 text-xs py-2 rounded-lg font-bold transition text-white">⏳ Request Pending... Cancel</button>
+                `;
+            } else {
+                E.divViewerSheetActions.innerHTML = `
+                    <button onclick="requestToSpeak()" class="w-full bg-yellow-600 hover:bg-yellow-500 text-xs py-2 rounded-lg font-bold transition text-white">🎙️ Request to Speak</button>
+                `;
+            }
+        }
+
+        window.requestToSpeak = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("request_to_join_sheet", { streamId: currentRoomUuid });
+                isRequestPending = true;
+                appendSystemAlert("🎙️ Speak request sent to host.");
+                updateViewerSheetControls();
+            }
+        };
+
+        window.cancelRequestSpeak = () => {
+            isRequestPending = false;
+            appendSystemAlert("🎙️ Speak request cancelled.");
+            updateViewerSheetControls();
+        };
+
+        window.toggleLocalSheetMic = async () => {
+            if (!room) return;
+            try {
+                isLocalMicEnabled = !isLocalMicEnabled;
+                await room.localParticipant.setMicrophoneEnabled(isLocalMicEnabled);
+                socket.emit("toggle_self_mute", {
+                    streamId: currentRoomUuid,
+                    muteState: !isLocalMicEnabled
+                });
+                appendSystemAlert(isLocalMicEnabled ? "🎙️ Microphone unmuted." : "🔇 Microphone muted.");
+                updateViewerSheetControls();
+            } catch (err) {
+                console.error("Toggle local mic failed:", err);
+            }
+        };
+
+        window.leaveSheetClicked = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("leave_sheet", { streamId: currentRoomUuid });
+            }
+        };
+
+        async function joinAudioSheet() {
+            try {
+                if (!room) return;
+                isLocalMicEnabled = true;
+                await room.localParticipant.setMicrophoneEnabled(true);
+                socket.emit("toggle_self_mute", {
+                    streamId: currentRoomUuid,
+                    muteState: false
+                });
+                appendSystemAlert("🎙️ Your microphone is now live on the sheet.");
+                await syncSheetUsers();
+            } catch (err) {
+                console.error("Failed to enable mic on sheet:", err);
+                appendSystemAlert("⚠️ Failed to access microphone.");
+            }
+        }
+
+        async function leaveAudioSheet() {
+            try {
+                isLocalMicEnabled = false;
+                if (room) {
+                    await room.localParticipant.setMicrophoneEnabled(false);
+                }
+                appendSystemAlert("🎙️ You left the audio sheet.");
+                await syncSheetUsers();
+            } catch (err) {
+                console.error("Failed to disable mic:", err);
+            }
+        }
+
+        // Live Streaming Gift System
+        let allGifts = [];
+        let selectedGiftId = null;
+
+        async function loadGifts() {
+            if (!viewerUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/gifts`, {
+                    headers: { 'Authorization': `Bearer ${viewerUser.token}` }
+                });
+                const response = await res.json();
+                if (response.success) {
+                    allGifts = response.data;
+                    renderGifts();
+                } else {
+                    console.error("Failed to load gifts:", response.message);
+                }
+            } catch (err) {
+                console.error("Failed to load gifts:", err);
+            }
+        }
+
+        async function fetchCoins() {
+            if (!viewerUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/wallet/balance`, {
+                    headers: { 'Authorization': `Bearer ${viewerUser.token}` }
+                });
+                const response = await res.json();
+                if (response.success) {
+                    document.getElementById("lblCoinsDisplay").innerText = `Coins: ${response.balance}`;
+                }
+            } catch (err) {
+                console.error("Failed to fetch wallet coins:", err);
+            }
+        }
+
+        function renderGifts() {
+            const container = document.getElementById("giftsGrid");
+            if (!container) return;
+            container.innerHTML = "";
+
+            if (allGifts.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center text-xs text-gray-500 py-3 font-semibold">No active gifts found.</div>`;
+                return;
+            }
+
+            allGifts.forEach(gift => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.onclick = () => selectGift(gift.id, btn);
+                btn.className = "gift-btn bg-gray-950 border border-gray-850 hover:border-pink-500 p-2 rounded-xl flex flex-col items-center justify-center transition transform hover:scale-105 w-full overflow-hidden relative";
+
+                const isLucky = gift.isLucky || gift.effectLuckyGift;
+                const luckyBadge = isLucky ? `<span class="absolute top-1 right-1 text-[7px] bg-gradient-to-r from-amber-500 to-yellow-400 text-black px-1 py-0.2 rounded font-extrabold shadow">🎰 LUCKY</span>` : '';
+
+                const nameLower = gift.name.toLowerCase();
+                let iconHtml = `<span class="text-2xl">🎁</span>`;
+                if (gift.displayImageUrl) {
+                    iconHtml = `<img src="${gift.displayImageUrl}" class="w-8 h-8 object-contain rounded" alt="${gift.name}" />`;
+                } else {
+                    if (nameLower.includes("rose")) iconHtml = `<span class="text-2xl">🌹</span>`;
+                    else if (nameLower.includes("heart")) iconHtml = `<span class="text-2xl">💖</span>`;
+                    else if (nameLower.includes("crown")) iconHtml = `<span class="text-2xl">👑</span>`;
+                    else if (nameLower.includes("skull")) iconHtml = `<span class="text-2xl">💀</span>`;
+                }
+
+                btn.innerHTML = `
+                    ${luckyBadge}
+                    ${iconHtml}
+                    <span class="text-[9px] text-gray-300 mt-1 font-bold truncate max-w-full" title="${gift.name}">${gift.name}</span>
+                    <span class="text-[8px] text-yellow-450 font-bold bg-yellow-400/10 px-1.5 py-0.5 rounded-full mt-0.5">${gift.coinCost}c</span>
+                `;
+                container.appendChild(btn);
+            });
+        }
+
+        function selectGift(giftId, btn) {
+            selectedGiftId = giftId;
+            document.querySelectorAll(".gift-btn").forEach(b => {
+                b.classList.remove("border-pink-500");
+                b.classList.add("border-gray-850");
+            });
+            btn.classList.add("border-pink-500");
+            btn.classList.remove("border-gray-850");
+
+            document.getElementById("btnSendGift").disabled = false;
+        }
+
+        async function triggerSendGift() {
+            if (!selectedStreamRecord || !selectedGiftId || !viewerUser) return;
+
+            const sendBtn = document.getElementById("btnSendGift");
+            sendBtn.disabled = true;
+            sendBtn.innerText = "Sending...";
+
+            const comboCount = Number(document.getElementById("selGiftCount")?.value || 1);
+
+            try {
+                const payload = { giftId: selectedGiftId, count: comboCount };
+                if (taggedGiftUser) {
+                    payload.targetUserId = taggedGiftUser.id;
+                }
+
+                const res = await fetch(`${STREAM_API_BASE}/${selectedStreamRecord.id}/send-gift`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${viewerUser.token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const modeText = comboCount > 1 ? `x${comboCount} Combo` : `Single`;
+
+                    const resData = data.data || {};
+                    if (resData.isLucky || resData.sendValue !== undefined) {
+                        const sendVal = resData.sendValue !== undefined ? resData.sendValue : totalSpentCoins;
+                        const returnVal = resData.returnValue !== undefined ? resData.returnValue : 0;
+                        showLuckyReturnOverlay(sendVal, returnVal);
+                    } else {
+                        appendSystemAlert(`🎁 Gift (${modeText}) sent successfully!`);
+                    }
+
+                    await fetchCoins();
+                    clearTaggedUser();
+                } else {
+                    alert(`Failed to send gift: ${data.message}`);
+                }
+            } catch (err) {
+                console.error("Error sending gift:", err);
+                alert("Network error sending gift.");
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerText = "Send Gift";
+            }
+        }
+
+        function showLuckyReturnOverlay(sendVal, returnVal) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay) return;
+
+            const popDiv = document.createElement("div");
+            popDiv.className = "gift-pop flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_20px_40px_rgba(0,0,0,0.8)] z-50 transition duration-500 transform scale-100 my-2";
+
+            popDiv.innerHTML = `
+                <div class="bg-gradient-to-r from-purple-950/90 via-pink-950/90 to-purple-950/90 border-2 border-yellow-400 text-white px-6 py-3.5 rounded-2xl font-black text-center shadow-2xl backdrop-blur-md tracking-wider animate-pulse flex flex-col items-center space-y-1">
+                    <span class="text-xl text-yellow-300 drop-shadow flex items-center space-x-1.5">🎰 <span>LUCKY RETURN</span> 🎰</span>
+                    <span class="text-sm text-yellow-100 font-extrabold tracking-wide uppercase">
+                        send value ${sendVal} &nbsp;|&nbsp; return value ${returnVal}
+                    </span>
+                </div>
+            `;
+
+            overlay.appendChild(popDiv);
+
+            setTimeout(() => {
+                popDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    popDiv.remove();
+                }, 500);
+            }, 4000);
+        }
+
+        function showGiftAnimation(senderName, giftName, wealthLevel, isLevelUp, effectUrl, targetUserName) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay) return;
+
+            const animationDiv = document.createElement("div");
+            animationDiv.className = "gift-pop flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.7)] z-50 transition duration-500 transform scale-100";
+
+            let displayContent = "";
+            let duration = 3000;
+
+            if (effectUrl) {
+                const isVideo = effectUrl.toLowerCase().endsWith(".mp4") || effectUrl.includes("effect-") || effectUrl.includes("/video");
+                if (isVideo) {
+                    displayContent = `
+                        <div class="relative w-[280px] h-[280px] flex items-center justify-center rounded-2xl overflow-hidden border border-pink-500/30 bg-black/70 backdrop-blur-md shadow-2xl">
+                            <video src="${effectUrl}" autoplay muted playsinline class="w-full h-full object-cover"></video>
+                        </div>
+                    `;
+                    duration = 6000;
+                } else {
+                    displayContent = `
+                        <img src="${effectUrl}" class="w-[180px] h-[180px] object-contain rounded-2xl animate-bounce" alt="${giftName}" />
+                    `;
+                    duration = 4000;
+                }
+            } else {
+                let emoji = "🎁";
+                if (giftName.toLowerCase().includes("rose")) emoji = "🌹";
+                else if (giftName.toLowerCase().includes("heart")) emoji = "💖";
+                else if (giftName.toLowerCase().includes("crown")) emoji = "👑";
+                else if (giftName.toLowerCase().includes("skull")) emoji = "💀";
+
+                displayContent = `<span class="text-7xl animate-bounce">${emoji}</span>`;
+            }
+
+            const targetText = targetUserName ? ` to @${targetUserName}` : '';
+            animationDiv.innerHTML = `
+                ${displayContent}
+                <span class="text-[10px] bg-black/90 text-white font-black px-4 py-2 rounded-full border border-pink-500/40 mt-3 tracking-widest uppercase shadow-lg">
+                    ✨ ${senderName} sent ${giftName}${targetText}! ✨
+                </span>
+            `;
+
+            overlay.appendChild(animationDiv);
+
+            setTimeout(() => {
+                animationDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    animationDiv.remove();
+                }, 500);
+            }, duration);
+
+            if (isLevelUp) {
+                const lvToast = document.createElement("div");
+                lvToast.className = "level-up-toast bg-gradient-to-r from-yellow-500 via-amber-500 to-yellow-600 text-black px-6 py-3 rounded-xl border-2 border-yellow-300 font-black text-center shadow-2xl pointer-events-none transform scale-110 tracking-wider mt-3";
+                lvToast.innerHTML = `
+                    <div class="text-xl mb-0.5">🎉 LEVEL UP! 🎉</div>
+                    <div class="text-[10px] uppercase">${senderName} reached Wealth Level ${wealthLevel}!</div>
+                `;
+                overlay.appendChild(lvToast);
+
+                setTimeout(() => {
+                    lvToast.remove();
+                }, 4000);
+            }
+        }
+
+        function showEntryRideAnimation(username, ride) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay || !ride) return;
+
+            const animationDiv = document.createElement("div");
+            animationDiv.className = "flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.8)] z-50 transition duration-500 transform";
+
+            // Choose animation keyframe class based on effectUrl
+            let animationClass = "ride-animation-slide"; // default slide
+            let vehicleSvgOrImg = "";
+
+            if (ride.effectUrl === "dragon") {
+                animationClass = "ride-animation-fly";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🐉</span>`;
+            } else if (ride.effectUrl === "spaceship") {
+                animationClass = "ride-animation-warp";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🛸</span>`;
+            } else if (ride.effectUrl === "gold-car") {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🏎️</span>`;
+            } else if (ride.effectUrl === "royal-carriage") {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">👑🐴</span>`;
+            } else if (ride.displayImageUrl) {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<img src="${ride.displayImageUrl}" class="w-[180px] h-[180px] object-contain" alt="${ride.name}" />`;
+            } else {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl">🚗</span>`;
+            }
+
+            animationDiv.classList.add(animationClass);
+
+            animationDiv.innerHTML = `
+                <div class="flex flex-col items-center justify-center">
+                    ${vehicleSvgOrImg}
+                    <div class="mt-4 px-6 py-3 rounded-2xl bg-gradient-to-r from-purple-900/90 via-indigo-950/90 to-purple-900/90 border-2 border-purple-500/50 shadow-2xl backdrop-blur-md text-center max-w-md">
+                        <div class="text-[10px] text-purple-400 font-extrabold uppercase tracking-widest animate-pulse">✨ Premium Entrance ✨</div>
+                        <div class="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-amber-200 to-yellow-400 mt-1">
+                            ${username} has joined the room on ${ride.name}!
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(animationDiv);
+
+            setTimeout(() => {
+                animationDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    animationDiv.remove();
+                }, 500);
+            }, 4500);
+        }
+
+        function showGlobalMessageToast(senderName, message, wealthLevel) {
+            const overlay = document.getElementById("globalMessageOverlay");
+            if (!overlay) return;
+
+            const toast = document.createElement("div");
+            toast.className = "w-full bg-gradient-to-r from-red-600 via-pink-600 to-purple-600 p-[2px] rounded-2xl shadow-[0_10px_25px_rgba(219,39,119,0.5)] transition duration-500 transform translate-y-[-50px] opacity-0 flex items-center pointer-events-auto";
+
+            toast.innerHTML = `
+                <div class="w-full bg-gray-900/90 backdrop-blur-md rounded-2xl p-4 flex items-center space-x-3 text-white">
+                    <div class="flex-shrink-0 bg-gradient-to-tr from-pink-500 to-yellow-400 p-2.5 rounded-xl text-xl animate-pulse">
+                        📢
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-extrabold text-pink-400 text-sm tracking-wide">${senderName}</span>
+                            <span class="bg-yellow-400/20 text-yellow-400 text-[9px] px-1.5 py-0.5 rounded-full font-bold">LV.${wealthLevel || 1}</span>
+                            <span class="text-[10px] text-gray-400 uppercase tracking-widest font-black ml-auto">GLOBAL BROADCAST</span>
+                        </div>
+                        <p class="text-xs text-gray-200 mt-1 font-semibold leading-relaxed break-words">${message}</p>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(toast);
+
+            // Animate In
+            setTimeout(() => {
+                toast.classList.remove("translate-y-[-50px]", "opacity-0");
+                toast.classList.add("translate-y-0", "opacity-100");
+            }, 50);
+
+            // Animate Out & Remove
+            setTimeout(() => {
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-[-20px]", "opacity-0");
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 7000); // Display for 7 seconds
+        }
+
+        function showGlobalAnnouncement(announcement) {
+            const overlay = document.getElementById("globalMessageOverlay");
+            if (!overlay || !announcement) return;
+
+            const { type, data } = announcement;
+            const toast = document.createElement("div");
+
+            let bgGradient = "from-red-600 via-pink-600 to-purple-600 shadow-[0_10px_25px_rgba(219,39,119,0.5)]";
+            let icon = "📢";
+            let messageHtml = "";
+
+            if (type === "HIGH_VALUE_GIFT") {
+                bgGradient = "from-yellow-500 via-amber-500 to-yellow-600 shadow-[0_10px_25px_rgba(245,158,11,0.5)]";
+                icon = "🎁";
+                messageHtml = `
+                    <span class="font-black text-yellow-400">${data.senderName}</span>
+                    <span class="text-gray-300">sent a premium</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-amber-200 uppercase">${data.giftName}</span>
+                    <span class="text-gray-300">(${data.coinCost} coins) to Host</span>
+                    <span class="font-black text-pink-400">${data.hostName}</span>!
+                `;
+            } else if (type === "WEALTH_LEVEL_UP") {
+                bgGradient = "from-purple-600 via-indigo-600 to-purple-700 shadow-[0_10px_25px_rgba(168,85,247,0.5)]";
+                icon = "👑";
+                messageHtml = `
+                    <span class="text-gray-300">Congratulations to</span>
+                    <span class="font-black text-purple-300">${data.username}</span>
+                    <span class="text-gray-300">for reaching</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-500">Wealth Level ${data.newLevel}</span>!
+                `;
+            } else if (type === "PREMIUM_ENTRANCE") {
+                bgGradient = "from-indigo-600 via-purple-600 to-pink-600 shadow-[0_10px_25px_rgba(99,102,241,0.5)]";
+                icon = "🛸";
+                messageHtml = `
+                    <span class="text-gray-200">VIP</span>
+                    <span class="font-black text-yellow-300">${data.username}</span>
+                    <span class="text-gray-200">has joined the room of</span>
+                    <span class="font-black text-pink-400">${data.hostName}</span>
+                    <span class="text-gray-200">riding a</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-pink-300 to-purple-300 uppercase">${data.rideName}</span>!
+                `;
+            }
+
+            toast.className = `w-full bg-gradient-to-r ${bgGradient} p-[2px] rounded-2xl transition duration-500 transform translate-y-[-50px] opacity-0 flex items-center pointer-events-auto`;
+
+            toast.innerHTML = `
+                <div class="w-full bg-gray-950/95 backdrop-blur-md rounded-2xl p-4 flex items-center space-x-3 text-white">
+                    <div class="flex-shrink-0 bg-white/10 p-2 rounded-xl text-xl animate-bounce">
+                        ${icon}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-yellow-400 uppercase tracking-widest font-black">Global Announcement</span>
+                        </div>
+                        <p class="text-xs text-gray-100 mt-1 font-semibold leading-relaxed break-words">
+                            ${messageHtml}
+                        </p>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(toast);
+
+            // Animate In
+            setTimeout(() => {
+                toast.classList.remove("translate-y-[-50px]", "opacity-0");
+                toast.classList.add("translate-y-0", "opacity-100");
+            }, 50);
+
+            // Animate Out & Remove
+            setTimeout(() => {
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-[-20px]", "opacity-0");
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 8000); // Display for 8 seconds
+        }
+
+        let giftGalleryData = null;
+
+        async function fetchGiftGalleryTargets(hostId) {
+            try {
+                if (!viewerUser) return;
+                const res = await fetch(`${STREAM_API_BASE}/gift-gallery/targets?hostId=${hostId}`, {
+                    headers: { "Authorization": `Bearer ${viewerUser.token}` }
+                });
+                const json = await res.json();
+                if (json.success && json.data) {
+                    giftGalleryData = json.data;
+                    updateGiftGalleryBadge();
+                }
+            } catch (err) {
+                console.error("Failed to fetch gift gallery targets:", err);
+            }
+        }
+
+        function updateGiftGalleryBadge() {
+            if (!giftGalleryData) return;
+            const badge = document.getElementById("divGiftGalleryBadge");
+            const label = document.getElementById("lblGiftGalleryProgress");
+
+            if (badge && label) {
+                label.innerText = `${giftGalleryData.currentProgress}/${giftGalleryData.totalTarget}`;
+                badge.classList.remove("hidden");
+            }
+        }
+
+        function updateGiftGalleryTargetsUI(currentProgress, totalTarget, unlockedGiftId) {
+            if (giftGalleryData) {
+                giftGalleryData.currentProgress = currentProgress;
+                giftGalleryData.totalTarget = totalTarget;
+                if (giftGalleryData.gifts) {
+                    const gift = giftGalleryData.gifts.find(g => g.giftId === unlockedGiftId);
+                    if (gift) {
+                        gift.isReceived = true;
+                    }
+                }
+                updateGiftGalleryBadge();
+                if (document.getElementById("modalGiftGallery") && !document.getElementById("modalGiftGallery").classList.contains("hidden")) {
+                    renderGiftGalleryModalContent();
+                }
+            }
+        }
+
+        function openGiftGalleryModal() {
+            const modal = document.getElementById("modalGiftGallery");
+            if (!modal) return;
+            renderGiftGalleryModalContent();
+            modal.classList.remove("hidden");
+            setTimeout(() => {
+                modal.classList.remove("opacity-0");
+                modal.querySelector(".transform").classList.remove("scale-95");
+            }, 10);
+        }
+
+        function closeGiftGalleryModal() {
+            const modal = document.getElementById("modalGiftGallery");
+            if (!modal) return;
+            modal.classList.add("opacity-0");
+            modal.querySelector(".transform").classList.add("scale-95");
+            setTimeout(() => {
+                modal.classList.add("hidden");
+            }, 300);
+        }
+
+        function renderGiftGalleryModalContent() {
+            if (!giftGalleryData) return;
+
+            const progressText = document.getElementById("lblModalGalleryProgressText");
+            const progressBar = document.getElementById("progressBarModalGallery");
+            const grid = document.getElementById("divGiftGalleryGrid");
+
+            if (progressText) progressText.innerText = `${giftGalleryData.currentProgress}/${giftGalleryData.totalTarget} Collected`;
+
+            if (progressBar) {
+                const percent = giftGalleryData.totalTarget > 0 ? (giftGalleryData.currentProgress / giftGalleryData.totalTarget) * 100 : 0;
+                progressBar.style.width = `${percent}%`;
+            }
+
+            if (grid) {
+                grid.innerHTML = "";
+                if (!giftGalleryData.gifts || giftGalleryData.gifts.length === 0) {
+                    grid.innerHTML = `<div class="col-span-3 text-center py-4 text-xs text-gray-500">No target gifts configured for this month.</div>`;
+                    return;
+                }
+
+                giftGalleryData.gifts.forEach(item => {
+                    const card = document.createElement("div");
+                    card.className = `flex flex-col items-center p-2 rounded-xl border relative transition-all duration-300 ${item.isReceived
+                        ? "bg-indigo-500/10 border-indigo-500/30 text-gray-100"
+                        : "bg-gray-800/40 border-gray-800/80 opacity-60 text-gray-400"
+                        }`;
+
+                    card.innerHTML = `
+                        <div class="relative w-12 h-12 mb-1 flex items-center justify-center">
+                            <img src="${item.displayImageUrl || '/images/gift-default.png'}" alt="${item.name}" class="w-10 h-10 object-contain rounded-md" onerror="this.src='/placeholder-gift.png'">
+                            ${item.isReceived ? `
+                                <div class="absolute -top-1 -right-1 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] font-bold shadow-md">
+                                    ✓
+                                </div>
+                            ` : `
+                                <div class="absolute inset-0 bg-black/40 rounded-md flex items-center justify-center">
+                                    🔒
+                                </div>
+                            `}
+                        </div>
+                        <span class="text-[10px] font-bold text-center truncate w-full">${item.name}</span>
+                        <span class="text-[8px] text-gray-500 mt-0.5">${item.coinCost} Coins</span>
+                    `;
+                    grid.appendChild(card);
+                });
+            }
+        }
+
+        document.getElementById("btnSendGift").onclick = triggerSendGift;
+
+        initViewer();
+    </script>
+    <!-- Gift Gallery Target Modal -->
+    <div id="modalGiftGallery"
+        class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div
+            class="bg-gray-900 border border-gray-800 w-full max-w-md rounded-2xl p-6 shadow-2xl transform scale-95 transition-transform duration-300">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-xl">🎁</span>
+                    <h3 class="font-extrabold text-base text-gray-200">Monthly Gift Gallery Target</h3>
+                </div>
+                <button onclick="closeGiftGalleryModal()" class="text-gray-400 hover:text-white transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="my-4">
+                <div class="flex justify-between items-center mb-1.5 text-xs text-gray-400">
+                    <span>Monthly Progress</span>
+                    <span class="font-bold text-indigo-400" id="lblModalGalleryProgressText">0/0 Collected</span>
+                </div>
+                <div class="w-full bg-gray-800 rounded-full h-2">
+                    <div id="progressBarModalGallery" class="bg-indigo-500 h-2 rounded-full transition-all duration-500"
+                        style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 max-h-60 overflow-y-auto pr-1" id="divGiftGalleryGrid">
+                <!-- Grid of gifts loaded dynamically -->
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-gray-800 text-[10px] text-gray-500 text-center">
+                Collect all monthly gallery gifts to achieve your target!
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Gift Animation Overlay -->
+    <div id="giftAnimationOverlay"
+        class="fixed inset-0 pointer-events-none z-50 flex flex-col items-center justify-center space-y-4"></div>
+
+    <!-- Global Live Message Alert Overlay -->
+    <div id="globalMessageOverlay"
+        class="fixed top-6 left-1/2 transform -translate-x-1/2 pointer-events-none z-50 flex flex-col items-center space-y-3 w-full max-w-xl px-4">
+    </div>
+</body>
+
+</html>

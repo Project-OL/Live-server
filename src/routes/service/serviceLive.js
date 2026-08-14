@@ -1,68 +1,2178 @@
 import prisma from '../../config/prisma.js';
 import crypto from 'crypto';
+import { AccessToken, RoomServiceClient, EgressClient } from 'livekit-server-sdk';
+import { client as redisClient } from '../../config/redis.js';
+import dotenv from 'dotenv';
+import { isUserRestrictedFast } from './serviceAdmin.js';
+import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from '@prisma/client';
+import {
+    getOrCreateWallet,
+    getFastCoinBalance,
+    getFastPointBalance,
+    updateUserLevel,
+} from '../../modules/videoCall/service.js';
+import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
+import { broadcastToStream } from './socket-live-service.js';
+import { sendLuckyGiftService } from './serviceLuckyGift.js';
+import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 
-export const createLiveStreamService = async ({
+dotenv.config();
+
+const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
+const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
+const livekitHost = process.env.LIVEKIT_URL || 'http://localhost:7880';
+
+const roomService = new RoomServiceClient(livekitHost, apiKey, apiSecret);
+const egressClient = new EgressClient(livekitHost, apiKey, apiSecret);
+const isProduction = process.env.isProduction === 'true';
+
+export const getHlsUrl = (roomName) => {
+    const bucket = process.env.AWS_S3_BUCKET
+    const region = process.env.AWS_REGION
+    return `https://${bucket}.s3.${region}.amazonaws.com/${roomName}_live.m3u8`;
+};
+
+export const generateStreamHostToken = async (roomName, participantId) => {
+    const at = new AccessToken(apiKey, apiSecret, {
+        identity: participantId,
+    });
+    at.addGrant({
+        roomJoin: true,
+        room: roomName,
+        canPublish: true,
+        canSubscribe: true,
+    });
+    return await at.toJwt();
+};
+
+export const generateStreamViewerToken = async (roomName, participantId) => {
+    const audioMuted = participantId ? await isUserRestrictedFast(participantId, 'LIVE_AUDIO_MUTE') : false;
+
+    const at = new AccessToken(apiKey, apiSecret, {
+        identity: participantId,
+    });
+    at.addGrant({
+        roomJoin: true,
+        room: roomName,
+        canPublish: !audioMuted,
+        canSubscribe: true,
+    });
+    return await at.toJwt();
+};
+
+export const closeLivekitRoom = async (roomName) => {
+    try {
+        await roomService.deleteRoom(roomName);
+    } catch (error) {
+        console.error(`[LiveKit] Failed to close room ${roomName}:`, error.message);
+    }
+};
+
+export const fastGoLiveStreamService = async ({
     userId,
-    title
+    title,
+    heading
 }) => {
+    // Fast Redis cache check for active stream and suspension
+    const activeStreamKey = `user:active_stream:${userId}`;
+    const suspendedCacheKey = `user:suspended:${userId}`;
+
+    let [activeStreamId, isSuspended] = redisClient.isOpen ? await Promise.all([
+        redisClient.get(activeStreamKey),
+        redisClient.get(suspendedCacheKey)
+    ]) : [null, null];
+
+    if (isSuspended === "true") {
+        throw new Error("Your streaming privileges are suspended due to moderation violations.");
+    }
+
+    if (activeStreamId) {
+        throw new Error("You already have an active live stream. End it first.");
+    }
+
+    // 1. Parallel DB validations (only if not cached in Redis)
+    const [user, livePhoto, existingActive] = await Promise.all([
+        isSuspended !== null ? Promise.resolve(null) : prisma.user.findUnique({
+            where: { id: userId },
+            select: { suspended_until: true, avatarUrl: true }
+        }),
+        prisma.userLivePhoto.findUnique({
+            where: { userId },
+            select: { imageUrl: true }
+        }),
+        activeStreamId ? Promise.resolve(null) : prisma.liveStream.findFirst({
+            where: {
+                userId,
+                isLive: true
+            },
+            select: { id: true }
+        })
+    ]);
+
+    if (user && user.suspended_until && user.suspended_until > new Date()) {
+        if (redisClient.isOpen) {
+            await redisClient.set(suspendedCacheKey, "true", "EX", 300);
+        }
+        throw new Error(`Your streaming privileges are suspended until ${user.suspended_until.toLocaleString()} due to moderation violations.`);
+    } else if (user && redisClient.isOpen) {
+        await redisClient.set(suspendedCacheKey, "false", "EX", 3600);
+    }
+
+    if (existingActive) {
+        if (redisClient.isOpen) {
+            await redisClient.set(activeStreamKey, existingActive.id, "EX", 86400);
+        }
+        throw new Error("You already have an active live stream. End it first.");
+    }
+
+    const coverImageUrl = livePhoto?.imageUrl || user?.avatarUrl || null;
 
     const streamId = crypto.randomUUID();
     const streamKey = crypto.randomBytes(32).toString('hex');
+    const now = new Date();
 
-    return prisma.liveStream.create({
-        data: {
-            userId,
-            title,
-            streamId,
-            streamKey,
-            isLive: false
+    const createdStream = {
+        id: streamId,
+        userId,
+        title,
+        heading,
+        coverImageUrl,
+        streamId,
+        streamKey,
+        isLive: true,
+        startedAt: now,
+        endedAt: null,
+        createdAt: now,
+        updatedAt: now
+    };
+
+    if (redisClient.isOpen) {
+        await Promise.all([
+            redisClient.set(`stream:info:${streamId}`, JSON.stringify(createdStream), "EX", 86400),
+            redisClient.set(activeStreamKey, streamId, "EX", 86400)
+        ]);
+    }
+
+    const token = await generateStreamHostToken(streamId, userId);
+
+    setImmediate(async () => {
+        try {
+            await prisma.liveStream.create({
+                data: {
+                    id: streamId,
+                    userId,
+                    title,
+                    heading,
+                    coverImageUrl,
+                    streamId,
+                    streamKey,
+                    isLive: true,
+                    startedAt: now,
+                    endedAt: null
+                }
+            });
+            console.log(`[Async DB Write] LiveStream ${streamId} saved to PostgreSQL in background.`);
+        } catch (bgError) {
+            console.error(`[Background Task Error] Stream ${streamId}:`, bgError.message);
         }
     });
-};
 
-export const startLiveStreamService = async ({
-    id
-}) => {
-
-    return prisma.liveStream.update({
-        where: { id },
-        data: {
-            isLive: true,
-            startedAt: new Date()
-        }
-    });
+    return {
+        stream: createdStream,
+        token
+    };
 };
 
 export const endLiveStreamService = async ({
-    id
+    id,
+    userId
 }) => {
+    const stream = await prisma.liveStream.findUnique({
+        where: { id }
+    });
 
-    return prisma.liveStream.update({
+    if (!stream) {
+        throw new Error("Live stream not found.");
+    }
+
+    if (stream.userId !== userId) {
+        throw new Error("Unauthorized to end this live stream.");
+    }
+
+    if (isProduction && stream.playbackId) {
+        try {
+            await egressClient.stopEgress(stream.playbackId);
+            console.log(`[LiveKit Egress] Egress stopped successfully.`);
+        } catch (egressError) {
+            console.error(`[LiveKit Egress] Failed to stop egress ${stream.playbackId}:`, egressError.message);
+        }
+    }
+
+    const endedAt = new Date();
+    const streamIdKey = stream.streamId || id;
+    const keyOff = `stream:camera_off_at:${streamIdKey}`;
+    const keyUncounted = `stream:uncounted_seconds:${streamIdKey}`;
+
+    if (redisClient.isOpen) {
+        const cameraOffAtStr = await redisClient.get(keyOff);
+        if (cameraOffAtStr) {
+            const offMs = endedAt.getTime() - Number(cameraOffAtStr);
+            const offSec = Math.floor(offMs / 1000);
+            if (offSec > 60) {
+                const excessSec = offSec - 60;
+                await redisClient.incrBy(keyUncounted, excessSec);
+                console.log(`[CameraState End] Camera was OFF at stream end for ${streamIdKey}. Off: ${offSec}s, Excess uncounted: ${excessSec}s`);
+            }
+            await redisClient.del(keyOff);
+        }
+    }
+
+    const startedAt = stream.startedAt || stream.createdAt || endedAt;
+    const grossDurationSeconds = Math.max(0, Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000));
+
+    let uncountedSec = 0;
+    if (redisClient.isOpen) {
+        const uncountedStr = await redisClient.get(keyUncounted);
+        if (uncountedStr) {
+            uncountedSec = parseInt(uncountedStr, 10) || 0;
+        }
+    }
+
+    const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
+
+    const updatedStream = await prisma.liveStream.update({
         where: { id },
         data: {
             isLive: false,
-            endedAt: new Date()
+            endedAt
         }
     });
+
+    try {
+        await prisma.$executeRawUnsafe(`
+            UPDATE live_streams 
+            SET effective_duration_seconds = $1 
+            WHERE id = $2
+        `, effectiveDurationSeconds, id);
+    } catch (dbErr) {
+        console.error("[End Stream] Failed to update effective_duration_seconds:", dbErr.message);
+    }
+
+    if (redisClient.isOpen) {
+        await Promise.all([
+            redisClient.del(`user:active_stream:${userId}`),
+            redisClient.del(`stream:info:${stream.streamId}`),
+            redisClient.del(`stream:info:${id}`),
+            redisClient.del(keyUncounted)
+        ]);
+    }
+
+    const durationSeconds = effectiveDurationSeconds;
+
+    const hours = Math.floor(durationSeconds / 3600);
+    const minutes = Math.floor((durationSeconds % 3600) / 60);
+    const secs = durationSeconds % 60;
+    const durationFormatted = [hours, minutes, secs]
+        .map(v => String(v).padStart(2, '0'))
+        .join(':');
+
+    let host = null;
+    try {
+        const hostUser = await prisma.user.findUnique({
+            where: { id: stream.userId },
+            select: { id: true, username: true, avatarUrl: true }
+        });
+        host = {
+            id: hostUser ? hostUser.id : stream.userId,
+            name: hostUser ? (hostUser.username || "Host") : "Host",
+            avatarUrl: hostUser ? hostUser.avatarUrl : null
+        };
+    } catch (hostErr) {
+        console.error("[End Stream Summary] Host fetch failed:", hostErr.message);
+        host = { id: stream.userId, name: "Host", avatarUrl: null };
+    }
+
+    let wonPoints = 0;
+    try {
+        const wonPointsAgg = await prisma.giftTransaction.aggregate({
+            _sum: {
+                pointsAwarded: true
+            },
+            where: {
+                receiverUserId: stream.userId,
+                createdAt: {
+                    gte: startedAt,
+                    lte: endedAt
+                }
+            }
+        });
+        wonPoints = wonPointsAgg._sum.pointsAwarded || 0;
+    } catch (ptsErr) {
+        console.error("[End Stream Summary] Won points calculation failed:", ptsErr.message);
+    }
+
+    let newFollowersCount = 0;
+    try {
+        newFollowersCount = await prisma.userFollow.count({
+            where: {
+                followingId: stream.userId,
+                createdAt: {
+                    gte: startedAt,
+                    lte: endedAt
+                }
+            }
+        });
+    } catch (folErr) {
+        console.error("[End Stream Summary] New followers count failed:", folErr.message);
+    }
+
+    let totalAudiencesCount = 0;
+    try {
+        const viewerIds = await redisClient.sMembers(`stream:history:${stream.streamId}`);
+        totalAudiencesCount = viewerIds ? viewerIds.length : 0;
+    } catch (audErr) {
+        console.error("[End Stream Summary] Audiences count failed:", audErr.message);
+    }
+
+    const summary = {
+        streamId: stream.streamId,
+        host,
+        durationSeconds,
+        durationFormatted,
+        wonPoints,
+        newFollowersCount,
+        totalAudiencesCount
+    };
+
+    try {
+        const viewerIds = await redisClient.sMembers(`stream:history:${stream.streamId}`);
+        if (viewerIds && viewerIds.length > 0) {
+            const viewerData = viewerIds.map(vId => ({
+                streamId: stream.streamId,
+                userId: vId
+            }));
+            await prisma.streamViewer.createMany({
+                data: viewerData,
+                skipDuplicates: true
+            });
+            console.log(`[Batch Sync] Saved ${viewerIds.length} viewer sessions to DB.`);
+        }
+    } catch (syncError) {
+        console.error("[Batch Sync] Failed to sync viewers to DB:", syncError.message);
+    }
+
+    try {
+        const rawChats = await redisClient.lRange(`stream:chats:${stream.streamId}`, 0, -1);
+        if (rawChats && rawChats.length > 0) {
+            const chatData = rawChats.map(c => {
+                const parsed = JSON.parse(c);
+                return {
+                    id: parsed.id,
+                    streamId: parsed.streamId,
+                    senderId: parsed.senderId,
+                    message: parsed.message,
+                    createdAt: new Date(parsed.createdAt),
+                    replyToMessageId: parsed.replyToMessageId || null,
+                    replyToUserId: parsed.replyToUserId || null,
+                    replyToUsername: parsed.replyToUsername || null,
+                    replyToText: parsed.replyToText || null
+                };
+            });
+            await prisma.liveMessage.createMany({
+                data: chatData,
+                skipDuplicates: true
+            });
+            console.log(`[Batch Sync] Saved ${chatData.length} live messages to DB.`);
+        }
+    } catch (syncError) {
+        console.error("[Batch Sync] Failed to sync chats to DB:", syncError.message);
+    }
+
+    try {
+        await redisClient.del([
+            `stream:active:${stream.streamId}`,
+            `stream:history:${stream.streamId}`,
+            `stream:chats:${stream.streamId}`,
+            `stream:admins:${stream.streamId}`,
+            `stream:kicked:${stream.streamId}`,
+            `stream:password:${stream.streamId}`,
+            `stream:sheet:${stream.streamId}`,
+            `stream:mic_permission:${stream.streamId}`,
+            `stream:chat_permission:${stream.streamId}`
+        ]);
+    } catch (cleanError) {
+        console.error("[Redis Clean] Failed to clear Redis keys:", cleanError.message);
+    }
+
+    await closeLivekitRoom(stream.streamId);
+
+    return {
+        stream: updatedStream,
+        summary
+    };
 };
 
-export const getLiveStreamsService = async () => {
+export const getLiveStreamsService = async ({ page = 1, limit = 20, country = null, followerUserId = null, followingOnly = false } = {}) => {
+    const pageNum = Math.max(1, parseInt(page, 10) || 1);
+    const limitNum = Math.max(1, parseInt(limit, 10) || 20);
+    const skip = (pageNum - 1) * limitNum;
 
-    return prisma.liveStream.findMany({
-        where: {
-            isLive: true
-        },
-        orderBy: {
-            startedAt: 'desc'
+    let whereClause = {
+        isLive: true
+    };
+    let isFallback = false;
+
+    const normCountry = (country && typeof country === 'string') ? country.trim().toLowerCase() : null;
+    const isGlobalOrRandom = normCountry && ['all', 'global', 'random', 'world'].includes(normCountry);
+
+    if (followingOnly && followerUserId && !isGlobalOrRandom) {
+        const follows = await prisma.userFollow.findMany({
+            where: { followerId: followerUserId },
+            select: { followingId: true }
+        });
+        const followingIds = follows.map(f => f.followingId);
+
+        if (followingIds.length > 0) {
+            whereClause.userId = { in: followingIds };
+        } else {
+            isFallback = true;
+            whereClause = { isLive: true };
         }
-    });
+    } else if (normCountry && !isGlobalOrRandom) {
+        const countryUsers = await prisma.user.findMany({
+            where: {
+                country: {
+                    equals: country.trim(),
+                    mode: 'insensitive'
+                }
+            },
+            select: { id: true }
+        });
+
+        const userIds = countryUsers.map(u => u.id);
+        if (userIds.length > 0) {
+            whereClause.userId = { in: userIds };
+        } else {
+            isFallback = true;
+            whereClause = { isLive: true };
+        }
+    }
+
+    let [streams, total] = await Promise.all([
+        prisma.liveStream.findMany({
+            where: whereClause,
+            orderBy: {
+                startedAt: 'desc'
+            },
+            skip,
+            take: limitNum
+        }),
+        prisma.liveStream.count({
+            where: whereClause
+        })
+    ]);
+
+    if ((followingOnly || country) && !isFallback && streams.length === 0) {
+        whereClause = { isLive: true };
+        [streams, total] = await Promise.all([
+            prisma.liveStream.findMany({
+                where: whereClause,
+                orderBy: {
+                    startedAt: 'desc'
+                },
+                skip,
+                take: limitNum
+            }),
+            prisma.liveStream.count({
+                where: whereClause
+            })
+        ]);
+        isFallback = true;
+    }
+
+    return {
+        streams,
+        total,
+        page: pageNum,
+        limit: limitNum,
+        totalPages: Math.ceil(total / limitNum),
+        isFallback
+    };
 };
 
 export const getLiveStreamService = async ({
     id
 }) => {
+    if (!id) return null;
 
-    return prisma.liveStream.findUnique({
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(`stream:info:${id}`);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+
+    let stream = await prisma.liveStream.findUnique({
         where: { id }
     });
+    if (!stream) {
+        stream = await prisma.liveStream.findFirst({
+            where: { streamId: id }
+        });
+    }
+
+    if (stream && redisClient.isOpen) {
+        await Promise.all([
+            redisClient.set(`stream:info:${stream.id}`, JSON.stringify(stream), "EX", 86400),
+            redisClient.set(`stream:info:${stream.streamId}`, JSON.stringify(stream), "EX", 86400)
+        ]);
+    }
+    return stream;
+};
+
+export const isStreamAdminService = async ({ streamId, userId }) => {
+    return await redisClient.sIsMember(`stream:admins:${streamId}`, userId);
+};
+
+export const promoteDemoteAdminService = async ({ streamId, targetUserId }) => {
+    const isAdmin = await redisClient.sIsMember(`stream:admins:${streamId}`, targetUserId);
+    let resultStatus = false;
+    if (isAdmin) {
+        await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
+        resultStatus = false;
+    } else {
+        await redisClient.sAdd(`stream:admins:${streamId}`, targetUserId);
+        resultStatus = true;
+    }
+
+    if (redisClient.isOpen) {
+        try {
+            const keys = await redisClient.keys(`stream:viewers_sorted:${streamId}:*`);
+            if (keys && keys.length > 0) {
+                await redisClient.del(keys);
+            }
+        } catch (err) {
+            console.error("[Promote/Demote Admin Cache Clear Error]:", err.message);
+        }
+    }
+
+    return resultStatus;
+};
+
+export const getStreamAdminsService = async ({ streamId }) => {
+    return await redisClient.sMembers(`stream:admins:${streamId}`);
+};
+
+export const kickUserService = async ({ streamId, targetUserId }) => {
+    await redisClient.set(`stream:kicked:${streamId}:${targetUserId}`, "1", { EX: 600 });
+    await redisClient.sRem(`stream:active:${streamId}`, targetUserId);
+    await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
+};
+
+export const isUserKickedService = async ({ streamId, userId }) => {
+    const isKicked = await redisClient.get(`stream:kicked:${streamId}:${userId}`);
+    if (!isKicked) return null;
+    const ttl = await redisClient.ttl(`stream:kicked:${streamId}:${userId}`);
+    return ttl > 0 ? ttl : 0;
+};
+
+export const setStreamPasswordService = async ({ streamId, password }) => {
+    if (!password) {
+        await redisClient.del(`stream:password:${streamId}`);
+    } else {
+        await redisClient.set(`stream:password:${streamId}`, password);
+    }
+};
+
+export const getStreamPasswordService = async ({ streamId }) => {
+    return await redisClient.get(`stream:password:${streamId}`);
+};
+
+export const setMicPermissionService = async ({ streamId, micPermissionRequired }) => {
+    const isRequired = micPermissionRequired !== false && micPermissionRequired !== "false";
+    try {
+        await prisma.liveStream.update({
+            where: { streamId },
+            data: { micPermissionRequired: isRequired }
+        });
+    } catch (err) {
+        // Fallback to Redis if column does not exist in DB schema
+    }
+    await redisClient.set(`stream:mic_permission:${streamId}`, isRequired ? "1" : "0");
+    return isRequired;
+};
+
+export const getMicPermissionService = async ({ streamId }) => {
+    const cached = await redisClient.get(`stream:mic_permission:${streamId}`);
+    if (cached !== null) {
+        return cached === "1";
+    }
+    let isRequired = true;
+    try {
+        const stream = await prisma.liveStream.findUnique({
+            where: { streamId },
+            select: { micPermissionRequired: true }
+        });
+        if (stream && stream.micPermissionRequired !== undefined) {
+            isRequired = stream.micPermissionRequired;
+        }
+    } catch (err) {
+        // Fallback default
+    }
+    await redisClient.set(`stream:mic_permission:${streamId}`, isRequired ? "1" : "0");
+    return isRequired;
+};
+
+export const setChatPermissionService = async ({ streamId, mode }) => {
+    const validModes = ["EVERYONE", "ALL_MUTED", "FOLLOWERS_ONLY", "ADMINS_ONLY"];
+    const targetMode = validModes.includes(mode) ? mode : "EVERYONE";
+
+    try {
+        await prisma.liveStream.update({
+            where: { streamId },
+            data: { chatPermissionMode: targetMode }
+        });
+    } catch (err) {
+        // Fallback to Redis if column does not exist in DB schema
+    }
+    await redisClient.set(`stream:chat_permission:${streamId}`, targetMode);
+    return targetMode;
+};
+
+export const getChatPermissionService = async ({ streamId }) => {
+    const cached = await redisClient.get(`stream:chat_permission:${streamId}`);
+    if (cached !== null) {
+        return cached;
+    }
+    let mode = "EVERYONE";
+    try {
+        const stream = await prisma.liveStream.findUnique({
+            where: { streamId },
+            select: { chatPermissionMode: true }
+        });
+        if (stream && stream.chatPermissionMode) {
+            mode = stream.chatPermissionMode;
+        }
+    } catch (err) {
+        // Fallback default
+    }
+    await redisClient.set(`stream:chat_permission:${streamId}`, mode);
+    return mode;
+};
+
+export const addUserToSheetService = async ({ streamId, userId, username }) => {
+    await redisClient.hSet(`stream:sheet:${streamId}`, userId, JSON.stringify({
+        userId,
+        username,
+        isMuted: false,
+        mutedByHost: false
+    }));
+};
+
+export const removeUserFromSheetService = async ({ streamId, userId }) => {
+    await redisClient.hDel(`stream:sheet:${streamId}`, userId);
+};
+
+export const toggleUserSheetMuteService = async ({ streamId, userId, muteState, mutedByHost }) => {
+    const rawUser = await redisClient.hGet(`stream:sheet:${streamId}`, userId);
+    if (rawUser) {
+        const userObj = JSON.parse(rawUser);
+        userObj.isMuted = muteState;
+        if (mutedByHost !== undefined) {
+            userObj.mutedByHost = mutedByHost;
+            if (mutedByHost) {
+                userObj.mutedUntil = Date.now() + 30 * 60 * 1000; // 30 minutes
+            } else {
+                userObj.mutedUntil = null;
+            }
+        }
+        await redisClient.hSet(`stream:sheet:${streamId}`, userId, JSON.stringify(userObj));
+        return userObj;
+    }
+    return null;
+};
+
+export const getSheetUsersService = async ({ streamId }) => {
+    const rawData = await redisClient.hGetAll(`stream:sheet:${streamId}`);
+    if (!rawData) return [];
+    const now = Date.now();
+    const users = [];
+    for (const val of Object.values(rawData)) {
+        const userObj = JSON.parse(val);
+        if (userObj.mutedByHost && userObj.mutedUntil && now >= userObj.mutedUntil) {
+            userObj.mutedByHost = false;
+            userObj.isMuted = false;
+            userObj.mutedUntil = null;
+            await redisClient.hSet(`stream:sheet:${streamId}`, userObj.userId, JSON.stringify(userObj));
+        }
+        users.push(userObj);
+    }
+    return users;
+};
+
+export const handleCameraStateChangeService = async ({ streamId, isCameraOn }) => {
+    if (!redisClient.isOpen || !streamId) return;
+    const keyOff = `stream:camera_off_at:${streamId}`;
+    const keyUncounted = `stream:uncounted_seconds:${streamId}`;
+
+    if (!isCameraOn) {
+        const existing = await redisClient.get(keyOff);
+        if (!existing) {
+            await redisClient.set(keyOff, Date.now().toString());
+            console.log(`[CameraState] Camera turned OFF for stream ${streamId}`);
+        }
+    } else {
+        const cameraOffAtStr = await redisClient.get(keyOff);
+        if (cameraOffAtStr) {
+            const offMs = Date.now() - Number(cameraOffAtStr);
+            const offSec = Math.floor(offMs / 1000);
+            if (offSec > 60) {
+                const excessSec = offSec - 60;
+                await redisClient.incrBy(keyUncounted, excessSec);
+                console.log(`[CameraState] Camera turned ON for stream ${streamId}. Off: ${offSec}s, Excess uncounted: ${excessSec}s`);
+            } else {
+                console.log(`[CameraState] Camera turned ON for stream ${streamId}. Off: ${offSec}s (Within 60s grace period)`);
+            }
+            await redisClient.del(keyOff);
+        }
+    }
+};
+
+const ensureActiveGalleryCached = async (year, month) => {
+    const galleryLoadedKey = `gift_gallery:gift_ids:loaded:${year}:${month}`;
+    const giftIdsKey = `gift_gallery:gift_ids:${year}:${month}`;
+    const galleryCacheKey = `gift_gallery:active:${year}:${month}`;
+
+    const isLoaded = await redisClient.exists(galleryLoadedKey);
+    if (!isLoaded) {
+        const gallery = await prisma.giftGallery.findUnique({
+            where: {
+                year_month: {
+                    year: year,
+                    month: month
+                }
+            },
+            include: {
+                sections: {
+                    where: { is_active: true },
+                    include: {
+                        gifts: {
+                            include: {
+                                gift: true
+                            }
+                        }
+                    }
+                }
+            }
+        });
+
+        const galleryItems = [];
+        if (gallery) {
+            for (const section of gallery.sections) {
+                for (const item of section.gifts) {
+                    if (item.gift && item.gift.isActive) {
+                        galleryItems.push({
+                            id: item.id,
+                            giftId: item.gift.id,
+                            name: item.gift.name,
+                            displayImageUrl: item.gift.displayImageUrl,
+                            coinCost: Number(item.gift.coinCost)
+                        });
+                    }
+                }
+            }
+        }
+
+        if (galleryItems.length > 0) {
+            const giftIds = galleryItems.map(item => item.giftId);
+            await redisClient.sAdd(giftIdsKey, giftIds);
+            await redisClient.expire(giftIdsKey, 86400); // 1 day
+            await redisClient.set(galleryCacheKey, JSON.stringify(galleryItems), 'EX', 86400);
+        } else {
+            await redisClient.set(galleryCacheKey, JSON.stringify([]), 'EX', 300); // 5 min cache for empty
+        }
+        await redisClient.set(galleryLoadedKey, "1", 'EX', 86400);
+    }
+};
+
+const ensureHostProgressCached = async (hostId, year, month) => {
+    const progressLoadedKey = `host_gallery_progress:loaded:${hostId}:${year}:${month}`;
+    const progressCacheKey = `host_gallery_progress:${hostId}:${year}:${month}`;
+
+    const isLoaded = await redisClient.exists(progressLoadedKey);
+    if (!isLoaded) {
+        const progressRecords = await prisma.giftGalleryProgress.findMany({
+            where: {
+                hostUserId: hostId,
+                gallery: {
+                    year: year,
+                    month: month
+                }
+            },
+            select: {
+                giftId: true
+            }
+        });
+
+        const collectedGiftIds = progressRecords.map(r => r.giftId);
+        if (collectedGiftIds.length > 0) {
+            await redisClient.sAdd(progressCacheKey, collectedGiftIds);
+            await redisClient.expire(progressCacheKey, 604800); // 7 days
+        }
+        await redisClient.set(progressLoadedKey, "1", 'EX', 604800);
+    }
+};
+
+export const getGiftGalleryTargetsService = async (hostId) => {
+    const currentDate = new Date();
+    const currentYear = currentDate.getFullYear();
+    const currentMonth = currentDate.getMonth() + 1;
+
+    await ensureActiveGalleryCached(currentYear, currentMonth);
+    await ensureHostProgressCached(hostId, currentYear, currentMonth);
+
+    const galleryCacheKey = `gift_gallery:active:${currentYear}:${currentMonth}`;
+    const progressCacheKey = `host_gallery_progress:${hostId}:${currentYear}:${currentMonth}`;
+
+    const galleryItems = JSON.parse(await redisClient.get(galleryCacheKey) || '[]');
+    const collectedGiftIds = await redisClient.sMembers(progressCacheKey);
+    const collectedSet = new Set(collectedGiftIds);
+
+    const resultGifts = galleryItems.map(item => ({
+        ...item,
+        isReceived: collectedSet.has(item.giftId)
+    }));
+
+    const totalTarget = resultGifts.length;
+    const currentProgress = resultGifts.filter(g => g.isReceived).length;
+
+    return {
+        year: currentYear,
+        month: currentMonth,
+        totalTarget,
+        currentProgress,
+        gifts: resultGifts
+    };
+};
+
+export const getGiftInfoService = async ({ giftId }) => {
+    if (!giftId) return null;
+    const cacheKey = `gift:info:${giftId}`;
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+    const gift = await prisma.gift.findUnique({
+        where: { id: giftId }
+    });
+    if (gift && redisClient.isOpen) {
+        await redisClient.set(cacheKey, JSON.stringify(gift), "EX", 86400);
+    }
+    return gift;
+};
+
+export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targetUserId, count = 1 }) => {
+    await checkCoinsFrozenFast(senderId);
+
+    const [stream, gift, senderPrivacy, targetUser] = await Promise.all([
+        getLiveStreamService({ id: streamDbId }),
+        getGiftInfoService({ giftId }),
+        getUserPrivacyService({ userId: senderId }),
+        targetUserId ? getUserPrivacyService({ userId: targetUserId }) : Promise.resolve(null)
+    ]);
+
+    if (!stream) {
+        throw new Error("Live stream not found.");
+    }
+    if (stream.endedAt !== null) {
+        throw new Error("Live stream has already ended.");
+    }
+    if (!gift || !gift.isActive) {
+        throw new Error("Gift not found or is inactive.");
+    }
+
+    const giftCount = Math.max(1, Math.min(1000, Number(count || 1)));
+    const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
+    const pointsAwarded = (coinCost * 60n) / 100n;
+    const receiverId = targetUserId || stream.userId;
+    const isStealth = senderPrivacy.isStealth;
+
+    let stealthAlias = null;
+    if (isStealth) {
+        stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
+    }
+    const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.username || "User");
+
+    if (gift.isLucky || gift.effectLuckyGift) {
+        const luckyResult = await sendLuckyGiftService({
+            senderId,
+            receiverId,
+            streamId: stream.streamId,
+            giftId,
+            comboCount: giftCount,
+            preFetchedGift: gift
+        });
+        luckyResult.socketPayload.senderName = senderName;
+        luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
+        luckyResult.socketPayload.receiverName = targetUser ? (targetUser.username || "User") : "Host";
+        luckyResult.socketPayload.isMystery = isStealth;
+        if (isStealth) luckyResult.socketPayload.senderId = null;
+        return luckyResult;
+    }
+
+    const walletKey = `wallet:coins:${senderId}`;
+    let senderCoinsStr = redisClient.isOpen ? await redisClient.get(walletKey) : null;
+    let senderCoins;
+
+    if (senderCoinsStr === null) {
+        let senderWallet = await prisma.wallet.findUnique({
+            where: { userId_currencyType: { userId: senderId, currencyType: WalletCurrencyType.COIN } }
+        });
+        if (!senderWallet) {
+            senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
+        }
+        senderCoins = await getFastCoinBalance(senderWallet.id);
+    } else {
+        senderCoins = BigInt(senderCoinsStr);
+    }
+
+    if (senderCoins < coinCost) {
+        throw new Error("Insufficient coins to send this gift.");
+    }
+
+    const balanceAfterCoins = senderCoins - coinCost;
+    if (redisClient.isOpen) {
+        await redisClient.set(walletKey, balanceAfterCoins.toString(), "EX", 3600);
+    }
+
+    const receiverPointsKey = `wallet:points:${receiverId}`;
+    let currentReceiverPointsStr = redisClient.isOpen ? await redisClient.get(receiverPointsKey) : null;
+    let currentReceiverPoints;
+
+    if (currentReceiverPointsStr === null) {
+        const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
+        currentReceiverPoints = await getFastPointBalance(receiverWallet.id);
+    } else {
+        currentReceiverPoints = BigInt(currentReceiverPointsStr);
+    }
+
+    const balanceAfterPoints = currentReceiverPoints + pointsAwarded;
+    if (redisClient.isOpen) {
+        await redisClient.set(receiverPointsKey, balanceAfterPoints.toString(), "EX", 3600);
+    }
+
+    const socketPayload = {
+        success: true,
+        streamId: stream.streamId,
+        senderId: isStealth ? null : senderId,
+        senderName,
+        senderAvatarUrl: isStealth ? null : (senderPrivacy.avatarUrl || null),
+        isMystery: isStealth,
+        senderRemainingCoins: Number(balanceAfterCoins),
+        receiverId,
+        receiverName: targetUser ? (targetUser.username || "User") : "Host",
+        pointsAwarded: Number(pointsAwarded),
+        receiverTotalPoints: Number(balanceAfterPoints),
+        targetUserId: targetUserId || null,
+        targetUserName: targetUser ? (targetUser.username || "User") : null,
+        count: giftCount,
+        totalCost: Number(coinCost),
+        gift: {
+            id: gift.id,
+            name: gift.name,
+            displayImageUrl: gift.displayImageUrl,
+            effectUrl: gift.effectUrl,
+            coinCost: Number(gift.coinCost)
+        },
+        wealthLevel: 1,
+        isLevelUp: false
+    };
+
+    setImmediate(async () => {
+        try {
+            console.log(`[Gift Background DB Sync] Starting DB sync for stream: ${streamDbId}`);
+            const userLevel = await prisma.walletUserLevel.findUnique({
+                where: {
+                    userId_levelType: {
+                        userId: senderId,
+                        levelType: LevelType.WEALTH
+                    }
+                }
+            });
+
+            const currentLevel = userLevel ? userLevel.currentLevel : 1;
+            const cumulativeTotal = userLevel ? userLevel.cumulativeTotal : 0n;
+            const newCumulativeTotal = cumulativeTotal + coinCost;
+
+            const nextLevelConfig = await prisma.walletLevelConfig.findUnique({
+                where: {
+                    levelType_level: {
+                        levelType: LevelType.WEALTH,
+                        level: currentLevel + 1
+                    }
+                }
+            });
+
+            let finalLevel = currentLevel;
+            let isLevelUp = false;
+            if (nextLevelConfig && newCumulativeTotal >= nextLevelConfig.threshold) {
+                finalLevel = nextLevelConfig.level;
+                isLevelUp = true;
+            }
+
+            socketPayload.wealthLevel = finalLevel;
+            socketPayload.isLevelUp = isLevelUp;
+
+            let galleryProgressUpdate = null;
+            const currentDate = new Date();
+            const currentYear = currentDate.getFullYear();
+            const currentMonth = currentDate.getMonth() + 1;
+
+            await ensureActiveGalleryCached(currentYear, currentMonth);
+            await ensureHostProgressCached(receiverId, currentYear, currentMonth);
+
+            if (redisClient.isOpen) {
+                const giftIdsKey = `gift_gallery:gift_ids:${currentYear}:${currentMonth}`;
+                const galleryCacheKey = `gift_gallery:active:${currentYear}:${currentMonth}`;
+                const progressCacheKey = `host_gallery_progress:${receiverId}:${currentYear}:${currentMonth}`;
+
+                const isGalleryGift = await redisClient.sIsMember(giftIdsKey, gift.id);
+                if (isGalleryGift) {
+                    const alreadyCollected = await redisClient.sIsMember(progressCacheKey, gift.id);
+                    if (!alreadyCollected) {
+                        await redisClient.sAdd(progressCacheKey, gift.id);
+                        await redisClient.expire(progressCacheKey, 604800);
+
+                        const galleryItemsStr = await redisClient.get(galleryCacheKey);
+                        const galleryItems = galleryItemsStr ? JSON.parse(galleryItemsStr) : [];
+                        const totalTarget = galleryItems.length;
+
+                        const currentProgressCount = await redisClient.sCard(progressCacheKey);
+
+                        galleryProgressUpdate = {
+                            hostId: receiverId,
+                            giftId: gift.id,
+                            currentProgress: currentProgressCount,
+                            totalTarget,
+                            isCompleted: Boolean(totalTarget > 0 && currentProgressCount >= totalTarget)
+                        };
+                    }
+                }
+            }
+
+            const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
+            const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
+
+            let txAgencyUserId = null;
+            await prisma.$transaction(async (tx) => {
+                await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
+
+                const receiverPoints = await getFastPointBalance(receiverWallet.id, tx);
+                const balanceAfterPointsCalculated = receiverPoints + pointsAwarded;
+
+                const [hostLedger] = await Promise.all([
+                    tx.pointLedgerEntry.create({
+                        data: {
+                            walletId: receiverWallet.id,
+                            direction: LedgerDirection.CREDIT,
+                            txType: PointTxType.GIFT_RECEIVE,
+                            amount: pointsAwarded,
+                            balanceAfter: balanceAfterPointsCalculated,
+                            idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-points`,
+                            refId: gift.id,
+                            counterpartyId: senderId,
+                            description: `Received gift ${gift.name} in live stream`
+                        }
+                    }),
+                    tx.giftTransaction.create({
+                        data: {
+                            senderUserId: senderId,
+                            receiverUserId: receiverId,
+                            giftId: gift.id,
+                            coinCost: gift.coinCost,
+                            pointsAwarded: Number(pointsAwarded),
+                            context: "live_stream"
+                        }
+                    }),
+                    tx.coinLedgerEntry.create({
+                        data: {
+                            walletId: senderWallet.id,
+                            direction: LedgerDirection.DEBIT,
+                            txType: CoinTxType.GIFT_SEND,
+                            amount: coinCost,
+                            balanceAfter: balanceAfterCoins,
+                            idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-coins`,
+                            refId: gift.id,
+                            counterpartyId: receiverId,
+                            description: `Sent gift ${gift.name} in live stream`
+                        }
+                    }),
+                    tx.walletUserLevel.upsert({
+                        where: {
+                            userId_levelType: {
+                                userId: senderId,
+                                levelType: LevelType.WEALTH
+                            }
+                        },
+                        create: {
+                            userId: senderId,
+                            levelType: LevelType.WEALTH,
+                            currentLevel: finalLevel,
+                            cumulativeTotal: newCumulativeTotal
+                        },
+                        update: {
+                            currentLevel: finalLevel,
+                            cumulativeTotal: newCumulativeTotal
+                        }
+                    })
+                ]);
+
+                await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
+
+                const commRes = await processLiveStreamAgencyCommission(tx, receiverId, pointsAwarded, hostLedger.id);
+                if (commRes && commRes.agencyUserId) {
+                    txAgencyUserId = commRes.agencyUserId;
+                }
+            }, { maxWait: 10000, timeout: 15000 });
+
+            if (redisClient.isOpen) {
+                if (txAgencyUserId) {
+                    await redisClient.del(`agency:me:${txAgencyUserId}`).catch(() => {});
+                }
+                const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
+                if (keys && keys.length > 0) {
+                    await redisClient.del(keys);
+                }
+            }
+            console.log(`[Gift Background DB Sync] Successfully synced to DB for stream: ${streamDbId}`);
+        } catch (dbErr) {
+            console.error(`[Gift Background DB Sync] Async sync error:`, dbErr.message);
+        }
+    });
+
+    return {
+        socketPayload,
+        galleryProgressUpdate: typeof galleryProgressUpdate !== 'undefined' ? galleryProgressUpdate : null,
+        newBalance: Number(balanceAfterCoins),
+        currentLevel: 1,
+        isLevelUp: false
+    };
+};
+
+export const followUserService = async ({ followerId, followingId }) => {
+    if (followerId === followingId) {
+        throw new Error("You cannot follow yourself.");
+    }
+
+    const targetUser = await prisma.user.findUnique({
+        where: { id: followingId },
+        select: { id: true, username: true }
+    });
+    if (!targetUser) {
+        throw new Error("Target user not found.");
+    }
+
+    const followerUser = await prisma.user.findUnique({
+        where: { id: followerId },
+        select: { id: true, username: true }
+    });
+    if (!followerUser) {
+        throw new Error("Follower user not found.");
+    }
+
+    const existing = await prisma.userFollow.findUnique({
+        where: {
+            followerId_followingId: {
+                followerId,
+                followingId
+            }
+        }
+    });
+
+    if (!existing) {
+        await prisma.userFollow.create({
+            data: {
+                followerId,
+                followingId
+            }
+        });
+    }
+
+    return {
+        followerId,
+        followerName: followerUser.username,
+        followingId,
+        followingName: targetUser.username
+    };
+};
+
+export const unfollowUserService = async ({ followerId, followingId }) => {
+    await prisma.userFollow.deleteMany({
+        where: {
+            followerId,
+            followingId
+        }
+    });
+
+    return { success: true };
+};
+
+export const checkFollowStatusService = async ({ followerId, followingId }) => {
+    const existing = await prisma.userFollow.findUnique({
+        where: {
+            followerId_followingId: {
+                followerId,
+                followingId
+            }
+        }
+    });
+
+    return { isFollowing: !!existing };
+};
+
+export const getAgencyCommissionRatesService = async () => {
+    const cacheKey = "agency:commission_rates";
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+
+    const levels = await prisma.agencyCommissionLevel.findMany();
+    const ratesMap = {};
+    for (const cl of levels) {
+        if (cl.level) {
+            ratesMap[cl.level.trim()] = cl.liveRateBp || 400;
+        }
+    }
+    if (!ratesMap['D']) ratesMap['D'] = 400;
+
+    if (redisClient.isOpen) {
+        await redisClient.set(cacheKey, JSON.stringify(ratesMap), "EX", 86400);
+    }
+    return ratesMap;
+};
+
+export const invalidateAgencyCommissionRatesCache = async () => {
+    if (redisClient.isOpen) {
+        await redisClient.del("agency:commission_rates");
+    }
+};
+
+export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoints, hostLedgerEntryId, cachedReceiverUser = null) => {
+    let agencyUserId = cachedReceiverUser?.currentAgencyId;
+    let hostName = cachedReceiverUser?.username || cachedReceiverUser?.firstName || null;
+
+    if (!agencyUserId || !hostName) {
+        const receiverUser = await tx.user.findUnique({
+            where: { id: receiverId },
+            select: { currentAgencyId: true, username: true, firstName: true }
+        });
+        if (receiverUser) {
+            if (!agencyUserId && receiverUser.currentAgencyId) {
+                agencyUserId = receiverUser.currentAgencyId;
+            }
+            if (!hostName) {
+                hostName = receiverUser.username || receiverUser.firstName || "Host";
+            }
+        }
+    }
+    if (!hostName) hostName = "Host";
+
+    if (!agencyUserId) {
+        const selfAgency = await tx.agency.findUnique({
+            where: { userId: receiverId },
+            select: { userId: true }
+        });
+        if (selfAgency) {
+            agencyUserId = receiverId;
+        }
+    }
+
+    if (!agencyUserId) return null;
+
+    const agency = await tx.agency.findUnique({
+        where: { userId: agencyUserId },
+        select: { currentLevel: true }
+    });
+    if (!agency) return null;
+
+    const levelKey = agency.currentLevel ? agency.currentLevel.trim() : 'D';
+    const ratesMap = await getAgencyCommissionRatesService();
+    const rateBp = ratesMap[levelKey] || 400;
+    const commissionPoints = BigInt(Math.floor((Number(hostPoints) * rateBp) / 10000));
+
+    // Non-blocking background worker for logging agency daily earnings & processed record
+    setImmediate(async () => {
+        try {
+            await prisma.agencyCommissionProcessed.create({
+                data: { hostLedgerEntryId }
+            });
+
+            const today = new Date();
+            today.setUTCHours(0, 0, 0, 0);
+
+            await prisma.agencyDailyEarning.upsert({
+                where: {
+                    agencyUserId_hostUserId_day: {
+                        agencyUserId,
+                        hostUserId: receiverId,
+                        day: today
+                    }
+                },
+                update: {
+                    hostEarningsPoints: { increment: hostPoints },
+                    hostCommissionPoints: { increment: commissionPoints }
+                },
+                create: {
+                    agencyUserId,
+                    hostUserId: receiverId,
+                    day: today,
+                    hostEarningsPoints: hostPoints,
+                    hostCommissionPoints: commissionPoints
+                }
+            });
+        } catch (bgErr) {
+            console.error("[Agency Daily Earning Logging Error]:", bgErr.message);
+        }
+    });
+
+    let agentLedgerEntry = null;
+    if (commissionPoints > 0n) {
+        const agentWallet = await getOrCreateWallet(agencyUserId, WalletCurrencyType.POINT, tx);
+        const agentPoints = await getFastPointBalance(agentWallet.id, tx);
+        const balanceAfter = agentPoints + commissionPoints;
+
+        agentLedgerEntry = await tx.pointLedgerEntry.create({
+            data: {
+                walletId: agentWallet.id,
+                direction: LedgerDirection.CREDIT,
+                txType: PointTxType.AGENT_COMMISSION,
+                amount: commissionPoints,
+                balanceAfter,
+                idempotencyKey: `agency-commission-${hostLedgerEntryId}`,
+                refId: hostLedgerEntryId,
+                counterpartyId: receiverId,
+                description: `Commission earned from host ${hostName} in live stream`
+            }
+        });
+
+        // Update agency points accumulation and evaluate level progression
+        const updatedAgency = await tx.agency.update({
+            where: { userId: agencyUserId },
+            data: {
+                currentWindowTotalPoints: { increment: commissionPoints },
+                lifetimeHostEarningsPoints: { increment: commissionPoints }
+            }
+        });
+
+        const commissionLevels = await tx.agencyCommissionLevel.findMany({
+            orderBy: { minWindowPoints: 'asc' }
+        });
+
+        let targetLevel = "D";
+        for (const cl of commissionLevels) {
+            if (updatedAgency.currentWindowTotalPoints >= cl.minWindowPoints) {
+                targetLevel = cl.level;
+            }
+        }
+
+        if (updatedAgency.currentLevel !== targetLevel) {
+            await tx.agency.update({
+                where: { userId: agencyUserId },
+                data: { currentLevel: targetLevel }
+            });
+            console.log(`[Agency Level Up] Agency ${agencyUserId} level updated to ${targetLevel}`);
+        }
+    }
+
+    return { agencyUserId, commissionPoints, agentLedgerEntry };
+};
+
+export const sendGlobalMessageService = async ({ senderId, message, streamId = null }) => {
+    await checkCoinsFrozenFast(senderId);
+
+    if (!message || message.trim() === "") {
+        throw new Error("Message content cannot be empty.");
+    }
+
+    const cost = 10000n;
+
+    // 1. Fetch sender info and wealth level
+    const [senderUser, userLevel] = await Promise.all([
+        prisma.user.findUnique({
+            where: { id: senderId },
+            select: { username: true, firstName: true, lastName: true, avatarUrl: true }
+        }),
+        prisma.walletUserLevel.findUnique({
+            where: {
+                userId_levelType: {
+                    userId: senderId,
+                    levelType: LevelType.WEALTH
+                }
+            },
+            select: { currentLevel: true }
+        })
+    ]);
+
+    if (!senderUser) {
+        throw new Error("Sender user not found.");
+    }
+
+    const walletKey = `wallet:coins:${senderId}`;
+    let senderCoinsStr = await redisClient.get(walletKey);
+    let senderCoins;
+
+    let senderWallet = await prisma.wallet.findUnique({
+        where: { userId_currencyType: { userId: senderId, currencyType: WalletCurrencyType.COIN } }
+    });
+    if (!senderWallet) {
+        senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
+    }
+
+    const dbCoins = await getFastCoinBalance(senderWallet.id);
+    if (senderCoinsStr === null) {
+        senderCoins = dbCoins;
+    } else {
+        senderCoins = BigInt(senderCoinsStr);
+        if (dbCoins > senderCoins) {
+            senderCoins = dbCoins;
+        }
+    }
+
+    if (senderCoins < cost) {
+        throw new Error("Insufficient coins to send a global message.");
+    }
+
+    const balanceAfterCoins = senderCoins - cost;
+    await redisClient.set(walletKey, balanceAfterCoins.toString(), "EX", 3600);
+
+    setImmediate(async () => {
+        try {
+            await prisma.$transaction(async (tx) => {
+                await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
+
+                const freshCoins = await getFastCoinBalance(senderWallet.id, tx);
+                const dbBalanceAfter = freshCoins - cost;
+
+                await tx.coinLedgerEntry.create({
+                    data: {
+                        walletId: senderWallet.id,
+                        direction: LedgerDirection.DEBIT,
+                        txType: CoinTxType.GLOBAL_MESSAGE || "GLOBAL_MESSAGE",
+                        amount: cost,
+                        balanceAfter: dbBalanceAfter,
+                        idempotencyKey: `global-msg-${senderId}-${Date.now()}`,
+                        description: `Sent global message: "${message.substring(0, 30)}..."`
+                    }
+                });
+
+                await tx.wallet.update({
+                    where: { id: senderWallet.id },
+                    data: { version: { increment: 1n } }
+                });
+
+                await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
+            }, { maxWait: 10000, timeout: 15000 });
+
+        } catch (dbErr) {
+            console.error(`[Global Message DB Sync] Critical Failure during async sync:`, dbErr);
+            redisClient.del(walletKey).catch(err => console.error(err));
+        }
+    });
+
+    return {
+        newBalance: Number(balanceAfterCoins),
+        socketPayload: {
+            senderId,
+            senderName: senderUser.username || `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || "User",
+            senderProfilePic: senderUser.avatarUrl || null,
+            wealthLevel: userLevel?.currentLevel || 1,
+            message,
+            streamId: streamId || null,
+            timestamp: new Date().toISOString()
+        }
+    };
+};
+
+export const verifyStreamFrameService = async ({ id, base64Image }) => {
+    const stream = await prisma.liveStream.findUnique({
+        where: { id }
+    });
+
+    if (!stream) {
+        throw new Error("Live stream not found.");
+    }
+
+    if (!stream.isLive) {
+        return { success: true, status: "INACTIVE", message: "Stream is not currently live." };
+    }
+
+    const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+
+    const check = await moderateImage(buffer);
+
+    if (check.isViolation) {
+        console.warn(`[Stream Moderation] Nudity/Explicit content detected in stream ${id}. Action: ${check.action}, Label: ${check.label} (Confidence: ${check.confidence}%)`);
+
+        // 1. Upload flagged frame to S3
+        let s3Key = null;
+        let s3Bucket = null;
+        try {
+            s3Key = `live-stream-moderation/${id}_${Date.now()}.jpg`;
+            const uploadResult = await uploadFlaggedFrameToS3(buffer, s3Key);
+            s3Bucket = uploadResult.bucket;
+        } catch (s3Err) {
+            console.error(`[Stream Moderation] Failed to upload flagged frame to S3 for stream ${id}:`, s3Err);
+        }
+
+        // 2. Save log record in DB via Prisma
+        try {
+            await prisma.liveStreamModerationLog.create({
+                data: {
+                    streamId: id,
+                    detectedLabel: check.label,
+                    confidence: check.confidence,
+                    action: check.action,
+                    s3Key,
+                    s3Bucket
+                }
+            });
+            console.log(`[Stream Moderation] Saved log entry in DB for stream ${id}`);
+        } catch (dbErr) {
+            console.error(`[Stream Moderation] Failed to save log entry in DB for stream ${id}:`, dbErr);
+        }
+
+        if (check.action === "BLOCK") {
+            // End the stream immediately
+            console.log(`[Stream Moderation] Blocking stream ${id} due to explicit content violation.`);
+
+            // 3. Mark stream as not live in DB
+            const updatedStream = await prisma.liveStream.update({
+                where: { id },
+                data: {
+                    isLive: false,
+                    endedAt: new Date()
+                }
+            });
+
+            // 4. Batch sync viewers/chats from Redis to PostgreSQL
+            try {
+                const viewerIds = await redisClient.sMembers(`stream:history:${stream.streamId}`);
+                if (viewerIds && viewerIds.length > 0) {
+                    const viewerData = viewerIds.map(vId => ({
+                        streamId: stream.streamId,
+                        userId: vId
+                    }));
+                    await prisma.streamViewer.createMany({
+                        data: viewerData,
+                        skipDuplicates: true
+                    });
+                }
+            } catch (syncError) {
+                console.error("[Stream Moderation Sync] Failed to sync viewers:", syncError.message);
+            }
+
+            try {
+                const rawChats = await redisClient.lRange(`stream:chats:${stream.streamId}`, 0, -1);
+                if (rawChats && rawChats.length > 0) {
+                    const chatData = rawChats.map(c => {
+                        const parsed = JSON.parse(c);
+                        return {
+                            id: parsed.id,
+                            streamId: parsed.streamId,
+                            senderId: parsed.senderId,
+                            message: parsed.message,
+                            createdAt: new Date(parsed.createdAt),
+                            replyToMessageId: parsed.replyToMessageId || null,
+                            replyToUserId: parsed.replyToUserId || null,
+                            replyToUsername: parsed.replyToUsername || null,
+                            replyToText: parsed.replyToText || null
+                        };
+                    });
+                    await prisma.liveMessage.createMany({
+                        data: chatData,
+                        skipDuplicates: true
+                    });
+                }
+            } catch (syncError) {
+                console.error("[Stream Moderation Sync] Failed to sync chats:", syncError.message);
+            }
+
+            // 5. Clean Redis
+            try {
+                await redisClient.del([
+                    `stream:active:${stream.streamId}`,
+                    `stream:history:${stream.streamId}`,
+                    `stream:chats:${stream.streamId}`,
+                    `stream:admins:${stream.streamId}`,
+                    `stream:kicked:${stream.streamId}`,
+                    `stream:password:${stream.streamId}`,
+                    `stream:sheet:${stream.streamId}`
+                ]);
+            } catch (cleanError) {
+                console.error("[Stream Moderation Clean] Failed to clear Redis keys:", cleanError.message);
+            }
+
+            // Calculate ban details and apply automatic ban punishment
+            let banDurationHours = 1;
+            let banNumber = 1;
+            let suspendedUntil = new Date(Date.now() + 1 * 60 * 60 * 1000);
+            try {
+                const previousBans = await prisma.hostStreamBan.count({
+                    where: { userId: stream.userId }
+                });
+                banNumber = previousBans + 1;
+                if (banNumber === 1) {
+                    banDurationHours = 1;
+                } else if (banNumber === 2) {
+                    banDurationHours = 8;
+                } else if (banNumber === 3) {
+                    banDurationHours = 24;
+                } else {
+                    banDurationHours = 72;
+                }
+                suspendedUntil = new Date(Date.now() + banDurationHours * 60 * 60 * 1000);
+
+                await prisma.user.update({
+                    where: { id: stream.userId },
+                    data: { suspended_until: suspendedUntil }
+                });
+
+                await prisma.hostStreamBan.create({
+                    data: {
+                        userId: stream.userId,
+                        streamId: id,
+                        banNumber,
+                        banDuration: banDurationHours,
+                        suspendedUntil
+                    }
+                });
+                console.log(`[Stream Moderation] Successfully applied ${banDurationHours} hour ban to user ${stream.userId} (Ban #${banNumber})`);
+            } catch (banErr) {
+                console.error("[Stream Moderation] Failed to calculate/apply automatic ban:", banErr);
+            }
+
+            // 6. Broadcast socket notification to the stream room that they are blocked
+            broadcastToStream(stream.streamId, "stream_blocked", {
+                streamId: id,
+                reason: "VIOLATION_NUDITY",
+                message: "This live stream has been terminated by moderation due to explicit content violation.",
+                suspendedUntil: suspendedUntil.toISOString(),
+                banDurationHours,
+                banNumber
+            });
+
+            // 7. Close LiveKit Room
+            await closeLivekitRoom(stream.streamId);
+
+            return { status: "BLOCKED", label: check.label, banDurationHours, banNumber, suspendedUntil };
+        } else if (check.action === "WARNING") {
+            broadcastToStream(stream.streamId, "stream_warning", {
+                streamId: id,
+                message: `Moderation Warning: Inappropriate content detected. Please keep the stream appropriate.`,
+                label: check.label,
+                confidence: check.confidence
+            });
+            return { status: "WARNING", label: check.label, confidence: check.confidence };
+        }
+    }
+
+    return { isViolation: false, status: "CLEAN" };
+};
+
+export const reportFakeLiveService = async ({ streamDbId, reporterId, base64Image, additionalInfo }) => {
+    const stream = await prisma.liveStream.findUnique({
+        where: { id: streamDbId }
+    });
+
+    if (!stream) {
+        throw new Error("Live stream not found.");
+    }
+
+    if (!stream.isLive) {
+        throw new Error("This live stream is not currently active.");
+    }
+
+    if (stream.userId === reporterId) {
+        throw new Error("You cannot report your own live stream.");
+    }
+
+    if (!base64Image) {
+        throw new Error("Screenshot image is required for this report.");
+    }
+
+    const base64Data = base64Image.replace(/^data:image\/\w+;base64,/, "");
+    const buffer = Buffer.from(base64Data, "base64");
+
+    const s3Key = `live-reports/fake-person/${streamDbId}_${Date.now()}.jpg`;
+    try {
+        await uploadFlaggedFrameToS3(buffer, s3Key);
+    } catch (s3Err) {
+        console.error(`[Report Fake Live] Failed to upload evidence frame to S3 for stream ${streamDbId}:`, s3Err);
+        throw new Error("Failed to upload evidence image. Please try again.");
+    }
+
+    const report = await prisma.messageReport.create({
+        data: {
+            reporterId,
+            reportedUserId: stream.userId,
+            host_user_id: stream.userId,
+            live_session_id: stream.id,
+            reason: "FAKE_ACCOUNT",
+            context: "LIVE",
+            additionalInfo: additionalInfo || "Fake person live reported during stream",
+            evidenceS3Keys: [s3Key],
+            status: "PENDING"
+        }
+    });
+
+    return { success: true, reportId: report.id };
+};
+
+export const getUserEffectSettingsService = async (userId) => {
+    const redisKey = `user:effect_settings:${userId}`;
+    const cached = await redisClient.get(redisKey);
+    if (cached) {
+        return JSON.parse(cached);
+    }
+
+    let settings = await prisma.userSettings.findUnique({
+        where: { userId },
+        select: {
+            effectTopRunway: true,
+            effectGift: true,
+            effectLuckyGift: true,
+            effectEntry: true,
+            effectGlobal: true
+        }
+    });
+
+    if (!settings) {
+        settings = await prisma.userSettings.create({
+            data: {
+                userId,
+                effectTopRunway: true,
+                effectGift: true,
+                effectLuckyGift: true,
+                effectEntry: true,
+                effectGlobal: true
+            },
+            select: {
+                effectTopRunway: true,
+                effectGift: true,
+                effectLuckyGift: true,
+                effectEntry: true,
+                effectGlobal: true
+            }
+        });
+    }
+
+    await redisClient.set(redisKey, JSON.stringify(settings), 'EX', 86400);
+    return settings;
+};
+
+export const updateUserEffectSettingsService = async (userId, newSettings) => {
+    const updateData = {};
+    if (typeof newSettings.effectTopRunway === 'boolean') updateData.effectTopRunway = newSettings.effectTopRunway;
+    if (typeof newSettings.effectGift === 'boolean') updateData.effectGift = newSettings.effectGift;
+    if (typeof newSettings.effectLuckyGift === 'boolean') updateData.effectLuckyGift = newSettings.effectLuckyGift;
+    if (typeof newSettings.effectEntry === 'boolean') updateData.effectEntry = newSettings.effectEntry;
+    if (typeof newSettings.effectGlobal === 'boolean') updateData.effectGlobal = newSettings.effectGlobal;
+
+    const settings = await prisma.userSettings.upsert({
+        where: { userId },
+        create: {
+            userId,
+            ...updateData
+        },
+        update: updateData,
+        select: {
+            effectTopRunway: true,
+            effectGift: true,
+            effectLuckyGift: true,
+            effectEntry: true,
+            effectGlobal: true
+        }
+    });
+
+    const redisKey = `user:effect_settings:${userId}`;
+    await redisClient.set(redisKey, JSON.stringify(settings), 'EX', 86400);
+    return settings;
+};
+
+export const getFansRankingService = async ({ hostId, period = "today", currentUserId }) => {
+    const validPeriod = period.toLowerCase();
+    const now = new Date();
+    let startDate;
+
+    if (validPeriod === "weekly" || validPeriod === "7days" || validPeriod === "recent_7_days") {
+        startDate = new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000);
+    } else if (validPeriod === "monthly" || validPeriod === "month") {
+        startDate = new Date(now.getFullYear(), now.getMonth(), 1);
+    } else {
+        startDate = new Date(now.getFullYear(), now.getMonth(), now.getDate(), 0, 0, 0, 0);
+    }
+
+    // Query top 50 gifters directly from GiftTransaction (Real-time DB query)
+    const topGifters = await prisma.giftTransaction.groupBy({
+        by: ['senderUserId'],
+        where: {
+            receiverUserId: hostId,
+            createdAt: {
+                gte: startDate
+            }
+        },
+        _sum: {
+            coinCost: true,
+            pointsAwarded: true
+        },
+        orderBy: {
+            _sum: {
+                coinCost: 'desc'
+            }
+        },
+        take: 50
+    });
+
+    const userIds = topGifters.map(g => g.senderUserId);
+
+    const [users, walletLevels] = await Promise.all([
+        userIds.length > 0 ? prisma.user.findMany({
+            where: { id: { in: userIds } },
+            select: {
+                id: true,
+                username: true,
+                firstName: true,
+                lastName: true,
+                avatarUrl: true,
+                privacyMysteryRank: true,
+                vipSubscriptionActive: true,
+                userLevel: {
+                    select: {
+                        wealthLevel: true
+                    }
+                }
+            }
+        }) : [],
+        userIds.length > 0 ? prisma.walletUserLevel.findMany({
+            where: {
+                userId: { in: userIds },
+                levelType: LevelType.WEALTH
+            },
+            select: {
+                userId: true,
+                currentLevel: true
+            }
+        }) : []
+    ]);
+
+    const userMap = new Map(users.map(u => [u.id, u]));
+    const walletLevelMap = new Map(walletLevels.map(w => [w.userId, w.currentLevel]));
+
+    const visibleGifters = topGifters.filter(g => {
+        const u = userMap.get(g.senderUserId);
+        const isMystery = Boolean(u?.privacyMysteryRank && u?.vipSubscriptionActive);
+        return !isMystery;
+    });
+
+    const rankings = visibleGifters.map((g, index) => {
+        const u = userMap.get(g.senderUserId);
+        const wealthLv = walletLevelMap.get(g.senderUserId) ?? u?.userLevel?.wealthLevel ?? 1;
+        const fullName = [u?.firstName, u?.lastName].filter(Boolean).join(" ").trim();
+        const name = fullName || u?.username || 'User';
+        const coins60Percent = Number(g._sum.pointsAwarded ?? Math.floor((g._sum.coinCost || 0) * 0.60));
+
+        return {
+            rank: index + 1,
+            userId: g.senderUserId,
+            name: name,
+            username: u ? u.username : 'User',
+            avatarUrl: u ? u.avatarUrl : null,
+            coins: coins60Percent,
+            wealthLevel: wealthLv,
+            isMystery: false
+        };
+    });
+
+    // Compute myRank for current logged-in user
+    let myRankObj = { rank: null, coins: 0 };
+    if (currentUserId) {
+        const foundIndex = rankings.findIndex(r => r.userId === currentUserId);
+        if (foundIndex !== -1) {
+            myRankObj = {
+                rank: rankings[foundIndex].rank,
+                coins: rankings[foundIndex].coins
+            };
+        } else {
+            const myAgg = await prisma.giftTransaction.aggregate({
+                _sum: {
+                    coinCost: true,
+                    pointsAwarded: true
+                },
+                where: {
+                    receiverUserId: hostId,
+                    senderUserId: currentUserId,
+                    createdAt: {
+                        gte: startDate
+                    }
+                }
+            });
+            const myTotalCoinCost = Number(myAgg._sum.coinCost || 0);
+            const myCoins = Number(myAgg._sum.pointsAwarded ?? Math.floor(myTotalCoinCost * 0.60));
+            if (myCoins > 0) {
+                const higherGifters = await prisma.giftTransaction.groupBy({
+                    by: ['senderUserId'],
+                    where: {
+                        receiverUserId: hostId,
+                        createdAt: {
+                            gte: startDate
+                        }
+                    },
+                    _sum: {
+                        coinCost: true
+                    },
+                    having: {
+                        coinCost: {
+                            _sum: {
+                                gt: myTotalCoinCost
+                            }
+                        }
+                    }
+                });
+                myRankObj = {
+                    rank: higherGifters.length + 1,
+                    coins: myCoins
+                };
+            }
+        }
+    }
+
+    return {
+        period: validPeriod,
+        hostId,
+        rankings,
+        myRank: myRankObj
+    };
+};
+
+export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds = [] }) => {
+    if (!viewerIds || viewerIds.length === 0) return [];
+
+    const cacheKey = `stream:viewers_sorted:${streamId}:${[...viewerIds].sort().join(',')}`;
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+
+    const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+    const now = new Date();
+
+    const [giftAgg, activeGuardians, dbUsers, walletLevels, adminIds] = await Promise.all([
+        prisma.giftTransaction.groupBy({
+            by: ['senderUserId'],
+            where: {
+                receiverUserId: hostUserId,
+                senderUserId: { in: viewerIds },
+                createdAt: { gte: sevenDaysAgo }
+            },
+            _sum: {
+                coinCost: true
+            }
+        }),
+        prisma.guardian.findMany({
+            where: {
+                guardianUserId: { in: viewerIds },
+                targetUserId: hostUserId,
+                isExpired: false,
+                expiresAt: { gt: now }
+            },
+            select: {
+                guardianUserId: true
+            }
+        }),
+        prisma.user.findMany({
+            where: { id: { in: viewerIds } },
+            select: {
+                id: true,
+                publicId: true,
+                username: true,
+                avatarUrl: true,
+                gender: true,
+                dateOfBirth: true,
+                privacyMysteryLive: true,
+                vipSubscriptionActive: true,
+                userLevel: {
+                    select: {
+                        wealthLevel: true,
+                        livestreamLevel: true
+                    }
+                }
+            }
+        }),
+        prisma.walletUserLevel.findMany({
+            where: {
+                userId: { in: viewerIds },
+                levelType: LevelType.WEALTH
+            },
+            select: {
+                userId: true,
+                currentLevel: true
+            }
+        }),
+        streamId ? getStreamAdminsService({ streamId }) : Promise.resolve([])
+    ]);
+
+    const giftMap = new Map(giftAgg.map(g => [g.senderUserId, Number(g._sum.coinCost || 0)]));
+    const guardianSet = new Set(activeGuardians.map(g => g.guardianUserId));
+    const walletLevelMap = new Map(walletLevels.map(w => [w.userId, w.currentLevel]));
+    const adminSet = new Set(adminIds || []);
+
+    const visibleDbUsers = dbUsers.filter(u => !(u.privacyMysteryLive && u.vipSubscriptionActive));
+
+    const viewers = visibleDbUsers.map(u => {
+        const coins7d = giftMap.get(u.id) || 0;
+        const isGuardian = guardianSet.has(u.id);
+        const isVip = !!u.vipSubscriptionActive;
+        const wealthLevel = walletLevelMap.get(u.id) ?? u.userLevel?.wealthLevel ?? 0;
+        const livestreamLevel = u.userLevel?.livestreamLevel ?? 0;
+        const isAdmin = adminSet.has(u.id);
+
+        let age = null;
+        if (u.dateOfBirth) {
+            const today = new Date();
+            const birthDate = new Date(u.dateOfBirth);
+            age = today.getFullYear() - birthDate.getFullYear();
+            const m = today.getMonth() - birthDate.getMonth();
+            if (m < 0 || (m === 0 && today.getDate() < birthDate.getDate())) {
+                age--;
+            }
+            if (age < 0) age = null;
+        }
+
+        return {
+            id: u.id,
+            publicId: u.publicId ? u.publicId.toString() : null,
+            username: u.username,
+            avatarUrl: u.avatarUrl || null,
+            gender: u.gender || null,
+            age,
+            isAdmin,
+            isGuardian,
+            isVip,
+            coins7d,
+            wealthLevel,
+            livestreamLevel
+        };
+    });
+
+    viewers.sort((a, b) => {
+        // Tier 1: 7-Day Top Gifters Coins (Highest first)
+        if (a.coins7d !== b.coins7d) return b.coins7d - a.coins7d;
+
+        // Tier 2: Host Guardian Status (Guardians first)
+        if (a.isGuardian !== b.isGuardian) return b.isGuardian ? 1 : -1;
+
+        // Tier 3: VIP Subscribed Status (VIPs first)
+        if (a.isVip !== b.isVip) return b.isVip ? 1 : -1;
+
+        // Tier 4: Wealth Level (Highest level first)
+        return b.wealthLevel - a.wealthLevel;
+    });
+
+    if (redisClient.isOpen && viewers.length > 0) {
+        await redisClient.set(cacheKey, JSON.stringify(viewers), "EX", 60);
+    }
+
+    return viewers;
+};
+
+export const getHostProfileService = async ({ hostUserId }) => {
+    if (!hostUserId) return null;
+
+    const cacheKey = `user:profile:${hostUserId}`;
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+
+    const [hostUser, hostWalletLevels] = await Promise.all([
+        prisma.user.findUnique({
+            where: { id: hostUserId },
+            select: {
+                id: true,
+                publicId: true,
+                username: true,
+                avatarUrl: true,
+                userLevel: {
+                    select: {
+                        wealthLevel: true,
+                        livestreamLevel: true
+                    }
+                }
+            }
+        }),
+        prisma.walletUserLevel.findMany({
+            where: { userId: hostUserId },
+            select: { levelType: true, currentLevel: true }
+        })
+    ]);
+
+    const hostLevelMap = new Map(hostWalletLevels.map(w => [w.levelType, w.currentLevel]));
+    const host = hostUser ? {
+        id: hostUser.id,
+        publicId: hostUser.publicId ? hostUser.publicId.toString() : null,
+        username: hostUser.username,
+        avatarUrl: hostUser.avatarUrl || null,
+        wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? hostUser.userLevel?.wealthLevel ?? 0,
+        livestreamLevel: hostLevelMap.get(LevelType.LIVESTREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
+    } : null;
+
+    if (host && redisClient.isOpen) {
+        await redisClient.set(cacheKey, JSON.stringify(host), "EX", 300);
+    }
+
+    return host;
+};
+
+export const getUserPrivacyService = async ({ userId }) => {
+    if (!userId) return { username: "Guest", avatarUrl: null, isStealth: false };
+
+    const cacheKey = `user:privacy:${userId}`;
+    if (redisClient.isOpen) {
+        const cached = await redisClient.get(cacheKey);
+        if (cached) {
+            try { return JSON.parse(cached); } catch (e) { }
+        }
+    }
+
+    const user = await prisma.user.findUnique({
+        where: { id: userId },
+        select: {
+            username: true,
+            avatarUrl: true,
+            privacyMysteryLive: true,
+            vipSubscriptionActive: true
+        }
+    });
+
+    const result = {
+        username: user?.username || "Guest",
+        avatarUrl: user?.avatarUrl || null,
+        isStealth: Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive)
+    };
+
+    if (redisClient.isOpen) {
+        await redisClient.set(cacheKey, JSON.stringify(result), "EX", 300);
+    }
+
+    return result;
 };

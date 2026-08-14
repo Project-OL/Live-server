@@ -1,3 +1,9 @@
+// BigInt Serialization Patch
+BigInt.prototype.toJSON = function () {
+  const num = Number(this);
+  return Number.isSafeInteger(num) ? num : this.toString();
+};
+
 import http from 'http';
 import app from './src/app.js';
 import dotenv from 'dotenv';

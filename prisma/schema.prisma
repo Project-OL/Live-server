@@ -1,6 +1,3 @@
-// Production auth system – design: 02_COMPLETE_AUTH_SYSTEM_DESIGN.md
-// Users use UUID; public_id sequential from 34216589; VIP and sessions supported.
-
 generator client {
   provider = "prisma-client-js"
 }
@@ -10,142 +7,146 @@ datasource db {
   url      = env("DATABASE_URL")
 }
 
-// ─── 1. USERS (core identity, public IDs, VIP, profile) ───
 model User {
-  id              String @id @default(uuid()) @db.Uuid
-  username        String @db.VarChar(255)
-  publicId        BigInt @unique @map("public_id")
-  defaultPublicId BigInt @unique @map("default_public_id")
-
-  firstName         String?   @map("first_name") @db.VarChar(255)
-  lastName          String?   @map("last_name") @db.VarChar(255)
-  dateOfBirth       DateTime? @map("date_of_birth") @db.Date
-  country           String?   @db.VarChar(100)
-  gender            String?   @db.VarChar(50) // male, female, other
-  avatarUrl         String?   @map("avatar_url") @db.Text
-  bio               String?   @db.Text
-  // Last time display name (PATCH /me `name`) changed — monthly throttle.
-  usernameUpdatedAt DateTime? @map("username_updated_at")
-
-  status             String    @default("new") @db.VarChar(50) // new, active, suspended, deactivating, deleted
-  passwordSet        Boolean   @default(false) @map("password_set")
-  profileCompletedAt DateTime? @map("profile_completed_at")
-
-  currentVipPublicId   BigInt?   @unique @map("current_vip_public_id")
-  vipPublicIdExpiresAt DateTime? @map("vip_public_id_expires_at")
-  vipPurchaseAt        DateTime? @map("vip_purchase_at")
-
-  // Permanent base public ID from registration (sequence); VIP overlay is separate.
-  originalPublicId BigInt? @unique @map("original_public_id")
-
-  vipSubscriptionActive    Boolean   @default(false) @map("vip_subscription_active")
-  vipSubscriptionStartAt   DateTime? @map("vip_subscription_start_at")
-  vipSubscriptionExpiresAt DateTime? @map("vip_subscription_expires_at")
-
-  privacyInvisibleVisitor Boolean   @default(false) @map("privacy_invisible_visitor")
-  privacyMysteryLive      Boolean   @default(false) @map("privacy_mystery_live")
-  privacyMysteryRank      Boolean   @default(false) @map("privacy_mystery_rank")
-  privacyInvisibleOnline  Boolean   @default(false) @map("privacy_invisible_online")
-  hideMicStatus           Boolean   @default(false) @map("hide_mic_status")
-  isSupport               Boolean   @default(false) @map("is_support")
-  privacyUpdatedAt        DateTime? @map("privacy_updated_at")
-
-  isAgent         Boolean   @default(false) @map("is_agent")
-  isTagged        Boolean   @default(false) @map("is_tagged")
-  lastActiveAt    DateTime? @map("last_active_at")
-  currentAgencyId String?   @map("current_agency_id") @db.Uuid
-
-  lastIpAddress String?  @map("last_ip_address") @db.VarChar(45)
-  tokenVersion  Int      @default(0) @map("token_version") // revoke-all / password change; embedded in access JWT
-  createdAt     DateTime @default(now()) @map("created_at")
-  updatedAt     DateTime @updatedAt @map("updated_at")
-
-  authIdentifiers               AuthIdentifier[]
-  authPassword                  AuthPassword?
-  securityPassword              SecurityPassword?
-  otpTokens                     OtpToken[]
-  sessions                      Session[]
-  deviceRegistry                DeviceRegistry[]
-  auditLogs                     AuditLog[]
-  ownedVipIds                   VipPublicId[]                  @relation("VipOwner")
-  vipAssignments                UserVipAssignment[]
-  accountDeletion               AccountDeletion?               @relation("AccountDeletion")
-  userSettings                  UserSettings?
-  linkedDeviceAccounts          DeviceLinkedAccount[]
-  followers                     UserFollow[]                   @relation("Following")
-  following                     UserFollow[]                   @relation("Follower")
-  profileVisitors               ProfileVisitor[]               @relation("ProfileOwner")
-  visitHistory                  ProfileVisitor[]               @relation("ProfileVisitor")
-  userLevel                     UserLevel?
-  subscribers                   UserSubscriber[]               @relation("Creator")
-  subscriptions                 UserSubscriber[]               @relation("Subscriber")
-  creatorSubsAsFan              CreatorSubscription[]          @relation("CreatorSubFan")
-  creatorSubsAsHost             CreatorSubscription[]          @relation("CreatorSubHost")
-  posts                         Post[]                         @relation("UserPosts")
-  taggedIn                      PostTag[]                      @relation("TaggedIn")
-  postLikes                     PostLike[]                     @relation("PostLikes")
-  conversationMembers           ConversationMember[]
-  sentMessages                  Message[]                      @relation("SentMessages")
-  messageReactions              MessageReaction[]
-  blockedBy                     BlockList[]                    @relation("BlockedBy")
-  blockedUsers                  BlockList[]                    @relation("BlockedUsers")
-  reporterReports               MessageReport[]                @relation("Reporter")
-  reportedReports               MessageReport[]                @relation("Reported")
-  reminderOwner                 BroadcastReminder[]            @relation("ReminderOwner")
-  reminderCreator               BroadcastReminder[]            @relation("ReminderCreator")
-  wallets                       Wallet[]
-  walletUserLevels              WalletUserLevel[]
-  videoCallSettings             VideoCallSettings?
-  callerSessions                VideoCallSession[]             @relation("CallSessionCaller")
-  creatorSessions               VideoCallSession[]             @relation("CallSessionCreator")
-  hostGalleryProgress           GiftGalleryProgress[]          @relation("HostGalleryProgress")
-  gifterGalleryProgress         GiftGalleryProgress[]          @relation("GifterGalleryProgress")
-  giftsSent                     GiftTransaction[]              @relation("GiftsSent")
-  giftsReceived                 GiftTransaction[]              @relation("GiftsReceived")
-  fanSpendSent                  FanSpend[]                     @relation("FanSpendSender")
-  fanSpendReceived              FanSpend[]                     @relation("FanSpendReceiver")
-  guardiansAsGuardian           Guardian[]                     @relation("GuardianOf")
-  guardiansAsTarget             Guardian[]                     @relation("GuardedBy")
-  supportTickets                SupportTicket[]                @relation("SupportTicketsAsUser")
-  supportTicketsClosed          SupportTicket[]                @relation("SupportTicketsClosedBy")
-  supportMessagesSent           SupportMessage[]               @relation("SupportMessageSender")
-  storeItems                    UserStoreItem[]                @relation("UserStoreItems")
-  storePurchasedItems           UserStoreItem[]                @relation("StorePurchasedBy")
-  activeStoreItems              UserActiveStoreItems[]
-  userRichTier                  UserRichTier?
-  monthlyRechargeAggregates     MonthlyRechargeAggregate[]
-  richTierHistoryRows           RichTierHistory[]              @relation("RichTierHistoryUser")
-  vipMembershipPurchases        VipMembershipPurchase[]
-  vipDailyClaims                VipDailyClaim[]
-  vipDailyQuotas                VipDailyQuota[]
-  questionnaireAttempts         UserQuestionnaireAttempt[]
-  faceProfile                   UserFaceProfile?
-  faceVerificationAttempts      FaceVerificationAttempt[]
-  userLivePhoto                 UserLivePhoto?
-  livePhotoVerificationAttempts LivePhotoVerificationAttempt[]
-  faceRegistrationSessions      FaceRegistrationSession[]
-  faceRegistrationAuditLogs     FaceRegistrationAuditLog[]
-
-  agency                       Agency?
-  hostAgencyMembership         AgencyHost?
-  agencyDailyAsHost            AgencyDailyEarning[]          @relation("AgencyDailyHost")
-  agentTransfersSent           AgentPointTransfer[]          @relation("AgentTransferSender")
-  agentTransfersReceived       AgentPointTransfer[]          @relation("AgentTransferRecipient")
-  currentAgencyAgent           User?                         @relation("HostToAgencyAgent", fields: [currentAgencyId], references: [id], onDelete: SetNull)
-  usersHostedInMyAgency        User[]                        @relation("HostToAgencyAgent")
-  agencyApplicationsAsHost     AgencyHostApplication[]       @relation("AgencyAppHost")
-  agencyApplicationsResolved   AgencyHostApplication[]       @relation("AgencyAppResolver")
-  agencyLeaveAsHost            AgencyLeaveApplication[]      @relation("AgencyLeaveHost")
-  agencyLeaveResolved          AgencyLeaveApplication[]      @relation("AgencyLeaveResolver")
-  agencyApplicationKyc         AgencyApplicationKyc?
-  agencyAgentApplication       AgencyAgentApplication?       @relation("AgencyAgentApplications")
-  tradingCoinTopupOrders       CoinTradingTopupOrder[]       @relation("TradingCoinTopupsByAgent")
-  tradingCoinTransfersSent     CoinTradingTransfer[]         @relation("TradingCoinTransferSender")
-  tradingCoinTransfersReceived CoinTradingTransfer[]         @relation("TradingCoinTransferRecipient")
-  tradingCoinTransferReversals CoinTradingTransfer[]         @relation("TradingCoinTransferReversedBy")
-  paymentMethods               UserPaymentMethod[]
-  payrollAssignmentsAsAgent    WithdrawalPayrollAssignment[] @relation("AgencyPayrollAssignments")
-  hostLiveSessions             HostLiveSession[]
+  id                                                           String                         @id @default(uuid()) @db.Uuid
+  username                                                     String                         @db.VarChar(255)
+  publicId                                                     BigInt                         @unique @map("public_id")
+  defaultPublicId                                              BigInt                         @unique @map("default_public_id")
+  firstName                                                    String?                        @map("first_name") @db.VarChar(255)
+  lastName                                                     String?                        @map("last_name") @db.VarChar(255)
+  dateOfBirth                                                  DateTime?                      @map("date_of_birth") @db.Date
+  country                                                      String?                        @db.VarChar(100)
+  gender                                                       String?                        @db.VarChar(50)
+  avatarUrl                                                    String?                        @map("avatar_url")
+  bio                                                          String?
+  usernameUpdatedAt                                            DateTime?                      @map("username_updated_at")
+  status                                                       String                         @default("new") @db.VarChar(50)
+  passwordSet                                                  Boolean                        @default(false) @map("password_set")
+  profileCompletedAt                                           DateTime?                      @map("profile_completed_at")
+  currentVipPublicId                                           BigInt?                        @unique @map("current_vip_public_id")
+  vipPublicIdExpiresAt                                         DateTime?                      @map("vip_public_id_expires_at")
+  vipPurchaseAt                                                DateTime?                      @map("vip_purchase_at")
+  originalPublicId                                             BigInt?                        @unique @map("original_public_id")
+  vipSubscriptionActive                                        Boolean                        @default(false) @map("vip_subscription_active")
+  vipSubscriptionStartAt                                       DateTime?                      @map("vip_subscription_start_at")
+  vipSubscriptionExpiresAt                                     DateTime?                      @map("vip_subscription_expires_at")
+  privacyInvisibleVisitor                                      Boolean                        @default(false) @map("privacy_invisible_visitor")
+  privacyMysteryLive                                           Boolean                        @default(false) @map("privacy_mystery_live")
+  privacyMysteryRank                                           Boolean                        @default(false) @map("privacy_mystery_rank")
+  privacyInvisibleOnline                                       Boolean                        @default(false) @map("privacy_invisible_online")
+  privacyInvisibleOnlineAt                                     DateTime?                      @map("privacy_invisible_online_at")
+  fcmToken                                                     String?                        @map("fcm_token")
+  fcmTokenUpdatedAt                                            DateTime?                      @map("fcm_token_updated_at")
+  hideMicStatus                                                Boolean                        @default(false) @map("hide_mic_status")
+  isSupport                                                    Boolean                        @default(false) @map("is_support")
+  privacyUpdatedAt                                             DateTime?                      @map("privacy_updated_at")
+  isAgent                                                      Boolean                        @default(false) @map("is_agent")
+  isTagged                                                     Boolean                        @default(false) @map("is_tagged")
+  lastActiveAt                                                 DateTime?                      @map("last_active_at")
+  currentAgencyId                                              String?                        @map("current_agency_id") @db.Uuid
+  lastIpAddress                                                String?                        @map("last_ip_address") @db.VarChar(45)
+  tokenVersion                                                 Int                            @default(0) @map("token_version")
+  createdAt                                                    DateTime                       @default(now()) @map("created_at")
+  updatedAt                                                    DateTime                       @updatedAt @map("updated_at")
+  admin_tags                                                   String[]                       @default([])
+  personal_coins_frozen                                        Boolean                        @default(false)
+  points_frozen                                                Boolean                        @default(false)
+  posting_banned                                               Boolean                        @default(false)
+  posting_suspended_until                                      DateTime?
+  suspended_until                                              DateTime?
+  trading_coins_frozen                                         Boolean                        @default(false)
+  accountDeletion                                              AccountDeletion?               @relation("AccountDeletion")
+  agency                                                       Agency?
+  agencyAgentApplication                                       AgencyAgentApplication?        @relation("AgencyAgentApplications")
+  agencyApplicationKyc                                         AgencyApplicationKyc?
+  agencyDailyAsHost                                            AgencyDailyEarning[]           @relation("AgencyDailyHost")
+  agencyApplicationsAsHost                                     AgencyHostApplication[]        @relation("AgencyAppHost")
+  agencyApplicationsResolved                                   AgencyHostApplication[]        @relation("AgencyAppResolver")
+  hostAgencyMembership                                         AgencyHost?
+  agencyLeaveAsHost                                            AgencyLeaveApplication[]       @relation("AgencyLeaveHost")
+  agencyLeaveResolved                                          AgencyLeaveApplication[]       @relation("AgencyLeaveResolver")
+  agentTransfersReceived                                       AgentPointTransfer[]           @relation("AgentTransferRecipient")
+  agentTransfersSent                                           AgentPointTransfer[]           @relation("AgentTransferSender")
+  auditLogs                                                    AuditLog[]
+  hostStreamBans                                               HostStreamBan[]                @relation("UserHostBans")
+  authIdentifiers                                              AuthIdentifier[]
+  authPassword                                                 AuthPassword?
+  blockedUsers                                                 BlockList[]                    @relation("BlockedUsers")
+  blockedBy                                                    BlockList[]                    @relation("BlockedBy")
+  reminderCreator                                              BroadcastReminder[]            @relation("ReminderCreator")
+  reminderOwner                                                BroadcastReminder[]            @relation("ReminderOwner")
+  tradingCoinTopupOrders                                       CoinTradingTopupOrder[]        @relation("TradingCoinTopupsByAgent")
+  tradingCoinTransfersReceived                                 CoinTradingTransfer[]          @relation("TradingCoinTransferRecipient")
+  tradingCoinTransferReversals                                 CoinTradingTransfer[]          @relation("TradingCoinTransferReversedBy")
+  tradingCoinTransfersSent                                     CoinTradingTransfer[]          @relation("TradingCoinTransferSender")
+  conversationMembers                                          ConversationMember[]
+  creatorSubsAsHost                                            CreatorSubscription[]          @relation("CreatorSubHost")
+  creatorSubsAsFan                                             CreatorSubscription[]          @relation("CreatorSubFan")
+  custom_gift_requests                                         custom_gift_requests[]
+  linkedDeviceAccounts                                         DeviceLinkedAccount[]
+  deviceRegistry                                               DeviceRegistry[]
+  face_profile_revocations                                     face_profile_revocations[]
+  faceRegistrationAuditLogs                                    FaceRegistrationAuditLog[]
+  faceRegistrationSessions                                     FaceRegistrationSession[]
+  faceVerificationAttempts                                     FaceVerificationAttempt[]
+  fanSpendReceived                                             FanSpend[]                     @relation("FanSpendReceiver")
+  fanSpendSent                                                 FanSpend[]                     @relation("FanSpendSender")
+  gifterGalleryProgress                                        GiftGalleryProgress[]          @relation("GifterGalleryProgress")
+  hostGalleryProgress                                          GiftGalleryProgress[]          @relation("HostGalleryProgress")
+  giftsReceived                                                GiftTransaction[]              @relation("GiftsReceived")
+  giftsSent                                                    GiftTransaction[]              @relation("GiftsSent")
+  guardiansAsGuardian                                          Guardian[]                     @relation("GuardianOf")
+  guardiansAsTarget                                            Guardian[]                     @relation("GuardedBy")
+  hostLiveSessions                                             HostLiveSession[]
+  livePhotoVerificationAttempts                                LivePhotoVerificationAttempt[]
+  messageReactions                                             MessageReaction[]
+  message_reports_message_reports_host_user_idTousers          MessageReport[]                @relation("message_reports_host_user_idTousers")
+  reportedReports                                              MessageReport[]                @relation("Reported")
+  reporterReports                                              MessageReport[]                @relation("Reporter")
+  sentMessages                                                 Message[]                      @relation("SentMessages")
+  monthlyRechargeAggregates                                    MonthlyRechargeAggregate[]
+  otp_delivery_audits                                          otp_delivery_audits[]
+  otpTokens                                                    OtpToken[]
+  postLikes                                                    PostLike[]                     @relation("PostLikes")
+  taggedIn                                                     PostTag[]                      @relation("TaggedIn")
+  posts                                                        Post[]                         @relation("UserPosts")
+  profileVisitors                                              ProfileVisitor[]               @relation("ProfileOwner")
+  visitHistory                                                 ProfileVisitor[]               @relation("ProfileVisitor")
+  richTierHistoryRows                                          RichTierHistory[]              @relation("RichTierHistoryUser")
+  securityPassword                                             SecurityPassword?
+  sessions                                                     Session[]
+  supportMessagesSent                                          SupportMessage[]               @relation("SupportMessageSender")
+  supportTicketsClosed                                         SupportTicket[]                @relation("SupportTicketsClosedBy")
+  supportTickets                                               SupportTicket[]                @relation("SupportTicketsAsUser")
+  activeStoreItems                                             UserActiveStoreItems[]
+  user_face_profiles_user_face_profiles_matched_user_idTousers UserFaceProfile[]              @relation("user_face_profiles_matched_user_idTousers")
+  faceProfile                                                  UserFaceProfile?
+  following                                                    UserFollow[]                   @relation("Follower")
+  followers                                                    UserFollow[]                   @relation("Following")
+  userLevel                                                    UserLevel?
+  userLivePhoto                                                UserLivePhoto?
+  paymentMethods                                               UserPaymentMethod[]
+  questionnaireAttempts                                        UserQuestionnaireAttempt[]
+  userRichTier                                                 UserRichTier?
+  userSettings                                                 UserSettings?
+  storePurchasedItems                                          UserStoreItem[]                @relation("StorePurchasedBy")
+  storeItems                                                   UserStoreItem[]                @relation("UserStoreItems")
+  subscribers                                                  UserSubscriber[]               @relation("Creator")
+  subscriptions                                                UserSubscriber[]               @relation("Subscriber")
+  vipAssignments                                               UserVipAssignment[]
+  currentAgencyAgent                                           User?                          @relation("HostToAgencyAgent", fields: [currentAgencyId], references: [id])
+  usersHostedInMyAgency                                        User[]                         @relation("HostToAgencyAgent")
+  callerSessions                                               VideoCallSession[]             @relation("CallSessionCaller")
+  creatorSessions                                              VideoCallSession[]             @relation("CallSessionCreator")
+  videoCallSettings                                            VideoCallSettings?
+  vipDailyClaims                                               VipDailyClaim[]
+  vipDailyQuotas                                               VipDailyQuota[]
+  vipMembershipPurchases                                       VipMembershipPurchase[]
+  ownedVipIds                                                  VipPublicId[]                  @relation("VipOwner")
+  walletUserLevels                                             WalletUserLevel[]
+  wallets                                                      Wallet[]
+  payrollAssignmentsAsAgent                                    WithdrawalPayrollAssignment[]  @relation("AgencyPayrollAssignments")
+  userRestrictions                                             UserRestriction[]
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -158,11 +159,10 @@ model User {
   @@map("users")
 }
 
-// ─── 2. AUTH_IDENTIFIERS (email, phone, google, facebook, apple) ───
 model AuthIdentifier {
   id         String    @id @default(uuid()) @db.Uuid
   userId     String    @map("user_id") @db.Uuid
-  provider   String    @db.VarChar(50) // email, phone, google, facebook, apple
+  provider   String    @db.VarChar(50)
   identifier String    @db.VarChar(255)
   isVerified Boolean   @default(false) @map("is_verified")
   verifiedAt DateTime? @map("verified_at")
@@ -170,8 +170,7 @@ model AuthIdentifier {
   createdAt  DateTime  @default(now()) @map("created_at")
   updatedAt  DateTime  @updatedAt @map("updated_at")
   version    Int       @default(1)
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([provider, identifier])
   @@unique([userId, provider])
@@ -181,7 +180,6 @@ model AuthIdentifier {
   @@map("auth_identifiers")
 }
 
-// ─── 3. AUTH_PASSWORDS (bcrypt, one per user) ───
 model AuthPassword {
   id                     String   @id @default(uuid()) @db.Uuid
   userId                 String   @unique @map("user_id") @db.Uuid
@@ -190,14 +188,12 @@ model AuthPassword {
   lastChangedAt          DateTime @default(now()) @map("last_changed_at")
   createdAt              DateTime @default(now()) @map("created_at")
   updatedAt              DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                   User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("auth_passwords")
 }
 
-// ─── 3b. SECURITY_PASSWORDS (separate from login password; for purchases, destructive ops) ───
 model SecurityPassword {
   id                  String    @id @default(cuid())
   userId              String    @unique @map("user_id") @db.Uuid
@@ -207,18 +203,16 @@ model SecurityPassword {
   failedAttempts      Int       @default(0) @map("failed_attempts")
   lastFailedAttemptAt DateTime? @map("last_failed_attempt_at")
   lockedUntil         DateTime? @map("locked_until")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([lockedUntil])
   @@map("security_passwords")
 }
 
-// ─── 4. OTP_TOKENS (hashed OTP, purpose, 5 min expiry) ───
 model OtpToken {
   id               String    @id @default(uuid()) @db.Uuid
-  userId           String?   @map("user_id") @db.Uuid // null for signup (no user yet)
+  userId           String?   @map("user_id") @db.Uuid
   otpHash          String    @map("otp_hash") @db.VarChar(255)
   otpPurpose       String    @map("otp_purpose") @db.VarChar(50)
   targetIdentifier String    @map("target_identifier") @db.VarChar(255)
@@ -227,8 +221,7 @@ model OtpToken {
   expiresAt        DateTime  @map("expires_at")
   verifiedAt       DateTime? @map("verified_at")
   createdAt        DateTime  @default(now()) @map("created_at")
-
-  user User? @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user             User?     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([expiresAt])
@@ -237,14 +230,13 @@ model OtpToken {
   @@map("otp_tokens")
 }
 
-// ─── 5. SESSIONS (device, refresh token hash, max 3 per user) ───
 model Session {
   id                    String    @id @default(uuid()) @db.Uuid
   userId                String    @map("user_id") @db.Uuid
   deviceName            String    @map("device_name") @db.VarChar(255)
   deviceId              String    @map("device_id") @db.VarChar(255)
   deviceFingerprint     String?   @map("device_fingerprint") @db.VarChar(500)
-  deviceFingerprintHash String?   @map("device_fingerprint_hash") @db.VarChar(64) // SHA-256 binding hash
+  deviceFingerprintHash String?   @map("device_fingerprint_hash") @db.VarChar(64)
   ipHash                String?   @map("ip_hash") @db.VarChar(64)
   userAgentHash         String?   @map("user_agent_hash") @db.VarChar(64)
   refreshTokenHash      String    @unique @map("refresh_token_hash") @db.VarChar(255)
@@ -257,10 +249,9 @@ model Session {
   updatedAt             DateTime  @updatedAt @map("updated_at")
   expiresAt             DateTime  @map("expires_at")
   revokedAt             DateTime? @map("revoked_at")
-  loginType             String?   @map("login_type") @db.VarChar(50) // password, google, facebook, apple
-  tokenVersion          Int       @default(0) @map("token_version") // bumped on refresh; matches access JWT
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  loginType             String?   @map("login_type") @db.VarChar(50)
+  tokenVersion          Int       @default(0) @map("token_version")
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@index([deviceId])
@@ -270,7 +261,6 @@ model Session {
   @@map("sessions")
 }
 
-// ─── 6. DEVICE_REGISTRY (device history, device management) ───
 model DeviceRegistry {
   id                    String   @id @default(uuid()) @db.Uuid
   userId                String   @map("user_id") @db.Uuid
@@ -287,8 +277,7 @@ model DeviceRegistry {
   userAgentHash         String?  @map("user_agent_hash") @db.VarChar(64)
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, deviceId])
   @@index([userId])
@@ -296,15 +285,13 @@ model DeviceRegistry {
   @@map("device_registry")
 }
 
-// ─── 6b. DEVICE_LINKED_ACCOUNTS (accounts linked to a physical/device identifier) ───
 model DeviceLinkedAccount {
   id         String   @id @default(cuid())
   deviceId   String   @map("device_id") @db.VarChar(255)
   userId     String   @map("user_id") @db.Uuid
   linkedAt   DateTime @default(now()) @map("linked_at")
   lastUsedAt DateTime @default(now()) @map("last_used_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([deviceId, userId])
   @@index([deviceId])
@@ -312,26 +299,24 @@ model DeviceLinkedAccount {
   @@map("device_linked_accounts")
 }
 
-// ─── 7. VIP_PUBLIC_IDS (reserved patterns) ───
 model VipPublicId {
-  id             String    @id @default(uuid()) @db.Uuid
-  publicId       BigInt    @unique @map("public_id")
-  tier           String    @default("NONE") @map("tier") @db.VarChar(50)
-  priceGroup     String    @default("STANDARD") @map("price_group") @db.VarChar(50)
-  rarityScore    Int       @default(0) @map("rarity_score")
-  matchedRules   String[]  @default([]) @map("matched_rules")
-  detectedAt     DateTime  @default(now()) @map("detected_at")
-  assignedAt     DateTime? @map("assigned_at")
-  patternType    String?   @map("pattern_type") @db.VarChar(50)
-  isAvailable    Boolean   @default(true) @map("is_available")
-  currentOwnerId String?   @map("current_owner_id") @db.Uuid
-  priceCredits   Int?      @map("price_credits")
-  purchasedAt    DateTime? @map("purchased_at")
-  expiresAt      DateTime? @map("expires_at")
-  createdAt      DateTime  @default(now()) @map("created_at")
-
-  currentOwner User?               @relation("VipOwner", fields: [currentOwnerId], references: [id], onDelete: SetNull)
-  assignments  UserVipAssignment[]
+  id             String              @id @default(uuid()) @db.Uuid
+  publicId       BigInt              @unique @map("public_id")
+  tier           String              @default("NONE") @map("tier") @db.VarChar(50)
+  priceGroup     String              @default("STANDARD") @map("price_group") @db.VarChar(50)
+  rarityScore    Int                 @default(0) @map("rarity_score")
+  matchedRules   String[]            @default([]) @map("matched_rules")
+  detectedAt     DateTime            @default(now()) @map("detected_at")
+  assignedAt     DateTime?           @map("assigned_at")
+  patternType    String?             @map("pattern_type") @db.VarChar(50)
+  isAvailable    Boolean             @default(true) @map("is_available")
+  currentOwnerId String?             @map("current_owner_id") @db.Uuid
+  priceCredits   Int?                @map("price_credits")
+  purchasedAt    DateTime?           @map("purchased_at")
+  expiresAt      DateTime?           @map("expires_at")
+  createdAt      DateTime            @default(now()) @map("created_at")
+  assignments    UserVipAssignment[]
+  currentOwner   User?               @relation("VipOwner", fields: [currentOwnerId], references: [id])
 
   @@index([isAvailable])
   @@index([currentOwnerId])
@@ -341,48 +326,36 @@ model VipPublicId {
   @@map("vip_public_ids")
 }
 
-// ─── 7b. USER_VIP_ASSIGNMENTS (time-boxed VIP public ID use) ───
 model UserVipAssignment {
-  id        String    @id @default(cuid())
-  userId    String    @map("user_id") @db.Uuid
-  publicId  BigInt    @map("public_id")
-  startsAt  DateTime  @default(now()) @map("starts_at")
-  expiresAt DateTime  @map("expires_at")
-  revokedAt DateTime? @map("revoked_at")
-  isActive  Boolean   @default(true) @map("is_active")
-
-  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
+  id          String      @id @default(cuid())
+  userId      String      @map("user_id") @db.Uuid
+  publicId    BigInt      @map("public_id")
+  startsAt    DateTime    @default(now()) @map("starts_at")
+  expiresAt   DateTime    @map("expires_at")
+  revokedAt   DateTime?   @map("revoked_at")
+  isActive    Boolean     @default(true) @map("is_active")
   vipPublicId VipPublicId @relation(fields: [publicId], references: [publicId])
+  user        User        @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isActive])
   @@index([expiresAt, isActive])
   @@map("user_vip_assignments")
 }
 
-// ─── STORE ───────────────────────────────────────────────────────────────────
-
-enum StoreItemCategory {
-  RIDE
-  AVATAR_FRAME
-  CHAT_BUBBLE
-  PROFILE_CARD
-}
-
 model StoreItem {
   id              String            @id @default(uuid()) @db.Uuid
   name            String            @db.VarChar(255)
-  description     String?           @db.Text
+  description     String?
   category        StoreItemCategory
   coinCost        Int               @map("coin_cost")
   validityDays    Int               @default(15) @map("validity_days")
-  displayImageUrl String            @map("display_image_url") @db.Text
-  effectUrl       String?           @map("effect_url") @db.Text
+  displayImageUrl String            @map("display_image_url")
+  effectUrl       String?           @map("effect_url")
   isActive        Boolean           @default(true) @map("is_active")
   sortOrder       Int               @default(0) @map("sort_order")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
-
-  userItems UserStoreItem[]
+  userItems       UserStoreItem[]
 
   @@index([category, isActive, sortOrder])
   @@index([isActive])
@@ -390,25 +363,24 @@ model StoreItem {
 }
 
 model UserStoreItem {
-  id             String    @id @default(uuid()) @db.Uuid
-  userId         String    @map("user_id") @db.Uuid
-  storeItemId    String    @map("store_item_id") @db.Uuid
-  purchasedById  String    @map("purchased_by_id") @db.Uuid
-  coinsPaid      Int       @map("coins_paid")
-  isActive       Boolean   @default(true) @map("is_active")
-  isApplied      Boolean   @default(false) @map("is_applied")
-  expiresAt      DateTime  @map("expires_at")
-  activatedAt    DateTime? @map("activated_at")
-  expiredAt      DateTime? @map("expired_at")
-  revokedAt      DateTime? @map("revoked_at")
-  idempotencyKey String    @unique @map("idempotency_key") @db.VarChar(200)
-  createdAt      DateTime  @default(now()) @map("created_at")
-  updatedAt      DateTime  @updatedAt @map("updated_at")
-
-  user        User                   @relation("UserStoreItems", fields: [userId], references: [id], onDelete: Cascade)
-  purchasedBy User                   @relation("StorePurchasedBy", fields: [purchasedById], references: [id], onDelete: Restrict)
-  storeItem   StoreItem              @relation(fields: [storeItemId], references: [id], onDelete: Restrict)
-  activeRows  UserActiveStoreItems[]
+  id             String                 @id @default(uuid()) @db.Uuid
+  userId         String                 @map("user_id") @db.Uuid
+  storeItemId    String                 @map("store_item_id") @db.Uuid
+  purchasedById  String                 @map("purchased_by_id") @db.Uuid
+  coinsPaid      Int                    @map("coins_paid")
+  isActive       Boolean                @default(true) @map("is_active")
+  isApplied      Boolean                @default(false) @map("is_applied")
+  expiresAt      DateTime               @map("expires_at")
+  activatedAt    DateTime?              @map("activated_at")
+  expiredAt      DateTime?              @map("expired_at")
+  revokedAt      DateTime?              @map("revoked_at")
+  idempotencyKey String                 @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime               @default(now()) @map("created_at")
+  updatedAt      DateTime               @updatedAt @map("updated_at")
+  activeRows     UserActiveStoreItems[]
+  purchasedBy    User                   @relation("StorePurchasedBy", fields: [purchasedById], references: [id])
+  storeItem      StoreItem              @relation(fields: [storeItemId], references: [id])
+  user           User                   @relation("UserStoreItems", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, isApplied])
   @@index([userId, isActive])
@@ -423,28 +395,25 @@ model UserActiveStoreItems {
   category        StoreItemCategory
   userStoreItemId String?           @map("user_store_item_id") @db.Uuid
   updatedAt       DateTime          @updatedAt @map("updated_at")
-
-  user          User           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  userStoreItem UserStoreItem? @relation(fields: [userStoreItemId], references: [id], onDelete: SetNull)
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
+  userStoreItem   UserStoreItem?    @relation(fields: [userStoreItemId], references: [id])
 
   @@unique([userId, category])
   @@index([userId])
   @@map("user_active_store_items")
 }
 
-// ─── 8. AUDIT_LOGS (90-day retention) ───
 model AuditLog {
   id            String   @id @default(uuid()) @db.Uuid
   userId        String?  @map("user_id") @db.Uuid
   actionType    String   @map("action_type") @db.VarChar(100)
-  actionStatus  String   @map("action_status") @db.VarChar(50) // success, failed
+  actionStatus  String   @map("action_status") @db.VarChar(50)
   actionDetails Json?    @map("action_details")
   ipAddress     String?  @map("ip_address") @db.VarChar(45)
   userAgent     String?  @map("user_agent") @db.VarChar(500)
   deviceId      String?  @map("device_id") @db.VarChar(255)
   createdAt     DateTime @default(now()) @map("created_at")
-
-  user User? @relation(fields: [userId], references: [id], onDelete: SetNull)
+  user          User?    @relation(fields: [userId], references: [id])
 
   @@index([userId])
   @@index([actionType])
@@ -452,7 +421,6 @@ model AuditLog {
   @@map("audit_logs")
 }
 
-// ─── 9. ACCOUNT_DELETIONS (schedule, grace period, permanent delete) ───
 model AccountDeletion {
   id                String    @id @default(cuid())
   userId            String    @unique @map("user_id") @db.Uuid
@@ -475,10 +443,9 @@ model AccountDeletion {
   @@map("account_deletions")
 }
 
-// ─── 10. NEXT_PUBLIC_ID_SEQUENCE (single row, id=1) ───
 model NextPublicIdSequence {
   id        Int    @id
-  nextValue BigInt @map("next_value") // default 34216589 via seed
+  nextValue BigInt @map("next_value")
 
   @@map("next_public_id_sequence")
 }
@@ -492,7 +459,6 @@ model PublicIdClassificationProgress {
   @@map("public_id_classification_progress")
 }
 
-// ─── 11. USER_SETTINGS (per-user messaging and language preferences) ───
 model UserSettings {
   id                    String   @id @default(cuid())
   userId                String   @unique @map("user_id") @db.Uuid
@@ -500,24 +466,26 @@ model UserSettings {
   allowMsgFromMutual    Boolean  @default(true) @map("allow_msg_from_mutual")
   allowMsgFromFollowing Boolean  @default(true) @map("allow_msg_from_following")
   allowMsgFromStranger  Boolean  @default(false) @map("allow_msg_from_stranger")
+  effectTopRunway       Boolean  @default(true) @map("effect_top_runway")
+  effectGift            Boolean  @default(true) @map("effect_gift")
+  effectLuckyGift       Boolean  @default(true) @map("effect_lucky_gift")
+  effectEntry           Boolean  @default(true) @map("effect_entry")
+  effectGlobal          Boolean  @default(true) @map("effect_global")
   createdAt             DateTime @default(now()) @map("created_at")
   updatedAt             DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                  User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId])
   @@map("user_settings")
 }
 
-// ─── 12. USER_FOLLOWS (social graph: follow relationships) ───
 model UserFollow {
   id          String   @id @default(cuid())
   followerId  String   @map("follower_id") @db.Uuid
   followingId String   @map("following_id") @db.Uuid
   createdAt   DateTime @default(now()) @map("created_at")
-
-  follower  User @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
-  following User @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
+  follower    User     @relation("Follower", fields: [followerId], references: [id], onDelete: Cascade)
+  following   User     @relation("Following", fields: [followingId], references: [id], onDelete: Cascade)
 
   @@unique([followerId, followingId])
   @@index([followerId])
@@ -525,15 +493,13 @@ model UserFollow {
   @@map("user_follows")
 }
 
-// ─── 13. PROFILE_VISITORS (who visited which profile) ───
 model ProfileVisitor {
   id        String   @id @default(cuid())
   profileId String   @map("profile_id") @db.Uuid
   visitorId String   @map("visitor_id") @db.Uuid
   visitedAt DateTime @default(now()) @map("visited_at")
-
-  profile User @relation("ProfileOwner", fields: [profileId], references: [id], onDelete: Cascade)
-  visitor User @relation("ProfileVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
+  profile   User     @relation("ProfileOwner", fields: [profileId], references: [id], onDelete: Cascade)
+  visitor   User     @relation("ProfileVisitor", fields: [visitorId], references: [id], onDelete: Cascade)
 
   @@unique([profileId, visitorId])
   @@index([profileId, visitedAt])
@@ -541,27 +507,18 @@ model ProfileVisitor {
   @@map("profile_visitors")
 }
 
-// ─── 14. USER_SUBSCRIBERS (creator/subscriber relationships) ───
 model UserSubscriber {
   id           String   @id @default(cuid())
   subscriberId String   @map("subscriber_id") @db.Uuid
   creatorId    String   @map("creator_id") @db.Uuid
   subscribedAt DateTime @default(now()) @map("subscribed_at")
-
-  subscriber User @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
-  creator    User @relation("Creator", fields: [creatorId], references: [id], onDelete: Cascade)
+  creator      User     @relation("Creator", fields: [creatorId], references: [id], onDelete: Cascade)
+  subscriber   User     @relation("Subscriber", fields: [subscriberId], references: [id], onDelete: Cascade)
 
   @@unique([subscriberId, creatorId])
   @@index([creatorId])
   @@index([subscriberId])
   @@map("user_subscribers")
-}
-
-enum CreatorSubscriptionStatus {
-  ACTIVE
-  GRACE
-  EXPIRED
-  CANCELLED
 }
 
 model CreatorSubscription {
@@ -573,20 +530,13 @@ model CreatorSubscription {
   graceUntil    DateTime?                 @map("grace_until")
   createdAt     DateTime                  @default(now()) @map("created_at")
   updatedAt     DateTime                  @updatedAt @map("updated_at")
-
-  subscriber User @relation("CreatorSubFan", fields: [subscriberId], references: [id], onDelete: Cascade)
-  creator    User @relation("CreatorSubHost", fields: [creatorId], references: [id], onDelete: Cascade)
+  creator       User                      @relation("CreatorSubHost", fields: [creatorId], references: [id], onDelete: Cascade)
+  subscriber    User                      @relation("CreatorSubFan", fields: [subscriberId], references: [id], onDelete: Cascade)
 
   @@unique([subscriberId, creatorId])
   @@index([nextRenewalAt, status])
   @@index([subscriberId, status])
   @@map("creator_subscriptions")
-}
-
-enum GuardianTier {
-  SILVER
-  GOLD
-  KING
 }
 
 model Guardian {
@@ -599,9 +549,8 @@ model Guardian {
   purchasedAt    DateTime     @default(now()) @map("purchased_at")
   expiresAt      DateTime     @map("expires_at")
   isExpired      Boolean      @default(false) @map("is_expired")
-
-  guardianUser User @relation("GuardianOf", fields: [guardianUserId], references: [id], onDelete: Restrict)
-  targetUser   User @relation("GuardedBy", fields: [targetUserId], references: [id], onDelete: Restrict)
+  guardianUser   User         @relation("GuardianOf", fields: [guardianUserId], references: [id])
+  targetUser     User         @relation("GuardedBy", fields: [targetUserId], references: [id])
 
   @@unique([guardianUserId, targetUserId])
   @@index([targetUserId, isExpired, expiresAt])
@@ -610,7 +559,6 @@ model Guardian {
   @@map("guardians")
 }
 
-// ─── 15. USER_LEVELS (per-user livestream/wealth levels and XP) ───
 model UserLevel {
   id              String   @id @default(cuid())
   userId          String   @unique @map("user_id") @db.Uuid
@@ -619,16 +567,14 @@ model UserLevel {
   livestreamXp    BigInt   @default(0) @map("livestream_xp")
   wealthXp        BigInt   @default(0) @map("wealth_xp")
   updatedAt       DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("user_levels")
 }
 
-// ─── 16. LEVEL_CONFIG (config for level thresholds) ───
 model LevelConfig {
   id        String  @id @default(cuid())
-  levelType String  @map("level_type") @db.VarChar(50) // 'livestream' | 'wealth'
+  levelType String  @map("level_type") @db.VarChar(50)
   level     Int
   minXp     BigInt  @map("min_xp")
   maxXp     BigInt  @map("max_xp")
@@ -640,18 +586,6 @@ model LevelConfig {
   @@map("level_config")
 }
 
-// ─── 17. POSTS (media posts with tagging and likes) ───
-
-enum PostVisibility {
-  PUBLIC
-  SUBSCRIBERS_ONLY
-}
-
-enum PostMediaType {
-  IMAGE
-  VIDEO
-}
-
 model Post {
   id             String         @id @default(cuid())
   userId         String         @map("user_id") @db.Uuid
@@ -660,19 +594,18 @@ model Post {
   mediaType      PostMediaType  @default(IMAGE) @map("media_type")
   thumbnailKey   String?        @map("thumbnail_key") @db.VarChar(500)
   thumbnailUrl   String?        @map("thumbnail_url") @db.VarChar(1000)
-  caption        String?        @db.Text
+  caption        String?
   visibility     PostVisibility @default(SUBSCRIBERS_ONLY)
   subscriberOnly Boolean        @default(false) @map("subscriber_only")
   likesCount     Int            @default(0) @map("likes_count")
   createdAt      DateTime       @default(now()) @map("created_at")
   updatedAt      DateTime       @updatedAt @map("updated_at")
-
-  user  User       @relation("UserPosts", fields: [userId], references: [id], onDelete: Cascade)
-  tags  PostTag[]
-  likes PostLike[]
+  likes          PostLike[]
+  tags           PostTag[]
+  user           User           @relation("UserPosts", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt])
-  @@index([userId, createdAt(sort: Desc), id(sort: Desc)], map: "posts_user_id_created_at_id_idx")
+  @@index([userId, createdAt(sort: Desc), id(sort: Desc)])
   @@index([createdAt])
   @@map("posts")
 }
@@ -682,9 +615,8 @@ model PostTag {
   postId       String   @map("post_id")
   taggedUserId String   @map("tagged_user_id") @db.Uuid
   createdAt    DateTime @default(now()) @map("created_at")
-
-  post       Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-  taggedUser User @relation("TaggedIn", fields: [taggedUserId], references: [id], onDelete: Cascade)
+  post         Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  taggedUser   User     @relation("TaggedIn", fields: [taggedUserId], references: [id], onDelete: Cascade)
 
   @@unique([postId, taggedUserId])
   @@index([postId])
@@ -697,9 +629,8 @@ model PostLike {
   postId    String   @map("post_id")
   userId    String   @map("user_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
-
-  post Post @relation(fields: [postId], references: [id], onDelete: Cascade)
-  user User @relation("PostLikes", fields: [userId], references: [id], onDelete: Cascade)
+  post      Post     @relation(fields: [postId], references: [id], onDelete: Cascade)
+  user      User     @relation("PostLikes", fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([postId, userId])
   @@index([postId])
@@ -707,67 +638,10 @@ model PostLike {
   @@map("post_likes")
 }
 
-// ─── MESSAGING ───
-enum ConversationType {
-  DIRECT
-  GROUP
-}
-
-enum MessageType {
-  TEXT
-  TEXT_COINS
-  IMAGE
-  VIDEO
-  AUDIO
-  FILE
-  SYSTEM
-}
-
-enum MediaType {
-  IMAGE
-  VIDEO
-  AUDIO
-  FILE
-}
-
-// Async sidecar processing for message media (waveform extraction, transcoding, etc.).
-enum MediaProcessingStatus {
-  NONE
-  PENDING
-  ENQUEUED
-  READY
-  FAILED
-}
-
-// Future transcription pipeline; persisted for client UX.
-enum MediaTranscriptionStatus {
-  NONE
-  PENDING
-  READY
-  FAILED
-}
-
-enum ReportReason {
-  SPAM
-  HARASSMENT
-  INAPPROPRIATE_CONTENT
-  FAKE_ACCOUNT
-  VIOLENCE
-  OTHER
-}
-
-enum ReportStatus {
-  PENDING
-  REVIEWED
-  RESOLVED
-  DISMISSED
-}
-
 model Conversation {
   id            String               @id @default(cuid())
   type          ConversationType
   lastMessageAt DateTime?            @map("last_message_at")
-  // Monotonic per-conversation message sequence
   lastSeq       BigInt               @default(0) @map("last_seq")
   createdAt     DateTime             @default(now()) @map("created_at")
   updatedAt     DateTime             @updatedAt @map("updated_at")
@@ -803,23 +677,23 @@ model Message {
   conversationId  String            @map("conversation_id")
   senderId        String            @map("sender_id") @db.Uuid
   type            MessageType
-  content         String?           @db.Text
+  content         String?
   replyToId       String?           @map("reply_to_id")
   isDeleted       Boolean           @default(false) @map("is_deleted")
   deletedAt       DateTime?         @map("deleted_at")
-  // Idempotency key (UUID) when set; unique per conversation
   clientMessageId String?           @map("client_message_id")
   isAutoReply     Boolean           @default(false) @map("is_auto_reply")
-  // Per-conversation monotonic order
+  editedAt        DateTime?         @map("edited_at")
   seq             BigInt            @map("seq")
   createdAt       DateTime          @default(now()) @map("created_at")
   updatedAt       DateTime          @updatedAt @map("updated_at")
-  conversation    Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
-  sender          User              @relation("SentMessages", fields: [senderId], references: [id])
-  replyTo         Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
-  replies         Message[]         @relation("MessageReplies")
+  metadata        Json?
   mediaItems      MessageMedia[]
   reactions       MessageReaction[]
+  conversation    Conversation      @relation(fields: [conversationId], references: [id], onDelete: Cascade)
+  replyTo         Message?          @relation("MessageReplies", fields: [replyToId], references: [id])
+  replies         Message[]         @relation("MessageReplies")
+  sender          User              @relation("SentMessages", fields: [senderId], references: [id])
 
   @@unique([conversationId, clientMessageId])
   @@unique([conversationId, seq])
@@ -829,7 +703,6 @@ model Message {
   @@map("messages")
 }
 
-// Transactional outbox: at-least-once WS fan-out after commit
 model MessageOutbox {
   id             BigInt    @id @default(autoincrement())
   conversationId String    @map("conversation_id")
@@ -854,7 +727,6 @@ model MessageMedia {
   width               Int?
   height              Int?
   order               Int                      @default(0)
-  // Compact waveform: `{ "v": 1, "e": "<base64 u8 peaks>" }` or legacy normalized floats (bounded).
   waveformJson        Json?                    @map("waveform_json")
   codec               String?                  @map("codec") @db.VarChar(32)
   bitrate             Int?                     @map("bitrate")
@@ -891,8 +763,8 @@ model BlockList {
   blockerId String   @map("blocker_id") @db.Uuid
   blockedId String   @map("blocked_id") @db.Uuid
   createdAt DateTime @default(now()) @map("created_at")
-  blocker   User     @relation("BlockedBy", fields: [blockerId], references: [id])
   blocked   User     @relation("BlockedUsers", fields: [blockedId], references: [id])
+  blocker   User     @relation("BlockedBy", fields: [blockerId], references: [id])
 
   @@unique([blockerId, blockedId])
   @@index([blockerId])
@@ -901,22 +773,33 @@ model BlockList {
 }
 
 model MessageReport {
-  id             String       @id @default(cuid())
-  reporterId     String       @map("reporter_id") @db.Uuid
-  reportedUserId String       @map("reported_user_id") @db.Uuid
-  conversationId String?      @map("conversation_id")
-  messageId      String?      @map("message_id")
-  reason         ReportReason
-  additionalInfo String?      @map("additional_info") @db.Text
-  evidenceS3Keys String[]     @map("evidence_s3_keys")
-  status         ReportStatus @default(PENDING)
-  createdAt      DateTime     @default(now()) @map("created_at")
-  reporter       User         @relation("Reporter", fields: [reporterId], references: [id])
-  reportedUser   User         @relation("Reported", fields: [reportedUserId], references: [id])
+  id                                        String         @id @default(cuid())
+  reporterId                                String         @map("reporter_id") @db.Uuid
+  reportedUserId                            String         @map("reported_user_id") @db.Uuid
+  conversationId                            String?        @map("conversation_id")
+  messageId                                 String?        @map("message_id")
+  reason                                    ReportReason
+  additionalInfo                            String?        @map("additional_info")
+  evidenceS3Keys                            String[]       @map("evidence_s3_keys")
+  status                                    ReportStatus   @default(PENDING)
+  createdAt                                 DateTime       @default(now()) @map("created_at")
+  context                                   ReportContext  @default(CHAT)
+  escalated_ticket_id                       BigInt?
+  host_user_id                              String?        @db.Uuid
+  live_session_id                           String?
+  resolution_note                           String?
+  reviewed_at                               DateTime?
+  reviewed_by_admin_id                      String?
+  users_message_reports_host_user_idTousers User?          @relation("message_reports_host_user_idTousers", fields: [host_user_id], references: [id])
+  reportedUser                              User           @relation("Reported", fields: [reportedUserId], references: [id])
+  reporter                                  User           @relation("Reporter", fields: [reporterId], references: [id])
+  system_admins                             system_admins? @relation(fields: [reviewed_by_admin_id], references: [id])
 
   @@index([reporterId])
   @@index([reportedUserId])
   @@index([createdAt])
+  @@index([context, status])
+  @@index([status, createdAt(sort: Desc)])
   @@map("message_reports")
 }
 
@@ -924,103 +807,28 @@ model BroadcastReminder {
   id        String   @id @default(cuid())
   userId    String   @map("user_id") @db.Uuid
   creatorId String   @map("creator_id") @db.Uuid
-  remindAt  DateTime @map("remind_at")
+  remindAt  DateTime? @map("remind_at")
+  notifyOnLive Boolean  @default(true) @map("notify_on_live")
   isSent    Boolean  @default(false) @map("is_sent")
   createdAt DateTime @default(now()) @map("created_at")
-  user      User     @relation("ReminderOwner", fields: [userId], references: [id])
   creator   User     @relation("ReminderCreator", fields: [creatorId], references: [id])
+  user      User     @relation("ReminderOwner", fields: [userId], references: [id])
 
   @@unique([userId, creatorId])
   @@index([remindAt, isSent])
   @@map("broadcast_reminders")
 }
 
-// ── Wallet: coins & points ───────────────────────────────────────────────────
-
-enum WalletCurrencyType {
-  COIN
-  POINT
-  TRADING_COIN
-}
-
-enum LedgerDirection {
-  CREDIT
-  DEBIT
-}
-
-enum CoinTxType {
-  TOPUP
-  TRADING_TOPUP
-  GIFT_SEND
-  GIFT_REFUND
-  TRANSFER_OUT
-  TRANSFER_IN
-  TRADING_TRANSFER_OUT
-  TRADING_TRANSFER_IN
-  TRADING_EXCHANGE_FROM_POINTS
-  TRADING_TRANSFER_REVERSAL
-  VIP_PURCHASE
-  VIP_REWARD
-  DAILY_LOGIN
-  WEEKLY_TOPUP
-  PLATFORM_REWARD
-  EXPIRE
-  ADJUSTMENT
-  VIDEO_CALL
-  USERNAME_CHANGE
-  CREATOR_SUBSCRIPTION
-  GUARDIAN_PURCHASE
-  STORE_ITEM_PURCHASE
-  VIP_MEMBERSHIP_PURCHASE
-  POINT_EXCHANGE_TO_COINS
-}
-
-enum PointTxType {
-  LIVESTREAM_GIFT
-  SUBSCRIPTION
-  GUARDIAN_PURCHASE
-  COMMISSION
-  TRANSFER_IN
-  TRANSFER_OUT
-  PLATFORM_REWARD
-  WITHDRAWAL
-  WITHDRAWAL_REFUND
-  ADJUSTMENT
-  VIDEO_CALL
-  GIFT_RECEIVE
-  AGENCY_FORCE_EXIT_PENALTY
-  AGENT_COMMISSION
-  AGENT_POINT_TRANSFER
-  PAYROLL_PROCESSING_REWARD
-  // Withdrawal & payroll v2 — escrow model
-  WITHDRAWAL_ESCROW // host: soft mark of in-flight escrow (does NOT reduce ledger sum)
-  WITHDRAWAL_ESCROW_SETTLED // host: real debit at payroll completion (reduces ledger sum)
-  PAYROLL_HOST_PAYOUT // agent: credit of hostPayoutPoints at payroll completion
-}
-
-enum WithdrawalStatus {
-  PENDING
-  KYC_CHECK
-  APPROVED
-  PROCESSING
-  PAID
-  FAILED
-  REJECTED
-  PENDING_PLATFORM
-  DISPUTED
-}
-
 model CoinPackage {
-  id         String   @id @default(uuid()) @db.Uuid
-  coins      Int
-  priceCents Int      @map("price_cents")
-  currency   String   @default("USD") @db.VarChar(10)
-  label      String?  @db.VarChar(100)
-  isActive   Boolean  @default(true) @map("is_active")
-  sortOrder  Int      @default(0) @map("sort_order")
-  createdAt  DateTime @default(now()) @map("created_at")
-  updatedAt  DateTime @updatedAt @map("updated_at")
-
+  id          String           @id @default(uuid()) @db.Uuid
+  coins       Int
+  priceCents  Int              @map("price_cents")
+  currency    String           @default("USD") @db.VarChar(10)
+  label       String?          @db.VarChar(100)
+  isActive    Boolean          @default(true) @map("is_active")
+  sortOrder   Int              @default(0) @map("sort_order")
+  createdAt   DateTime         @default(now()) @map("created_at")
+  updatedAt   DateTime         @updatedAt @map("updated_at")
   topupOrders CoinTopupOrder[]
 
   @@unique([coins, priceCents])
@@ -1029,20 +837,17 @@ model CoinPackage {
 }
 
 model Wallet {
-  id           String             @id @default(uuid()) @db.Uuid
-  userId       String             @map("user_id") @db.Uuid
-  currencyType WalletCurrencyType @map("currency_type")
-  version      BigInt             @default(0)
-  // Sum of grossPoints across all open (escrowed) withdrawals. POINT wallet only.
-  // availablePoints = ledger sum (totalPoints) - unconfirmedPoints.
-  unconfirmedPoints BigInt        @default(0) @map("unconfirmed_points")
-  createdAt    DateTime           @default(now()) @map("created_at")
-  updatedAt    DateTime           @updatedAt @map("updated_at")
-
-  user        User               @relation(fields: [userId], references: [id], onDelete: Cascade)
-  coinLedger  CoinLedgerEntry[]
-  pointLedger PointLedgerEntry[]
-  withdrawals Withdrawal[]
+  id                String             @id @default(uuid()) @db.Uuid
+  userId            String             @map("user_id") @db.Uuid
+  currencyType      WalletCurrencyType @map("currency_type")
+  version           BigInt             @default(0)
+  unconfirmedPoints BigInt             @default(0) @map("unconfirmed_points")
+  createdAt         DateTime           @default(now()) @map("created_at")
+  updatedAt         DateTime           @updatedAt @map("updated_at")
+  coinLedger        CoinLedgerEntry[]
+  pointLedger       PointLedgerEntry[]
+  user              User               @relation(fields: [userId], references: [id], onDelete: Cascade)
+  withdrawals       Withdrawal[]
 
   @@unique([userId, currencyType])
   @@index([userId])
@@ -1050,59 +855,28 @@ model Wallet {
 }
 
 model CoinLedgerEntry {
-  id             String          @id @default(uuid()) @db.Uuid
-  walletId       String          @map("wallet_id") @db.Uuid
-  direction      LedgerDirection
-  txType         CoinTxType      @map("tx_type")
-  amount         BigInt
-  balanceAfter   BigInt          @map("balance_after")
-  refId          String?         @map("ref_id") @db.VarChar(255)
-  counterpartyId String?         @map("counterparty_id") @db.Uuid
-  description    String?         @db.Text
-  metadata       Json?
-  idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
-  createdAt      DateTime        @default(now()) @map("created_at")
-
-  wallet                 Wallet                  @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  vipMembershipPurchases VipMembershipPurchase[]
-  vipDailyClaims         VipDailyClaim[]
+  id                                                                                    String                 @id @default(uuid()) @db.Uuid
+  walletId                                                                              String                 @map("wallet_id") @db.Uuid
+  direction                                                                             LedgerDirection
+  txType                                                                                CoinTxType             @map("tx_type")
+  amount                                                                                BigInt
+  balanceAfter                                                                          BigInt                 @map("balance_after")
+  refId                                                                                 String?                @map("ref_id") @db.VarChar(255)
+  counterpartyId                                                                        String?                @map("counterparty_id") @db.Uuid
+  description                                                                           String?
+  metadata                                                                              Json?
+  idempotencyKey                                                                        String                 @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt                                                                             DateTime               @default(now()) @map("created_at")
+  wallet                                                                                Wallet                 @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  custom_gift_requests_custom_gift_requests_ledger_entry_idTocoin_ledger_entries        custom_gift_requests?  @relation("custom_gift_requests_ledger_entry_idTocoin_ledger_entries")
+  custom_gift_requests_custom_gift_requests_refund_ledger_entry_idTocoin_ledger_entries custom_gift_requests[] @relation("custom_gift_requests_refund_ledger_entry_idTocoin_ledger_entries")
+  vipDailyClaims                                                                        VipDailyClaim[]
+  vipMembershipPurchases                                                                VipMembershipPurchase?
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
   @@index([idempotencyKey])
   @@map("coin_ledger_entries")
-}
-
-enum VipMembershipTier {
-  DIAMOND
-  SVIP
-}
-
-enum FaceProfileStatus {
-  PENDING_INDEX
-  INDEXED
-  FAILED
-  REVOKED
-  DUPLICATE_FACE
-}
-
-enum FaceVerificationDecision {
-  PASS
-  FAIL
-  ERROR
-  QUALITY_REJECTED
-  RATE_LIMITED
-}
-
-// One-time verified live selfie (CompareFaces vs indexed face profile).
-enum LivePhotoVerificationState {
-  NOT_UPLOADED
-  PENDING_UPLOAD
-  PENDING_VERIFICATION
-  PROCESSING
-  VERIFIED
-  FAILED
-  REJECTED
 }
 
 model VipMembershipPurchase {
@@ -1111,29 +885,26 @@ model VipMembershipPurchase {
   tier            VipMembershipTier
   periodDays      Int               @map("period_days")
   coinCost        BigInt            @map("coin_cost")
-  ledgerEntryId   String            @map("ledger_entry_id") @db.Uuid
+  ledgerEntryId   String            @unique @map("ledger_entry_id") @db.Uuid
   expiresAtBefore DateTime?         @map("expires_at_before")
   expiresAtAfter  DateTime          @map("expires_at_after")
   createdAt       DateTime          @default(now()) @map("created_at")
+  ledgerEntry     CoinLedgerEntry   @relation(fields: [ledgerEntryId], references: [id])
+  user            User              @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
-
-  @@unique([ledgerEntryId])
   @@index([userId, createdAt(sort: Desc)])
   @@index([tier, createdAt(sort: Desc)])
   @@map("vip_membership_purchases")
 }
 
 model VipDailyClaim {
-  userId        String   @map("user_id") @db.Uuid
-  claimDate     DateTime @map("claim_date") @db.Date
-  coinAmount    BigInt   @map("coin_amount")
-  ledgerEntryId String   @map("ledger_entry_id") @db.Uuid
-  claimedAt     DateTime @default(now()) @map("claimed_at")
-
-  user        User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  ledgerEntry CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id], onDelete: Restrict)
+  userId        String          @map("user_id") @db.Uuid
+  claimDate     DateTime        @map("claim_date") @db.Date
+  coinAmount    BigInt          @map("coin_amount")
+  ledgerEntryId String          @map("ledger_entry_id") @db.Uuid
+  claimedAt     DateTime        @default(now()) @map("claimed_at")
+  ledgerEntry   CoinLedgerEntry @relation(fields: [ledgerEntryId], references: [id])
+  user          User            @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, claimDate])
   @@index([userId, claimDate(sort: Desc)])
@@ -1146,8 +917,7 @@ model VipDailyQuota {
   quotaType  String   @map("quota_type") @db.VarChar(50)
   used       Int      @default(0)
   maxAllowed Int      @map("max_allowed")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user       User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, quotaDate, quotaType])
   @@map("vip_daily_quotas")
@@ -1162,17 +932,14 @@ model PointLedgerEntry {
   balanceAfter   BigInt          @map("balance_after")
   refId          String?         @map("ref_id") @db.VarChar(255)
   counterpartyId String?         @map("counterparty_id") @db.Uuid
-  description    String?         @db.Text
+  description    String?
   metadata       Json?
   idempotencyKey String          @unique @map("idempotency_key") @db.VarChar(200)
   createdAt      DateTime        @default(now()) @map("created_at")
-
-  wallet Wallet @relation(fields: [walletId], references: [id], onDelete: Cascade)
+  wallet         Wallet          @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([walletId, createdAt(sort: Desc)])
   @@index([walletId, txType, createdAt(sort: Desc)])
-  // Serves agency dashboard agent-own-earnings / payroll sums: filter by wallet +
-  // tx type + direction within a time window.
   @@index([walletId, txType, direction, createdAt])
   @@index([walletId, refId])
   @@index([idempotencyKey])
@@ -1180,31 +947,22 @@ model PointLedgerEntry {
 }
 
 model CoinTopupOrder {
-  id             String   @id @default(uuid()) @db.Uuid
-  userId         String   @map("user_id") @db.Uuid
-  packageId      String   @map("package_id") @db.Uuid
+  id             String      @id @default(uuid()) @db.Uuid
+  userId         String      @map("user_id") @db.Uuid
+  packageId      String      @map("package_id") @db.Uuid
   coins          Int
-  priceCents     Int      @map("price_cents")
-  currency       String   @default("USD") @db.VarChar(10)
-  gatewayRef     String?  @unique @map("gateway_ref") @db.VarChar(256)
-  status         String   @default("PENDING") @db.VarChar(50)
-  ledgerEntryId  String?  @map("ledger_entry_id") @db.Uuid
-  idempotencyKey String   @unique @map("idempotency_key") @db.VarChar(200)
-  createdAt      DateTime @default(now()) @map("created_at")
-  updatedAt      DateTime @updatedAt @map("updated_at")
-
-  package CoinPackage @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  priceCents     Int         @map("price_cents")
+  currency       String      @default("USD") @db.VarChar(10)
+  gatewayRef     String?     @unique @map("gateway_ref") @db.VarChar(256)
+  status         String      @default("PENDING") @db.VarChar(50)
+  ledgerEntryId  String?     @map("ledger_entry_id") @db.Uuid
+  idempotencyKey String      @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt      DateTime    @default(now()) @map("created_at")
+  updatedAt      DateTime    @updatedAt @map("updated_at")
+  package        CoinPackage @relation(fields: [packageId], references: [id])
 
   @@index([userId, createdAt(sort: Desc)])
   @@map("coin_topup_orders")
-}
-
-enum AgencyAgentApplicationStatus {
-  PENDING
-  UNDER_REVIEW
-  MORE_DOCS_REQUIRED
-  APPROVED
-  REJECTED
 }
 
 model AgencyAgentApplication {
@@ -1212,51 +970,48 @@ model AgencyAgentApplication {
   publicId   String                       @unique @default(cuid()) @map("public_id")
   userId     String                       @unique @map("user_id") @db.Uuid
   status     AgencyAgentApplicationStatus @default(PENDING)
-  adminNote  String?                      @map("admin_note") @db.Text
-  userNote   String?                      @map("user_note") @db.Text
+  adminNote  String?                      @map("admin_note")
+  userNote   String?                      @map("user_note")
   reviewedAt DateTime?                    @map("reviewed_at")
   reviewedBy String?                      @map("reviewed_by") @db.Uuid
   createdAt  DateTime                     @default(now()) @map("created_at")
   updatedAt  DateTime                     @updatedAt @map("updated_at")
-
-  user User                  @relation("AgencyAgentApplications", fields: [userId], references: [id], onDelete: Cascade)
-  kyc  AgencyApplicationKyc?
+  user       User                         @relation("AgencyAgentApplications", fields: [userId], references: [id], onDelete: Cascade)
+  kyc        AgencyApplicationKyc?
 
   @@map("agency_agent_applications")
 }
 
 model AgencyApplicationKyc {
-  userId             String    @id @map("user_id") @db.Uuid
-  applicationId      String?   @unique @map("application_id") @db.Uuid
-  govtIdS3Key        String?   @map("govt_id_s3_key") @db.VarChar(255)
-  govtIdS3Bucket     String?   @map("govt_id_s3_bucket") @db.VarChar(255)
-  govtIdSubmittedAt  DateTime? @map("govt_id_submitted_at")
-  contactPhone       String?   @map("contact_phone") @db.VarChar(20)
-  contactEmail       String?   @map("contact_email") @db.VarChar(255)
-  contactSubmittedAt DateTime? @map("contact_submitted_at")
-  faceVerified       Boolean   @default(false) @map("face_verified")
-  createdAt          DateTime  @default(now()) @map("created_at")
-  updatedAt          DateTime  @updatedAt @map("updated_at")
-
-  user        User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-  application AgencyAgentApplication? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  userId             String                  @id @map("user_id") @db.Uuid
+  applicationId      String?                 @unique @map("application_id") @db.Uuid
+  govtIdS3Key        String?                 @map("govt_id_s3_key") @db.VarChar(255)
+  govtIdS3Bucket     String?                 @map("govt_id_s3_bucket") @db.VarChar(255)
+  govtIdSubmittedAt  DateTime?               @map("govt_id_submitted_at")
+  contactPhone       String?                 @map("contact_phone") @db.VarChar(20)
+  contactEmail       String?                 @map("contact_email") @db.VarChar(255)
+  contactSubmittedAt DateTime?               @map("contact_submitted_at")
+  faceVerified       Boolean                 @default(false) @map("face_verified")
+  createdAt          DateTime                @default(now()) @map("created_at")
+  updatedAt          DateTime                @updatedAt @map("updated_at")
+  application        AgencyAgentApplication? @relation(fields: [applicationId], references: [id], onDelete: Cascade)
+  user               User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("agency_application_kyc")
 }
 
 model CoinTradingTopupPackage {
-  id           String   @id @default(uuid()) @db.Uuid
-  tradingCoins BigInt   @map("trading_coins")
-  priceCents   Int      @map("price_cents")
-  coinsPerUsd  Int      @map("coins_per_usd")
-  currency     String   @default("USD") @db.VarChar(10)
-  label        String?  @db.VarChar(100)
-  isActive     Boolean  @default(true) @map("is_active")
-  sortOrder    Int      @default(0) @map("sort_order")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
-
-  topupOrders CoinTradingTopupOrder[]
+  id           String                  @id @default(uuid()) @db.Uuid
+  tradingCoins BigInt                  @map("trading_coins")
+  priceCents   Int                     @map("price_cents")
+  coinsPerUsd  Int                     @map("coins_per_usd")
+  currency     String                  @default("USD") @db.VarChar(10)
+  label        String?                 @db.VarChar(100)
+  isActive     Boolean                 @default(true) @map("is_active")
+  sortOrder    Int                     @default(0) @map("sort_order")
+  createdAt    DateTime                @default(now()) @map("created_at")
+  updatedAt    DateTime                @updatedAt @map("updated_at")
+  topupOrders  CoinTradingTopupOrder[]
 
   @@unique([tradingCoins, priceCents])
   @@index([isActive, sortOrder])
@@ -1264,21 +1019,20 @@ model CoinTradingTopupPackage {
 }
 
 model CoinTradingTopupOrder {
-  id                  String   @id @default(uuid()) @db.Uuid
-  agentUserId         String   @map("agent_user_id") @db.Uuid
-  packageId           String?  @map("package_id") @db.Uuid
-  amountUsd           Decimal  @map("amount_usd") @db.Decimal(12, 2)
-  tradingCoinsAwarded BigInt   @map("trading_coins_awarded")
-  rateApplied         Int      @map("rate_applied")
-  epayRef             String?  @unique @map("epay_ref") @db.VarChar(256)
-  status              String   @default("PENDING") @db.VarChar(50)
-  ledgerEntryId       String?  @map("ledger_entry_id") @db.Uuid
-  idempotencyKey      String   @unique @map("idempotency_key") @db.VarChar(200)
-  createdAt           DateTime @default(now()) @map("created_at")
-  updatedAt           DateTime @updatedAt @map("updated_at")
-
-  agent   User                       @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
-  package CoinTradingTopupPackage?   @relation(fields: [packageId], references: [id], onDelete: Restrict)
+  id                  String                   @id @default(uuid()) @db.Uuid
+  agentUserId         String                   @map("agent_user_id") @db.Uuid
+  packageId           String?                  @map("package_id") @db.Uuid
+  amountUsd           Decimal                  @map("amount_usd") @db.Decimal(12, 2)
+  tradingCoinsAwarded BigInt                   @map("trading_coins_awarded")
+  rateApplied         Int                      @map("rate_applied")
+  epayRef             String?                  @unique @map("epay_ref") @db.VarChar(256)
+  status              String                   @default("PENDING") @db.VarChar(50)
+  ledgerEntryId       String?                  @map("ledger_entry_id") @db.Uuid
+  idempotencyKey      String                   @unique @map("idempotency_key") @db.VarChar(200)
+  createdAt           DateTime                 @default(now()) @map("created_at")
+  updatedAt           DateTime                 @updatedAt @map("updated_at")
+  agent               User                     @relation("TradingCoinTopupsByAgent", fields: [agentUserId], references: [id], onDelete: Cascade)
+  package             CoinTradingTopupPackage? @relation(fields: [packageId], references: [id], onDelete: Restrict)
 
   @@index([agentUserId, createdAt(sort: Desc)])
   @@index([status, createdAt(sort: Desc)])
@@ -1297,12 +1051,11 @@ model CoinTradingTransfer {
   idempotencyKey         String    @unique @map("idempotency_key") @db.VarChar(200)
   reversedAt             DateTime? @map("reversed_at")
   reversedByUserId       String?   @map("reversed_by_user_id") @db.Uuid
-  reverseReason          String?   @map("reverse_reason") @db.Text
+  reverseReason          String?   @map("reverse_reason")
   createdAt              DateTime  @default(now()) @map("created_at")
-
-  senderAgent User  @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
-  recipient   User  @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
-  reversedBy  User? @relation("TradingCoinTransferReversedBy", fields: [reversedByUserId], references: [id], onDelete: SetNull)
+  recipient              User      @relation("TradingCoinTransferRecipient", fields: [recipientUserId], references: [id], onDelete: Cascade)
+  reversedBy             User?     @relation("TradingCoinTransferReversedBy", fields: [reversedByUserId], references: [id])
+  senderAgent            User      @relation("TradingCoinTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
 
   @@index([senderAgentUserId, createdAt(sort: Desc)])
   @@index([recipientUserId, createdAt(sort: Desc)])
@@ -1336,33 +1089,30 @@ model AgentExchangeRate {
 }
 
 model Withdrawal {
-  id              String           @id @default(uuid()) @db.Uuid
-  walletId        String           @map("wallet_id") @db.Uuid
-  userId          String           @map("user_id") @db.Uuid
-  amountPoints    BigInt           @map("amount_points")
-  amountFiatCents BigInt?          @map("amount_fiat_cents")
-  currency        String           @default("USD") @db.VarChar(10)
-  status          WithdrawalStatus @default(PENDING)
-  payoutRef       String?          @map("payout_ref") @db.VarChar(256)
-  failReason      String?          @map("fail_reason") @db.Text
-  notes           String?          @db.Text
-  idempotencyKey  String           @unique @map("idempotency_key") @db.VarChar(200)
-  requestedAt     DateTime         @default(now()) @map("requested_at")
-  processedAt     DateTime?        @map("processed_at")
-  updatedAt       DateTime         @updatedAt @map("updated_at")
-
-  paymentMethodId   String?  @map("payment_method_id") @db.Uuid
-  hostPayoutUsd     Decimal? @map("host_payout_usd") @db.Decimal(12, 2)
-  platformFeePoints BigInt?  @map("platform_fee_points")
-  agentRewardPoints BigInt?  @map("agent_reward_points")
-  assignmentCount   Int      @default(0) @map("assignment_count")
-  disputeTicketId   String?  @map("dispute_ticket_id") @db.VarChar(255)
-  // 1 = legacy real-debit flow (WITHDRAWAL). 2 = escrow flow (WITHDRAWAL_ESCROW).
-  withdrawalVersion Int      @default(1) @map("withdrawal_version")
-
-  wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
-  paymentMethod      UserPaymentMethod?            @relation(fields: [paymentMethodId], references: [id], onDelete: SetNull)
+  id                 String                        @id @default(uuid()) @db.Uuid
+  walletId           String                        @map("wallet_id") @db.Uuid
+  userId             String                        @map("user_id") @db.Uuid
+  amountPoints       BigInt                        @map("amount_points")
+  amountFiatCents    BigInt?                       @map("amount_fiat_cents")
+  currency           String                        @default("USD") @db.VarChar(10)
+  status             WithdrawalStatus              @default(PENDING)
+  payoutRef          String?                       @map("payout_ref") @db.VarChar(256)
+  failReason         String?                       @map("fail_reason")
+  notes              String?
+  idempotencyKey     String                        @unique @map("idempotency_key") @db.VarChar(200)
+  requestedAt        DateTime                      @default(now()) @map("requested_at")
+  processedAt        DateTime?                     @map("processed_at")
+  updatedAt          DateTime                      @updatedAt @map("updated_at")
+  paymentMethodId    String?                       @map("payment_method_id") @db.Uuid
+  hostPayoutUsd      Decimal?                      @map("host_payout_usd") @db.Decimal(12, 2)
+  platformFeePoints  BigInt?                       @map("platform_fee_points")
+  agentRewardPoints  BigInt?                       @map("agent_reward_points")
+  assignmentCount    Int                           @default(0) @map("assignment_count")
+  disputeTicketId    String?                       @map("dispute_ticket_id") @db.VarChar(255)
+  withdrawalVersion  Int                           @default(1) @map("withdrawal_version")
   payrollAssignments WithdrawalPayrollAssignment[]
+  paymentMethod      UserPaymentMethod?            @relation(fields: [paymentMethodId], references: [id])
+  wallet             Wallet                        @relation(fields: [walletId], references: [id], onDelete: Cascade)
 
   @@index([userId, status])
   @@index([walletId, requestedAt(sort: Desc)])
@@ -1370,26 +1120,25 @@ model Withdrawal {
 }
 
 model UserPaymentMethod {
-  id                String   @id @default(uuid()) @db.Uuid
-  userId            String   @map("user_id") @db.Uuid
-  methodType        String   @map("method_type") @db.VarChar(10)
-  epayEmail         String?  @map("epay_email") @db.VarChar(255)
-  bankName                 String?  @map("bank_name") @db.VarChar(255)
-  bankAccountHolder        String?  @map("bank_account_holder") @db.VarChar(255)
-  accountHolderFirstName   String?  @map("account_holder_first_name") @db.VarChar(100)
-  accountHolderLastName    String?  @map("account_holder_last_name") @db.VarChar(100)
-  branch                   String?  @db.VarChar(150)
-  bankAccountNumber        String?  @map("bank_account_number") @db.VarChar(50)
-  bankIfscCode             String?  @map("bank_ifsc_code") @db.VarChar(20)
-  upiNumber                String?  @map("upi_number") @db.VarChar(50)
-  registeredPhone          String?  @map("registered_phone") @db.VarChar(30)
-  registeredEmail          String?  @map("registered_email") @db.VarChar(255)
-  lastUsedAt               DateTime? @map("last_used_at")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-
-  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
-  withdrawals Withdrawal[]
+  id                     String       @id @default(uuid()) @db.Uuid
+  userId                 String       @map("user_id") @db.Uuid
+  methodType             String       @map("method_type") @db.VarChar(10)
+  epayEmail              String?      @map("epay_email") @db.VarChar(255)
+  bankName               String?      @map("bank_name") @db.VarChar(255)
+  bankAccountHolder      String?      @map("bank_account_holder") @db.VarChar(255)
+  accountHolderFirstName String?      @map("account_holder_first_name") @db.VarChar(100)
+  accountHolderLastName  String?      @map("account_holder_last_name") @db.VarChar(100)
+  branch                 String?      @db.VarChar(150)
+  bankAccountNumber      String?      @map("bank_account_number") @db.VarChar(50)
+  bankIfscCode           String?      @map("bank_ifsc_code") @db.VarChar(20)
+  upiNumber              String?      @map("upi_number") @db.VarChar(50)
+  registeredPhone        String?      @map("registered_phone") @db.VarChar(30)
+  registeredEmail        String?      @map("registered_email") @db.VarChar(255)
+  lastUsedAt             DateTime?    @map("last_used_at")
+  createdAt              DateTime     @default(now()) @map("created_at")
+  updatedAt              DateTime     @updatedAt @map("updated_at")
+  user                   User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  withdrawals            Withdrawal[]
 
   @@unique([userId, methodType])
   @@index([userId])
@@ -1397,24 +1146,23 @@ model UserPaymentMethod {
 }
 
 model WithdrawalPayrollAssignment {
-  id               String    @id @default(uuid()) @db.Uuid
-  withdrawalId     String    @map("withdrawal_id") @db.Uuid
-  agencyUserId     String    @map("agency_user_id") @db.Uuid
-  assignedAt       DateTime  @default(now()) @map("assigned_at")
-  expiresAt        DateTime  @map("expires_at")
-  status           String    @default("PENDING") @map("status") @db.VarChar(20)
-  proofS3Key       String?   @map("proof_s3_key") @db.VarChar(500)
-  proofS3Bucket    String?   @map("proof_s3_bucket") @db.VarChar(255)
-  completedAt      DateTime? @map("completed_at")
-  rejectedAt       DateTime? @map("rejected_at")
-  rejectionReason  String?   @map("rejection_reason") @db.Text
-  assignmentNumber Int       @map("assignment_number")
-  waitingExpiresAt DateTime? @map("waiting_expires_at")
-  createdAt        DateTime  @default(now()) @map("created_at")
-  updatedAt        DateTime  @updatedAt @map("updated_at")
-
-  withdrawal Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
-  agencyUser User       @relation("AgencyPayrollAssignments", fields: [agencyUserId], references: [id], onDelete: Cascade)
+  id               String     @id @default(uuid()) @db.Uuid
+  withdrawalId     String     @map("withdrawal_id") @db.Uuid
+  agencyUserId     String     @map("agency_user_id") @db.Uuid
+  assignedAt       DateTime   @default(now()) @map("assigned_at")
+  expiresAt        DateTime   @map("expires_at")
+  status           String     @default("PENDING") @map("status") @db.VarChar(20)
+  proofS3Key       String?    @map("proof_s3_key") @db.VarChar(500)
+  proofS3Bucket    String?    @map("proof_s3_bucket") @db.VarChar(255)
+  completedAt      DateTime?  @map("completed_at")
+  rejectedAt       DateTime?  @map("rejected_at")
+  rejectionReason  String?    @map("rejection_reason")
+  assignmentNumber Int        @map("assignment_number")
+  waitingExpiresAt DateTime?  @map("waiting_expires_at")
+  createdAt        DateTime   @default(now()) @map("created_at")
+  updatedAt        DateTime   @updatedAt @map("updated_at")
+  agencyUser       User       @relation("AgencyPayrollAssignments", fields: [agencyUserId], references: [id], onDelete: Cascade)
+  withdrawal       Withdrawal @relation(fields: [withdrawalId], references: [id], onDelete: Cascade)
 
   @@index([withdrawalId, assignmentNumber])
   @@index([agencyUserId, status, assignedAt(sort: Desc)])
@@ -1426,7 +1174,7 @@ model WithdrawalPayrollAssignment {
 model PayrollConfig {
   id                    Int      @id @default(1)
   platformFeeRateBp     Int      @default(500) @map("platform_fee_rate_bp")
-  agentRewardRateBp     Int      @default(600) @map("agent_reward_rate_bp")
+  agentRewardRateBp     Int      @default(6000) @map("agent_reward_rate_bp")
   serviceFeeUsd         Decimal  @default(1.00) @map("service_fee_usd") @db.Decimal(8, 2)
   minWithdrawalUsd      Decimal  @default(10.00) @map("min_withdrawal_usd") @db.Decimal(12, 2)
   maxWithdrawalUsd      Decimal  @default(10000000.00) @map("max_withdrawal_usd") @db.Decimal(18, 2)
@@ -1465,31 +1213,6 @@ model WalletIdempotencyLog {
   @@map("wallet_idempotency_log")
 }
 
-// ── Wallet-driven levels (cumulative credits from ledgers) — separate from legacy user_levels XP ──
-
-enum LevelType {
-  WEALTH
-  LIVESTREAM
-}
-
-enum SupportTicketType {
-  CONSULT
-  REPORT_COMPLAINTS
-  FEEDBACK
-  BUSINESS_COOPERATION
-}
-
-enum SupportTicketStatus {
-  OPEN
-  AWAITING_REPLY
-  CLOSED
-}
-
-enum SupportMessageSenderType {
-  USER
-  SUPPORT
-}
-
 model WalletLevelConfig {
   id        String    @id @default(uuid()) @db.Uuid
   levelType LevelType @map("level_type")
@@ -1514,46 +1237,43 @@ model WalletUserLevel {
   cumulativeTotal BigInt    @default(0) @map("cumulative_total")
   createdAt       DateTime  @default(now()) @map("created_at")
   updatedAt       DateTime  @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user            User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, levelType])
   @@index([userId])
   @@map("wallet_user_levels")
 }
 
-// ── Video Call ────────────────────────────────────────────────────────────────
-
 model VideoCallSettings {
   id          String   @id @default(cuid())
   userId      String   @unique @map("user_id") @db.Uuid
-  pricePerMin Int      @default(1800) @map("price_per_min") // coins per minute, min 1800
-  blockLv5    Boolean  @default(false) @map("block_lv5") // block callers with wealthLevel ≤ 5
-  blockLv10   Boolean  @default(false) @map("block_lv10") // block callers with wealthLevel ≤ 10
+  pricePerMin Int      @default(1800) @map("price_per_min")
+  acceptVideoCalls Boolean @default(true) @map("accept_video_calls")
+  blockLv5    Boolean  @default(false) @map("block_lv5")
+  blockLv10   Boolean  @default(false) @map("block_lv10")
   createdAt   DateTime @default(now()) @map("created_at")
   updatedAt   DateTime @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user        User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@map("video_call_settings")
 }
 
 model VideoCallSession {
-  id            String    @id @default(cuid())
-  callerId      String    @map("caller_id") @db.Uuid
-  creatorId     String    @map("creator_id") @db.Uuid
-  livekitRoom   String    @unique @map("livekit_room") @db.VarChar(255)
-  pricePerMin   Int       @map("price_per_min") // snapshot at call start
-  status        String    @default("ACTIVE") @map("status") @db.VarChar(50) // ACTIVE | ENDED | INSUFFICIENT_COINS
-  minsCharged   Int       @default(0) @map("mins_charged")
-  coinsDeducted BigInt    @default(0) @map("coins_deducted")
-  pointsAwarded BigInt    @default(0) @map("points_awarded")
-  startedAt     DateTime  @default(now()) @map("started_at")
-  endedAt       DateTime? @map("ended_at")
-  endReason     String?   @map("end_reason") @db.VarChar(100)
-
-  caller  User @relation("CallSessionCaller", fields: [callerId], references: [id])
-  creator User @relation("CallSessionCreator", fields: [creatorId], references: [id])
+  id             String                   @id @default(cuid())
+  callerId       String                   @map("caller_id") @db.Uuid
+  creatorId      String                   @map("creator_id") @db.Uuid
+  livekitRoom    String                   @unique @map("livekit_room") @db.VarChar(255)
+  pricePerMin    Int                      @map("price_per_min")
+  status         String                   @default("ACTIVE") @map("status") @db.VarChar(50)
+  minsCharged    Int                      @default(0) @map("mins_charged")
+  coinsDeducted  BigInt                   @default(0) @map("coins_deducted")
+  pointsAwarded  BigInt                   @default(0) @map("points_awarded")
+  startedAt      DateTime                 @default(now()) @map("started_at")
+  endedAt        DateTime?                @map("ended_at")
+  endReason      String?                  @map("end_reason") @db.VarChar(100)
+  moderationLogs VideoCallModerationLog[]
+  caller         User                     @relation("CallSessionCaller", fields: [callerId], references: [id])
+  creator        User                     @relation("CallSessionCreator", fields: [creatorId], references: [id])
 
   @@index([callerId, status])
   @@index([creatorId, status])
@@ -1561,24 +1281,46 @@ model VideoCallSession {
   @@map("video_call_sessions")
 }
 
-// ── Gifts, gallery, fan ranking ───────────────────────────────────────────────
+model VideoCallModerationLog {
+  id            String           @id @default(uuid()) @db.Uuid
+  sessionId     String           @map("session_id")
+  detectedLabel String           @map("detected_label") @db.VarChar(255)
+  confidence    Float
+  action        String           @db.VarChar(50)
+  s3Key         String?          @map("s3_key") @db.VarChar(512)
+  s3Bucket      String?          @map("s3_bucket") @db.VarChar(255)
+  checkedAt     DateTime         @default(now()) @map("checked_at")
+  session       VideoCallSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId])
+  @@map("video_call_moderation_logs")
+}
 
 model Gift {
-  id              String   @id @default(uuid()) @db.Uuid
-  name            String   @db.VarChar(255)
-  coinCost        Int      @map("coin_cost")
-  displayImageUrl String   @map("display_image_url") @db.Text
-  effectUrl       String?  @map("effect_url") @db.Text
-  isActive        Boolean  @default(true) @map("is_active")
-  createdAt       DateTime @default(now()) @map("created_at")
-  updatedAt       DateTime @updatedAt @map("updated_at")
-
-  tags                GiftTag[]
-  gallerySectionItems GiftGallerySectionItem[]
-  transactions        GiftTransaction[]
-  galleryProgressRows GiftGalleryProgress[]
+  id                   String                   @id @default(uuid()) @db.Uuid
+  name                 String                   @db.VarChar(255)
+  coinCost             Int                      @map("coin_cost")
+  displayImageUrl      String                   @map("display_image_url")
+  effectUrl            String?                  @map("effect_url")
+  isLucky              Boolean                  @default(false) @map("is_lucky")
+  isActive             Boolean                  @default(true) @map("is_active")
+  createdAt            DateTime                 @default(now()) @map("created_at")
+  updatedAt            DateTime                 @updatedAt @map("updated_at")
+  code                 String                   @unique @db.VarChar(64)
+  category_id          String?                  @db.Uuid
+  display_order        Int                      @default(0)
+  vip_only             Boolean                  @default(false)
+  custom_gift_requests custom_gift_requests[]
+  galleryProgressRows  GiftGalleryProgress[]
+  gallerySectionItems  GiftGallerySectionItem[]
+  tags                 GiftTag[]
+  transactions         GiftTransaction[]
+  gift_categories      gift_categories?         @relation(fields: [category_id], references: [id])
 
   @@index([isActive])
+  @@index([isLucky])
+  @@index([category_id])
+  @@index([display_order])
   @@map("gifts")
 }
 
@@ -1586,8 +1328,7 @@ model GiftTag {
   id     String @id @default(uuid()) @db.Uuid
   giftId String @map("gift_id") @db.Uuid
   tag    String @db.VarChar(64)
-
-  gift Gift @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  gift   Gift   @relation(fields: [giftId], references: [id], onDelete: Cascade)
 
   @@unique([giftId, tag])
   @@index([tag])
@@ -1595,41 +1336,40 @@ model GiftTag {
 }
 
 model GiftGallery {
-  id        String   @id @default(uuid()) @db.Uuid
+  id        String                @id @default(uuid()) @db.Uuid
   year      Int
   month     Int
-  createdAt DateTime @default(now()) @map("created_at")
-  updatedAt DateTime @updatedAt @map("updated_at")
-
-  sections GiftGallerySection[]
-  progress GiftGalleryProgress[]
+  createdAt DateTime              @default(now()) @map("created_at")
+  updatedAt DateTime              @updatedAt @map("updated_at")
+  progress  GiftGalleryProgress[]
+  sections  GiftGallerySection[]
 
   @@unique([year, month])
   @@map("gift_galleries")
 }
 
 model GiftGallerySection {
-  id        String @id @default(uuid()) @db.Uuid
-  galleryId String @map("gallery_id") @db.Uuid
-  title     String @db.VarChar(255)
-  sortOrder Int    @default(0) @map("sort_order")
-
-  gallery GiftGallery              @relation(fields: [galleryId], references: [id], onDelete: Cascade)
-  gifts   GiftGallerySectionItem[]
+  id         String                   @id @default(uuid()) @db.Uuid
+  galleryId  String                   @map("gallery_id") @db.Uuid
+  title      String                   @db.VarChar(255)
+  sortOrder  Int                      @default(0) @map("sort_order")
+  enabled_at DateTime?
+  is_active  Boolean                  @default(true)
+  gifts      GiftGallerySectionItem[]
+  gallery    GiftGallery              @relation(fields: [galleryId], references: [id], onDelete: Cascade)
 
   @@index([galleryId])
   @@map("gift_gallery_sections")
 }
 
 model GiftGallerySectionItem {
-  id        String @id @default(uuid()) @db.Uuid
-  sectionId String @map("section_id") @db.Uuid
-  giftId    String @map("gift_id") @db.Uuid
-  sortOrder Int    @default(0) @map("sort_order")
-
-  section      GiftGallerySection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
-  gift         Gift                  @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  id           String                @id @default(uuid()) @db.Uuid
+  sectionId    String                @map("section_id") @db.Uuid
+  giftId       String                @map("gift_id") @db.Uuid
+  sortOrder    Int                   @default(0) @map("sort_order")
   progressRows GiftGalleryProgress[]
+  gift         Gift                  @relation(fields: [giftId], references: [id], onDelete: Cascade)
+  section      GiftGallerySection    @relation(fields: [sectionId], references: [id], onDelete: Cascade)
 
   @@unique([sectionId, giftId])
   @@index([giftId])
@@ -1637,19 +1377,18 @@ model GiftGallerySectionItem {
 }
 
 model GiftGalleryProgress {
-  id                       String   @id @default(uuid()) @db.Uuid
-  galleryId                String   @map("gallery_id") @db.Uuid
-  hostUserId               String   @map("host_user_id") @db.Uuid
-  giftId                   String   @map("gift_id") @db.Uuid
-  giftGallerySectionItemId String   @map("gift_gallery_section_item_id") @db.Uuid
-  firstGifterId            String   @map("first_gifter_id") @db.Uuid
-  receivedAt               DateTime @default(now()) @map("received_at")
-
-  gallery     GiftGallery            @relation(fields: [galleryId], references: [id], onDelete: Cascade)
-  host        User                   @relation("HostGalleryProgress", fields: [hostUserId], references: [id], onDelete: Cascade)
-  firstGifter User                   @relation("GifterGalleryProgress", fields: [firstGifterId], references: [id], onDelete: Restrict)
-  gift        Gift                   @relation(fields: [giftId], references: [id], onDelete: Restrict)
-  sectionItem GiftGallerySectionItem @relation(fields: [giftGallerySectionItemId], references: [id], onDelete: Cascade)
+  id                       String                 @id @default(uuid()) @db.Uuid
+  galleryId                String                 @map("gallery_id") @db.Uuid
+  hostUserId               String                 @map("host_user_id") @db.Uuid
+  giftId                   String                 @map("gift_id") @db.Uuid
+  giftGallerySectionItemId String                 @map("gift_gallery_section_item_id") @db.Uuid
+  firstGifterId            String                 @map("first_gifter_id") @db.Uuid
+  receivedAt               DateTime               @default(now()) @map("received_at")
+  firstGifter              User                   @relation("GifterGalleryProgress", fields: [firstGifterId], references: [id])
+  gallery                  GiftGallery            @relation(fields: [galleryId], references: [id], onDelete: Cascade)
+  sectionItem              GiftGallerySectionItem @relation(fields: [giftGallerySectionItemId], references: [id], onDelete: Cascade)
+  gift                     Gift                   @relation(fields: [giftId], references: [id])
+  host                     User                   @relation("HostGalleryProgress", fields: [hostUserId], references: [id], onDelete: Cascade)
 
   @@unique([hostUserId, giftGallerySectionItemId])
   @@index([hostUserId, galleryId])
@@ -1663,13 +1402,13 @@ model GiftTransaction {
   receiverUserId String   @map("receiver_user_id") @db.Uuid
   giftId         String   @map("gift_id") @db.Uuid
   coinCost       Int      @map("coin_cost")
+  quantity       Int      @default(1) @map("quantity")
   pointsAwarded  Int      @map("points_awarded")
   context        String   @default("direct") @db.VarChar(32)
   createdAt      DateTime @default(now()) @map("created_at")
-
-  sender   User @relation("GiftsSent", fields: [senderUserId], references: [id], onDelete: Restrict)
-  receiver User @relation("GiftsReceived", fields: [receiverUserId], references: [id], onDelete: Restrict)
-  gift     Gift @relation(fields: [giftId], references: [id], onDelete: Restrict)
+  gift           Gift     @relation(fields: [giftId], references: [id])
+  receiver       User     @relation("GiftsReceived", fields: [receiverUserId], references: [id])
+  sender         User     @relation("GiftsSent", fields: [senderUserId], references: [id])
 
   @@index([senderUserId])
   @@index([receiverUserId])
@@ -1685,77 +1424,42 @@ model FanSpend {
   periodKey      String   @map("period_key") @db.VarChar(16)
   coinsSpent     BigInt   @default(0) @map("coins_spent")
   updatedAt      DateTime @updatedAt @map("updated_at")
-
-  sender   User @relation("FanSpendSender", fields: [senderUserId], references: [id], onDelete: Cascade)
-  receiver User @relation("FanSpendReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+  receiver       User     @relation("FanSpendReceiver", fields: [receiverUserId], references: [id], onDelete: Cascade)
+  sender         User     @relation("FanSpendSender", fields: [senderUserId], references: [id], onDelete: Cascade)
 
   @@unique([senderUserId, receiverUserId, periodType, periodKey])
   @@index([receiverUserId, periodType, periodKey])
   @@map("fan_spend")
 }
 
-// ─── AGENCY (Phase 1 — commission/payroll in later phases) ───
-
-enum AgencyApplicationStatus {
-  PENDING
-  ACCEPTED
-  REJECTED
-  CANCELLED
-}
-
-enum AgencyLeaveApplicationStatus {
-  PENDING
-  APPROVED
-  REJECTED
-  LATE_APPROVED
-  AUTO_APPROVED
-  CANCELLED
-}
-
-enum AgencyHostHistoryReason {
-  LEAVE_APPROVED
-  LEAVE_AUTO_APPROVED
-  LEAVE_LATE_APPROVED
-  REMOVED_INACTIVE
-  REMOVED_SUSPENDED
-  CS_FORCE_EXIT
-  AGENT_DELETED
-  HOST_DELETED
-}
-
 model Agency {
-  userId                     String    @id @map("user_id") @db.Uuid
-  defaultPublicId            BigInt    @unique @map("default_public_id")
-  displayName                String    @map("display_name") @db.VarChar(255)
-  payrollEnabled             Boolean   @default(false) @map("payroll_enabled")
-  pausedAt                   DateTime? @map("paused_at")
-  pausedUntil                DateTime? @map("paused_until")
-  totalHostsCount            Int       @default(0) @map("total_hosts_count")
-  lifetimeHostEarningsPoints BigInt    @default(0) @map("lifetime_host_earnings_points")
-  currentLevel               String    @default("D") @map("current_level") @db.VarChar(8)
-  currentWindowTotalPoints   BigInt    @default(0) @map("current_window_total_points")
-  lastLevelRecomputedAt      DateTime? @map("last_level_recomputed_at")
-  lastPayrollAssignedAt      DateTime? @map("last_payroll_assigned_at")
-  createdAt                  DateTime  @default(now()) @map("created_at")
-  updatedAt                  DateTime  @updatedAt @map("updated_at")
-
-  user              User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  hosts             AgencyHost[]
-  applications      AgencyHostApplication[]
-  leaveApplications AgencyLeaveApplication[]
-  dailyEarnings     AgencyDailyEarning[]
-  coinsellerSettings AgencyCoinseller?
+  userId                     String                   @id @map("user_id") @db.Uuid
+  defaultPublicId            BigInt                   @unique @map("default_public_id")
+  displayName                String                   @map("display_name") @db.VarChar(255)
+  payrollEnabled             Boolean                  @default(false) @map("payroll_enabled")
+  payrollPrivilegeGranted    Boolean                  @default(false) @map("payroll_privilege_granted")
+  pausedAt                   DateTime?                @map("paused_at")
+  pausedUntil                DateTime?                @map("paused_until")
+  totalHostsCount            Int                      @default(0) @map("total_hosts_count")
+  lifetimeHostEarningsPoints BigInt                   @default(0) @map("lifetime_host_earnings_points")
+  currentLevel               String                   @default("D") @map("current_level") @db.VarChar(8)
+  currentWindowTotalPoints   BigInt                   @default(0) @map("current_window_total_points")
+  lastLevelRecomputedAt      DateTime?                @map("last_level_recomputed_at")
+  lastPayrollAssignedAt      DateTime?                @map("last_payroll_assigned_at")
+  createdAt                  DateTime                 @default(now()) @map("created_at")
+  updatedAt                  DateTime                 @updatedAt @map("updated_at")
+  user                       User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  coinsellerSettings         AgencyCoinseller?
+  dailyEarnings              AgencyDailyEarning[]
+  applications               AgencyHostApplication[]
+  hosts                      AgencyHost[]
+  leaveApplications          AgencyLeaveApplication[]
 
   @@index([payrollEnabled, pausedAt])
   @@index([payrollEnabled, pausedAt, lastPayrollAssignedAt])
   @@index([currentLevel, currentWindowTotalPoints(sort: Desc)])
   @@index([totalHostsCount(sort: Desc)])
   @@map("agencies")
-}
-
-enum AgencyTransferChannel {
-  BANK
-  EPAY
 }
 
 model AgencyCoinseller {
@@ -1768,8 +1472,7 @@ model AgencyCoinseller {
   autoReply          String?               @map("auto_reply") @db.VarChar(100)
   createdAt          DateTime              @default(now()) @map("created_at")
   updatedAt          DateTime              @updatedAt @map("updated_at")
-
-  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  agency             Agency                @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
 
   @@map("agency_coinseller_settings")
 }
@@ -1778,9 +1481,8 @@ model AgencyHost {
   agencyUserId String   @map("agency_user_id") @db.Uuid
   hostUserId   String   @id @map("host_user_id") @db.Uuid
   joinedAt     DateTime @default(now()) @map("joined_at")
-
-  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
-  host   User   @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+  agency       Agency   @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host         User     @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
 
   @@index([agencyUserId, joinedAt(sort: Desc)])
   @@map("agency_hosts")
@@ -1791,15 +1493,14 @@ model AgencyHostApplication {
   agencyUserId     String                  @map("agency_user_id") @db.Uuid
   hostUserId       String                  @map("host_user_id") @db.Uuid
   status           AgencyApplicationStatus
-  message          String?                 @db.Text
+  message          String?
   createdAt        DateTime                @default(now()) @map("created_at")
   resolvedAt       DateTime?               @map("resolved_at")
   resolvedByUserId String?                 @map("resolved_by") @db.Uuid
   updatedAt        DateTime                @updatedAt @map("updated_at")
-
-  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
-  host       User   @relation("AgencyAppHost", fields: [hostUserId], references: [id], onDelete: Cascade)
-  resolvedBy User?  @relation("AgencyAppResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  agency           Agency                  @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host             User                    @relation("AgencyAppHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy       User?                   @relation("AgencyAppResolver", fields: [resolvedByUserId], references: [id])
 
   @@index([hostUserId, status, createdAt(sort: Desc)])
   @@index([agencyUserId, status, createdAt(sort: Desc)])
@@ -1811,17 +1512,16 @@ model AgencyLeaveApplication {
   agencyUserId     String                       @map("agency_user_id") @db.Uuid
   hostUserId       String                       @map("host_user_id") @db.Uuid
   status           AgencyLeaveApplicationStatus
-  reason           String?                      @db.Text
+  reason           String?
   createdAt        DateTime                     @default(now()) @map("created_at")
   resolvedAt       DateTime?                    @map("resolved_at")
   resolvedByUserId String?                      @map("resolved_by") @db.Uuid
   autoApproveAt    DateTime                     @map("auto_approve_at")
   lateApproveUntil DateTime?                    @map("late_approve_until")
   updatedAt        DateTime                     @updatedAt @map("updated_at")
-
-  agency     Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
-  host       User   @relation("AgencyLeaveHost", fields: [hostUserId], references: [id], onDelete: Cascade)
-  resolvedBy User?  @relation("AgencyLeaveResolver", fields: [resolvedByUserId], references: [id], onDelete: SetNull)
+  agency           Agency                       @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host             User                         @relation("AgencyLeaveHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  resolvedBy       User?                        @relation("AgencyLeaveResolver", fields: [resolvedByUserId], references: [id])
 
   @@index([hostUserId, status, createdAt(sort: Desc)])
   @@index([agencyUserId, status, createdAt(sort: Desc)])
@@ -1864,9 +1564,8 @@ model AgencyDailyEarning {
   hostWasActive        Boolean   @default(true) @map("host_was_active")
   lastCreditAt         DateTime? @map("last_credit_at")
   liveDurationSeconds  BigInt    @default(0) @map("live_duration_seconds")
-
-  agency Agency @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
-  host   User   @relation("AgencyDailyHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  agency               Agency    @relation(fields: [agencyUserId], references: [userId], onDelete: Cascade)
+  host                 User      @relation("AgencyDailyHost", fields: [hostUserId], references: [id], onDelete: Cascade)
 
   @@id([agencyUserId, hostUserId, day])
   @@index([agencyUserId, day(sort: Desc)])
@@ -1892,8 +1591,7 @@ model HostLiveSession {
   durationSeconds BigInt?   @map("duration_seconds")
   status          String    @default("ACTIVE")
   createdAt       DateTime  @default(now()) @map("created_at")
-
-  host User @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
+  host            User      @relation(fields: [hostUserId], references: [id], onDelete: Cascade)
 
   @@index([hostUserId, status])
   @@index([agencyUserId, startedAt])
@@ -1909,9 +1607,8 @@ model AgentPointTransfer {
   recipientLedgerEntryId String   @map("recipient_ledger_entry_id") @db.Uuid
   idempotencyKey         String   @unique @map("idempotency_key") @db.VarChar(200)
   createdAt              DateTime @default(now()) @map("created_at")
-
-  sender    User @relation("AgentTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
-  recipient User @relation("AgentTransferRecipient", fields: [recipientAgentUserId], references: [id], onDelete: Cascade)
+  recipient              User     @relation("AgentTransferRecipient", fields: [recipientAgentUserId], references: [id], onDelete: Cascade)
+  sender                 User     @relation("AgentTransferSender", fields: [senderAgentUserId], references: [id], onDelete: Cascade)
 
   @@index([senderAgentUserId, createdAt(sort: Desc)])
   @@index([recipientAgentUserId, createdAt(sort: Desc)])
@@ -1919,45 +1616,56 @@ model AgentPointTransfer {
 }
 
 model SupportTicket {
-  id                    BigInt              @id @default(autoincrement()) @db.BigInt
-  publicId              String              @unique @default(cuid()) @map("public_id")
-  userId                String              @map("user_id") @db.Uuid
+  id                    BigInt                   @id @default(autoincrement())
+  publicId              String                   @unique @default(cuid()) @map("public_id")
+  userId                String                   @map("user_id") @db.Uuid
   type                  SupportTicketType
-  subType               String              @map("sub_type") @db.VarChar(100)
-  description           String              @db.Text
-  imageUrl              String?             @map("image_url") @db.Text
-  status                SupportTicketStatus @default(AWAITING_REPLY)
-  userLastReadMessageId BigInt?             @map("user_last_read_message_id") @db.BigInt
-  csLastReadMessageId   BigInt?             @map("cs_last_read_message_id") @db.BigInt
+  subType               String                   @map("sub_type") @db.VarChar(100)
+  description           String
+  imageUrl              String?                  @map("image_url")
+  status                SupportTicketStatus      @default(AWAITING_REPLY)
+  userLastReadMessageId BigInt?                  @map("user_last_read_message_id")
+  csLastReadMessageId   BigInt?                  @map("cs_last_read_message_id")
   rating                Int?
-  ratedAt               DateTime?           @map("rated_at")
-  closedAt              DateTime?           @map("closed_at")
-  closedByUserId        String?             @map("closed_by_user_id") @db.Uuid
-  createdAt             DateTime            @default(now()) @map("created_at")
-  updatedAt             DateTime            @updatedAt @map("updated_at")
-
-  user     User             @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
-  closedBy User?            @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id], onDelete: SetNull)
-  messages SupportMessage[]
+  ratedAt               DateTime?                @map("rated_at")
+  closedAt              DateTime?                @map("closed_at")
+  closedByUserId        String?                  @map("closed_by_user_id") @db.Uuid
+  createdAt             DateTime                 @default(now()) @map("created_at")
+  updatedAt             DateTime                 @updatedAt @map("updated_at")
+  assigned_admin_id     String?
+  assigned_at           DateTime?
+  first_response_at     DateTime?
+  priority              SupportTicketPriority    @default(NORMAL)
+  ref_id                String?                  @db.VarChar(120)
+  ref_type              String?                  @db.VarChar(40)
+  resolution            SupportTicketResolution?
+  resolved_at           DateTime?
+  csa_notifications     csa_notifications[]
+  messages              SupportMessage[]
+  support_ticket_notes  support_ticket_notes[]
+  system_admins         system_admins?           @relation(fields: [assigned_admin_id], references: [id])
+  closedBy              User?                    @relation("SupportTicketsClosedBy", fields: [closedByUserId], references: [id])
+  user                  User                     @relation("SupportTicketsAsUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, status, updatedAt])
   @@index([status, updatedAt])
+  @@index([assigned_admin_id, status, updatedAt])
+  @@index([ref_type, ref_id])
   @@map("support_tickets")
 }
 
 model SupportMessage {
-  id           BigInt                   @id @default(autoincrement()) @db.BigInt
+  id           BigInt                   @id @default(autoincrement())
   publicId     String                   @unique @default(cuid()) @map("public_id")
-  ticketId     BigInt                   @map("ticket_id") @db.BigInt
+  ticketId     BigInt                   @map("ticket_id")
   senderUserId String?                  @map("sender_user_id") @db.Uuid
   senderType   SupportMessageSenderType @map("sender_type")
-  content      String                   @db.Text
-  imageUrl     String?                  @map("image_url") @db.Text
+  content      String
+  imageUrl     String?                  @map("image_url")
   isAutoReply  Boolean                  @default(false) @map("is_auto_reply")
   createdAt    DateTime                 @default(now()) @map("created_at")
-
-  ticket SupportTicket @relation(fields: [ticketId], references: [id], onDelete: Cascade)
-  sender User?         @relation("SupportMessageSender", fields: [senderUserId], references: [id], onDelete: SetNull)
+  sender       User?                    @relation("SupportMessageSender", fields: [senderUserId], references: [id])
+  ticket       SupportTicket            @relation(fields: [ticketId], references: [id], onDelete: Cascade)
 
   @@index([ticketId, createdAt])
   @@map("support_messages")
@@ -1970,8 +1678,7 @@ model MonthlyRechargeAggregate {
   totalRechargeCoins BigInt   @default(0) @map("total_recharge_coins")
   rechargeCount      Int      @default(0) @map("recharge_count")
   lastRechargeAt     DateTime @default(now()) @map("last_recharge_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user               User     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, year, month])
   @@index([year, month, totalRechargeCoins(sort: Desc)])
@@ -1987,8 +1694,7 @@ model UserRichTier {
   carryoverCoins         BigInt    @default(0) @map("carryover_coins")
   lastRolledOverAt       DateTime? @map("last_rolled_over_at")
   updatedAt              DateTime  @updatedAt @map("updated_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                   User      @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([currentTier, evaluatedFromYear, evaluatedFromMonth])
   @@map("user_rich_tier")
@@ -2003,8 +1709,7 @@ model RichTierHistory {
   carryoverApplied   BigInt   @map("carryover_applied")
   pureRechargeCoins  BigInt   @map("pure_recharge_coins")
   createdAt          DateTime @default(now()) @map("created_at")
-
-  user User @relation("RichTierHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
+  user               User     @relation("RichTierHistoryUser", fields: [userId], references: [id], onDelete: Cascade)
 
   @@id([userId, year, month])
   @@index([year, month, tier])
@@ -2021,26 +1726,34 @@ model RichTierConfig {
 }
 
 model UserFaceProfile {
-  id                 String            @id @default(uuid()) @db.Uuid
-  userId             String            @unique @map("user_id") @db.Uuid
-  collectionId       String            @map("collection_id")
-  rekognitionFaceId  String?           @unique @map("rekognition_face_id")
-  duplicateOfUserId  String?           @map("duplicate_of_user_id") @db.Uuid
-  s3KeyReference     String            @map("s3_key_reference")
-  imageQualityScore  Float?            @map("image_quality_score")
-  livenessConfidence Float?            @map("liveness_confidence")
-  status             FaceProfileStatus @default(PENDING_INDEX)
-  failureReason      String?           @map("failure_reason")
-  indexedAt          DateTime?         @map("indexed_at")
-  lastVerifiedAt     DateTime?         @map("last_verified_at")
-  revokedAt          DateTime?         @map("revoked_at")
-  createdAt          DateTime          @default(now()) @map("created_at")
-  updatedAt          DateTime          @updatedAt @map("updated_at")
-
-  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
-  livePhotoLinks UserLivePhoto[]
+  id                                              String                     @id @default(uuid()) @db.Uuid
+  userId                                          String                     @unique @map("user_id") @db.Uuid
+  collectionId                                    String                     @map("collection_id")
+  rekognitionFaceId                               String?                    @unique @map("rekognition_face_id")
+  duplicateOfUserId                               String?                    @map("duplicate_of_user_id") @db.Uuid
+  s3KeyReference                                  String                     @map("s3_key_reference")
+  imageQualityScore                               Float?                     @map("image_quality_score")
+  livenessConfidence                              Float?                     @map("liveness_confidence")
+  status                                          FaceProfileStatus          @default(PENDING_INDEX)
+  failureReason                                   String?                    @map("failure_reason")
+  indexedAt                                       DateTime?                  @map("indexed_at")
+  lastVerifiedAt                                  DateTime?                  @map("last_verified_at")
+  revokedAt                                       DateTime?                  @map("revoked_at")
+  createdAt                                       DateTime                   @default(now()) @map("created_at")
+  updatedAt                                       DateTime                   @updatedAt @map("updated_at")
+  detected_gender                                 String?                    @db.VarChar(50)
+  face_match_similarity                           Float?
+  gender_updated_at                               DateTime?
+  matched_user_id                                 String?                    @db.Uuid
+  moderation_labels                               Json?
+  quality_checks_passed                           Json?
+  face_profile_revocations                        face_profile_revocations[]
+  users_user_face_profiles_matched_user_idTousers User?                      @relation("user_face_profiles_matched_user_idTousers", fields: [matched_user_id], references: [id])
+  user                                            User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
+  livePhotoLinks                                  UserLivePhoto[]
 
   @@index([status])
+  @@index([matched_user_id])
   @@map("user_face_profiles")
 }
 
@@ -2057,8 +1770,7 @@ model FaceVerificationAttempt {
   clientRequestId      String?                  @map("client_request_id") @db.Uuid
   latencyMs            Int?                     @map("latency_ms")
   createdAt            DateTime                 @default(now()) @map("created_at")
-
-  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  user                 User                     @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@unique([userId, clientRequestId])
   @@index([userId, createdAt(sort: Desc)])
@@ -2067,48 +1779,764 @@ model FaceVerificationAttempt {
 }
 
 model UserLivePhoto {
-  id                String                     @id @default(uuid()) @db.Uuid
-  userId            String                     @unique @map("user_id") @db.Uuid
-  s3Key             String                     @map("s3_key") @db.Text
-  s3Bucket          String                     @map("s3_bucket") @db.VarChar(255)
-  imageUrl          String?                    @map("image_url") @db.Text
-  verificationState LivePhotoVerificationState @map("verification_state")
-  similarityScore   Float?                     @map("similarity_score")
-  verifiedAt        DateTime?                  @map("verified_at")
-  failedReason      String?                    @map("failed_reason") @db.Text
-  faceProfileId     String?                    @map("face_profile_id") @db.Uuid
+  id                    String                         @id @default(uuid()) @db.Uuid
+  userId                String                         @unique @map("user_id") @db.Uuid
+  s3Key                 String                         @map("s3_key")
+  s3Bucket              String                         @map("s3_bucket") @db.VarChar(255)
+  imageUrl              String?                        @map("image_url")
+  verificationState     LivePhotoVerificationState     @map("verification_state")
+  similarityScore       Float?                         @map("similarity_score")
+  verifiedAt            DateTime?                      @map("verified_at")
+  failedReason          String?                        @map("failed_reason")
+  faceProfileId         String?                        @map("face_profile_id") @db.Uuid
   /// Incremented on each verify enqueue; worker ignores stale generations (latest upload wins).
-  verifyGeneration  Int                        @default(0) @map("verify_generation")
-  createdAt         DateTime                   @default(now()) @map("created_at")
-  updatedAt         DateTime                   @updatedAt @map("updated_at")
-
-  user        User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
-  faceProfile UserFaceProfile?               @relation(fields: [faceProfileId], references: [id], onDelete: SetNull)
-  attempts    LivePhotoVerificationAttempt[]
+  verifyGeneration      Int                            @default(0) @map("verify_generation")
+  createdAt             DateTime                       @default(now()) @map("created_at")
+  updatedAt             DateTime                       @updatedAt @map("updated_at")
+  pending_s3_key        String?
+  pending_s3_bucket     String?                        @db.VarChar(255)
+  replace_failed_reason String?
+  attempts              LivePhotoVerificationAttempt[]
+  faceProfile           UserFaceProfile?               @relation(fields: [faceProfileId], references: [id])
+  user                  User                           @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([verificationState])
   @@map("user_live_photos")
 }
 
 model LivePhotoVerificationAttempt {
-  id                   String   @id @default(uuid()) @db.Uuid
-  userId               String   @map("user_id") @db.Uuid
-  livePhotoId          String   @map("live_photo_id") @db.Uuid
-  similarityScore      Float?   @map("similarity_score")
-  matched              Boolean  @default(false)
-  rekognitionRequestId String?  @map("rekognition_request_id") @db.VarChar(128)
-  failureReason        String?  @map("failure_reason") @db.Text
-  metadata             Json?    @db.JsonB
-  processingLatencyMs  Int?     @map("processing_latency_ms")
-  rekognitionLatencyMs Int?     @map("rekognition_latency_ms")
-  createdAt            DateTime @default(now()) @map("created_at")
-
-  user      User          @relation(fields: [userId], references: [id], onDelete: Cascade)
-  livePhoto UserLivePhoto @relation(fields: [livePhotoId], references: [id], onDelete: Cascade)
+  id                   String        @id @default(uuid()) @db.Uuid
+  userId               String        @map("user_id") @db.Uuid
+  livePhotoId          String        @map("live_photo_id") @db.Uuid
+  similarityScore      Float?        @map("similarity_score")
+  matched              Boolean       @default(false)
+  rekognitionRequestId String?       @map("rekognition_request_id") @db.VarChar(128)
+  failureReason        String?       @map("failure_reason")
+  metadata             Json?
+  processingLatencyMs  Int?          @map("processing_latency_ms")
+  rekognitionLatencyMs Int?          @map("rekognition_latency_ms")
+  createdAt            DateTime      @default(now()) @map("created_at")
+  livePhoto            UserLivePhoto @relation(fields: [livePhotoId], references: [id], onDelete: Cascade)
+  user                 User          @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([userId, createdAt(sort: Desc)])
   @@index([livePhotoId, createdAt(sort: Desc)])
   @@map("live_photo_verification_attempts")
+}
+
+model FaceRegistrationSession {
+  id                     String                        @id @default(uuid()) @db.Uuid
+  userId                 String                        @map("user_id") @db.Uuid
+  status                 FaceRegistrationSessionStatus @default(PENDING)
+  /// Amazon Rekognition Face Liveness `SessionId` from CreateFaceLivenessSession.
+  awsSessionId           String?                       @map("aws_session_id") @db.VarChar(128)
+  /// UX + audit: ordered challenge hints (randomized server-side); AWS SDK performs its own challenge.
+  challengeSequence      Json                          @map("challenge_sequence")
+  challengeNonce         String                        @map("challenge_nonce") @db.VarChar(64)
+  supplementalVideoS3Key String?                       @map("supplemental_video_s3_key")
+  uploadNonce            String?                       @map("upload_nonce") @db.VarChar(64)
+  riskScore              Float                         @default(0) @map("risk_score")
+  deviceMetadata         Json?                         @map("device_metadata")
+  ipAddress              String?                       @map("ip_address") @db.VarChar(64)
+  failureReason          String?                       @map("failure_reason")
+  livenessConfidence     Float?                        @map("liveness_confidence")
+  rekognitionRawStatus   String?                       @map("rekognition_raw_status") @db.VarChar(32)
+  idempotencyKey         String?                       @map("idempotency_key") @db.Uuid
+  awsRequestId           String?                       @map("aws_request_id") @db.VarChar(128)
+  expiresAt              DateTime                      @map("expires_at")
+  verifiedAt             DateTime?                     @map("verified_at")
+  indexedAt              DateTime?                     @map("indexed_at")
+  createdAt              DateTime                      @default(now()) @map("created_at")
+  updatedAt              DateTime                      @updatedAt @map("updated_at")
+  auditLogs              FaceRegistrationAuditLog[]
+  user                   User                          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, status])
+  @@index([userId, createdAt(sort: Desc)])
+  @@index([expiresAt])
+  @@map("face_registration_sessions")
+}
+
+model FaceRegistrationAuditLog {
+  id                       String                  @id @default(uuid()) @db.Uuid
+  sessionId                String                  @map("session_id") @db.Uuid
+  userId                   String                  @map("user_id") @db.Uuid
+  action                   String                  @db.VarChar(64)
+  details                  Json?
+  ipAddress                String?                 @map("ip_address") @db.VarChar(64)
+  userAgent                String?                 @map("user_agent")
+  latencyMs                Int?                    @map("latency_ms")
+  createdAt                DateTime                @default(now()) @map("created_at")
+  content_policy_violation Boolean?
+  detected_gender          String?                 @db.VarChar(50)
+  duplicate_match_user_id  String?                 @db.Uuid
+  gender_auto_updated      Boolean?
+  quality_check_failures   String[]                @default([])
+  session                  FaceRegistrationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
+  user                     User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([sessionId, createdAt(sort: Desc)])
+  @@index([userId, createdAt(sort: Desc)])
+  @@map("face_registration_audit_logs")
+}
+
+model Questionnaire {
+  id                String                     @id @default(uuid()) @db.Uuid
+  key               String
+  title             String
+  description       String?
+  version           Int                        @default(1)
+  isActive          Boolean                    @default(true) @map("is_active")
+  requireAllCorrect Boolean                    @default(true) @map("require_all_correct")
+  createdAt         DateTime                   @default(now()) @map("created_at")
+  updatedAt         DateTime                   @updatedAt @map("updated_at")
+  createdById       String?                    @map("created_by_id") @db.Uuid
+  updatedById       String?                    @map("updated_by_id") @db.Uuid
+  questions         QuestionnaireQuestion[]
+  attempts          UserQuestionnaireAttempt[]
+
+  @@unique([key, version])
+  @@index([key, isActive])
+  @@map("questionnaires")
+}
+
+model QuestionnaireQuestion {
+  id              String                    @id @default(uuid()) @db.Uuid
+  questionnaireId String                    @map("questionnaire_id") @db.Uuid
+  text            String
+  order           Int
+  options         QuestionnaireOption[]
+  questionnaire   Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  answers         UserQuestionnaireAnswer[]
+
+  @@unique([questionnaireId, order])
+  @@map("questionnaire_questions")
+}
+
+model QuestionnaireOption {
+  id         String                @id @default(uuid()) @db.Uuid
+  questionId String                @map("question_id") @db.Uuid
+  label      String
+  value      String
+  isCorrect  Boolean               @default(false) @map("is_correct")
+  order      Int
+  question   QuestionnaireQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
+
+  @@unique([questionId, value])
+  @@unique([questionId, order])
+  @@map("questionnaire_options")
+}
+
+model UserQuestionnaireAttempt {
+  id                   String                    @id @default(uuid()) @db.Uuid
+  userId               String                    @map("user_id") @db.Uuid
+  questionnaireId      String                    @map("questionnaire_id") @db.Uuid
+  questionnaireVersion Int                       @map("questionnaire_version")
+  totalQuestions       Int                       @map("total_questions")
+  correctCount         Int                       @map("correct_count")
+  allCorrect           Boolean                   @map("all_correct")
+  completedAt          DateTime                  @default(now()) @map("completed_at")
+  answers              UserQuestionnaireAnswer[]
+  questionnaire        Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
+  user                 User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId, questionnaireId, completedAt(sort: Desc)])
+  @@index([userId, questionnaireId, questionnaireVersion, allCorrect])
+  @@map("user_questionnaire_attempts")
+}
+
+model UserQuestionnaireAnswer {
+  id               String                   @id @default(uuid()) @db.Uuid
+  attemptId        String                   @map("attempt_id") @db.Uuid
+  questionId       String                   @map("question_id") @db.Uuid
+  selectedOptionId String?                  @map("selected_option_id") @db.Uuid
+  selectedValue    String?                  @map("selected_value")
+  isCorrect        Boolean                  @map("is_correct")
+  attempt          UserQuestionnaireAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
+  question         QuestionnaireQuestion    @relation(fields: [questionId], references: [id])
+
+  @@unique([attemptId, questionId])
+  @@map("user_questionnaire_answers")
+}
+
+model ServiceRequest {
+  id        String   @id @default(cuid())
+  userId    String
+  serviceId String
+  provider  String?
+  status    String   @default("pending")
+  payload   Json?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model LiveStream {
+  id            String    @id @default(uuid())
+  userId        String    @map("user_id")
+  title         String
+  heading       String?   @db.VarChar(100)
+  coverImageUrl String?   @map("cover_image_url")
+  streamId      String    @unique @map("stream_id")
+  streamKey     String    @map("stream_key")
+  playbackId    String?   @map("playback_id")
+  isLive        Boolean   @default(false) @map("is_live")
+  startedAt                DateTime? @map("started_at")
+  endedAt                  DateTime? @map("ended_at")
+  effectiveDurationSeconds Int       @default(0) @map("effective_duration_seconds")
+  createdAt                DateTime  @default(now()) @map("created_at")
+  updatedAt                DateTime  @updatedAt @map("updated_at")
+
+  @@map("live_streams")
+}
+
+model LiveMessage {
+  id               String   @id @default(uuid())
+  streamId         String
+  senderId         String
+  message          String
+  createdAt        DateTime @default(now())
+  replyToMessageId String?  @map("reply_to_message_id")
+  replyToText      String?  @map("reply_to_text")
+  replyToUserId    String?  @map("reply_to_user_id")
+  replyToUsername  String?  @map("reply_to_username")
+}
+
+model StreamViewer {
+  id       String   @id @default(uuid())
+  streamId String
+  userId   String
+  joinedAt DateTime @default(now())
+
+  @@unique([streamId, userId])
+}
+
+model BannedWord {
+  id        String   @id @default(uuid()) @db.Uuid
+  word      String   @unique @db.VarChar(100)
+  isActive  Boolean  @default(true) @map("is_active")
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+
+  @@map("banned_words")
+}
+
+model LiveStreamModerationLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  streamId      String   @map("stream_id")
+  detectedLabel String   @map("detected_label") @db.VarChar(255)
+  confidence    Float
+  action        String   @db.VarChar(50)
+  s3Key         String?  @map("s3_key") @db.VarChar(512)
+  s3Bucket      String?  @map("s3_bucket") @db.VarChar(255)
+  checkedAt     DateTime @default(now()) @map("checked_at")
+
+  @@index([streamId])
+  @@map("live_stream_moderation_logs")
+}
+
+model HostStreamBan {
+  id             String   @id @default(uuid()) @db.Uuid
+  userId         String   @map("user_id") @db.Uuid
+  streamId       String   @map("stream_id") @db.Uuid
+  banNumber      Int      @map("ban_number")
+  banDuration    Int      @map("ban_duration_hours")
+  suspendedUntil DateTime @map("suspended_until")
+  createdAt      DateTime @default(now()) @map("created_at")
+
+  user User @relation("UserHostBans", fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+  @@map("host_stream_bans")
+}
+
+model admin_sessions {
+  id            String        @id
+  admin_id      String
+  token_hash    String
+  ip_address    String?
+  user_agent    String?
+  expires_at    DateTime
+  revoked_at    DateTime?
+  created_at    DateTime      @default(now())
+  system_admins system_admins @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+
+  @@index([admin_id])
+  @@index([token_hash])
+}
+
+model admin_view_assignments {
+  id                   String        @id
+  admin_id             String
+  view_id              String
+  assigned_by_admin_id String?
+  created_at           DateTime      @default(now())
+  system_admins        system_admins @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  admin_views          admin_views   @relation(fields: [view_id], references: [id], onDelete: Cascade)
+
+  @@unique([admin_id, view_id])
+  @@index([view_id])
+}
+
+model admin_views {
+  id                     String                   @id
+  name                   String                   @unique @db.VarChar(100)
+  endpoints              String[]                 @default([])
+  created_by_admin_id    String?
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime
+  admin_view_assignments admin_view_assignments[]
+}
+
+model banned_devices {
+  device_id          String   @id @db.VarChar(255)
+  reason             String?  @db.VarChar(500)
+  banned_by_admin_id String?  @db.Uuid
+  related_user_id    String?  @db.Uuid
+  banned_at          DateTime @default(now())
+
+  @@index([related_user_id])
+}
+
+model banners {
+  id                  String   @id @db.Uuid
+  title               String   @db.VarChar(200)
+  image_url           String
+  position            String   @db.VarChar(100)
+  start_at            DateTime
+  end_at              DateTime
+  enabled             Boolean  @default(true)
+  created_by_admin_id String?  @db.Uuid
+  created_at          DateTime @default(now())
+  updated_at          DateTime
+
+  @@index([created_at(sort: Desc)])
+  @@index([enabled, start_at, end_at])
+  @@index([position])
+}
+
+model csa_notifications {
+  id              BigInt              @id @default(autoincrement())
+  admin_id        String
+  type            CsaNotificationType
+  ticket_id       BigInt?
+  report_id       String?
+  message         String              @db.VarChar(500)
+  is_read         Boolean             @default(false)
+  read_at         DateTime?
+  created_at      DateTime            @default(now())
+  system_admins   system_admins       @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  support_tickets SupportTicket?      @relation(fields: [ticket_id], references: [id])
+
+  @@index([admin_id, is_read, created_at(sort: Desc)])
+}
+
+model custom_gift_config {
+  id                  Int      @id @default(1)
+  coin_cost           BigInt   @default(100000)
+  coin_cost_1_month   Int?
+  coin_cost_3_months  Int?
+  enabled             Boolean  @default(true)
+  description         String?
+  updated_at          DateTime
+  updated_by_admin_id String?  @db.Uuid
+}
+
+model custom_gift_requests {
+  id                                                                                   String                  @id @db.Uuid
+  user_id                                                                              String                  @db.Uuid
+  whatsapp_number                                                                      String                  @db.VarChar(32)
+  note                                                                                 String?
+  coin_cost                                                                            BigInt
+  validity_days                                                                        Int?
+  ledger_entry_id                                                                      String                  @unique @db.Uuid
+  status                                                                               CustomGiftRequestStatus @default(PENDING)
+  gift_id                                                                              String?                 @db.Uuid
+  admin_note                                                                           String?
+  failure_reason                                                                       String?
+  refunded                                                                             Boolean                 @default(false)
+  refund_ledger_entry_id                                                               String?                 @db.Uuid
+  resolved_by_admin_id                                                                 String?                 @db.Uuid
+  resolved_at                                                                          DateTime?
+  created_at                                                                           DateTime                @default(now())
+  updated_at                                                                           DateTime
+  gifts                                                                                Gift?                   @relation(fields: [gift_id], references: [id])
+  coin_ledger_entries_custom_gift_requests_ledger_entry_idTocoin_ledger_entries        CoinLedgerEntry         @relation("custom_gift_requests_ledger_entry_idTocoin_ledger_entries", fields: [ledger_entry_id], references: [id])
+  coin_ledger_entries_custom_gift_requests_refund_ledger_entry_idTocoin_ledger_entries CoinLedgerEntry?        @relation("custom_gift_requests_refund_ledger_entry_idTocoin_ledger_entries", fields: [refund_ledger_entry_id], references: [id], onDelete: Restrict)
+  users                                                                                User                    @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([status, created_at(sort: Desc)])
+  @@index([user_id, created_at(sort: Desc)])
+}
+
+model face_profile_revocations {
+  id                  String           @id @db.Uuid
+  user_id             String           @db.Uuid
+  face_profile_id     String?          @db.Uuid
+  revoked_by_user_id  String?          @db.Uuid
+  revoked_by_admin_id String?          @db.Uuid
+  revoke_reason       String?
+  rekognition_face_id String?          @db.VarChar(128)
+  revoked_at          DateTime         @default(now())
+  user_face_profiles  UserFaceProfile? @relation(fields: [face_profile_id], references: [id])
+  users               User             @relation(fields: [user_id], references: [id], onDelete: Cascade)
+
+  @@index([revoked_at(sort: Desc)])
+  @@index([user_id])
+}
+
+model gift_categories {
+  id            String   @id @db.Uuid
+  name          String   @db.VarChar(255)
+  slug          String   @unique @db.VarChar(64)
+  display_order Int      @default(0)
+  is_active     Boolean  @default(true)
+  created_at    DateTime @default(now())
+  updated_at    DateTime
+  gifts         Gift[]
+
+  @@index([display_order])
+  @@index([is_active])
+}
+
+model otp_delivery_audits {
+  id                  String   @id @db.Uuid
+  user_id             String?  @db.Uuid
+  purpose             String   @db.VarChar(50)
+  means               String   @db.VarChar(20)
+  provider            String?  @db.VarChar(40)
+  status              String   @db.VarChar(20)
+  target_type         String   @db.VarChar(20)
+  target_masked       String   @db.VarChar(255)
+  charge_minor        Int      @default(0)
+  charge_currency     String   @default("INR") @db.VarChar(3)
+  provider_message_id String?  @db.VarChar(255)
+  fallback_from       String?  @db.VarChar(40)
+  route_reason        String?  @db.VarChar(60)
+  error               String?  @db.VarChar(500)
+  created_at          DateTime @default(now())
+  country             String?  @db.VarChar(100)
+  users               User?    @relation(fields: [user_id], references: [id])
+
+  @@index([country, created_at(sort: Desc)])
+  @@index([created_at(sort: Desc)])
+  @@index([means, created_at(sort: Desc)])
+  @@index([purpose, created_at(sort: Desc)])
+  @@index([status, created_at(sort: Desc)])
+  @@index([user_id, created_at(sort: Desc)])
+}
+
+model otp_delivery_config {
+  id                       Int      @id @default(1)
+  sms_trigger_interval_sec Int      @default(120)
+  updated_at               DateTime
+  updated_by_user_id       String?  @db.Uuid
+}
+
+model support_ticket_notes {
+  id              BigInt        @id @default(autoincrement())
+  ticket_id       BigInt
+  admin_id        String
+  content         String
+  created_at      DateTime      @default(now())
+  system_admins   system_admins @relation(fields: [admin_id], references: [id], onDelete: Cascade)
+  support_tickets SupportTicket @relation(fields: [ticket_id], references: [id], onDelete: Cascade)
+
+  @@index([ticket_id, created_at])
+}
+
+model system_admins {
+  id                     String                   @id
+  email                  String                   @unique
+  password_hash          String
+  role                   AdminRole                @default(MODERATOR)
+  display_name           String
+  is_active              Boolean                  @default(true)
+  username               String?                  @unique @db.VarChar(50)
+  phone                  String?                  @db.VarChar(20)
+  phone_country_code     String?                  @db.VarChar(8)
+  gender                 String?                  @db.VarChar(20)
+  country                String?                  @db.VarChar(100)
+  status                 AdminStatus              @default(ACTIVE)
+  failed_login_count     Int                      @default(0)
+  last_failed_login_at   DateTime?
+  locked_until           DateTime?
+  created_at             DateTime                 @default(now())
+  updated_at             DateTime
+  last_login_at          DateTime?
+  admin_sessions         admin_sessions[]
+  admin_view_assignments admin_view_assignments[]
+  csa_notifications      csa_notifications[]
+  message_reports        MessageReport[]
+  support_ticket_notes   support_ticket_notes[]
+  support_tickets        SupportTicket[]
+}
+
+enum StoreItemCategory {
+  RIDE
+  AVATAR_FRAME
+  CHAT_BUBBLE
+  PROFILE_CARD
+}
+
+enum CreatorSubscriptionStatus {
+  ACTIVE
+  GRACE
+  EXPIRED
+  CANCELLED
+}
+
+enum GuardianTier {
+  SILVER
+  GOLD
+  KING
+}
+
+enum PostVisibility {
+  PUBLIC
+  SUBSCRIBERS_ONLY
+}
+
+enum PostMediaType {
+  IMAGE
+  VIDEO
+}
+
+enum ConversationType {
+  DIRECT
+  GROUP
+  SYSTEM
+  NOTIFICATION
+  TRANSACTIONAL
+}
+
+enum MessageType {
+  TEXT
+  TEXT_COINS
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+  SYSTEM
+  TRANSACTIONAL
+  NOTIFICATION
+  GIFT
+}
+
+enum MediaType {
+  IMAGE
+  VIDEO
+  AUDIO
+  FILE
+}
+
+enum MediaProcessingStatus {
+  NONE
+  PENDING
+  ENQUEUED
+  READY
+  FAILED
+}
+
+enum MediaTranscriptionStatus {
+  NONE
+  PENDING
+  READY
+  FAILED
+}
+
+enum ReportReason {
+  SPAM
+  HARASSMENT
+  INAPPROPRIATE_CONTENT
+  FAKE_ACCOUNT
+  VIOLENCE
+  OTHER
+  GIFT_FRAUD
+  MULTIPLE_ACCOUNT
+  TOP_UP_FRAUD
+  LIVE_BROADCAST_VIOLATION
+  CHILD_SAFETY_VIOLATION
+}
+
+enum ReportStatus {
+  PENDING
+  REVIEWED
+  RESOLVED
+  DISMISSED
+}
+
+enum WalletCurrencyType {
+  COIN
+  POINT
+  TRADING_COIN
+}
+
+enum LedgerDirection {
+  CREDIT
+  DEBIT
+}
+
+enum CoinTxType {
+  TOPUP
+  TRADING_TOPUP
+  GIFT_SEND
+  GIFT_REFUND
+  TRANSFER_OUT
+  TRANSFER_IN
+  TRADING_TRANSFER_OUT
+  TRADING_TRANSFER_IN
+  TRADING_EXCHANGE_FROM_POINTS
+  TRADING_TRANSFER_REVERSAL
+  VIP_PURCHASE
+  VIP_REWARD
+  DAILY_LOGIN
+  WEEKLY_TOPUP
+  PLATFORM_REWARD
+  EXPIRE
+  ADJUSTMENT
+  VIDEO_CALL
+  USERNAME_CHANGE
+  CREATOR_SUBSCRIPTION
+  GUARDIAN_PURCHASE
+  STORE_ITEM_PURCHASE
+  GLOBAL_MESSAGE
+  VIP_MEMBERSHIP_PURCHASE
+  POINT_EXCHANGE_TO_COINS
+  CUSTOM_GIFT_REQUEST
+  CUSTOM_GIFT_REFUND
+}
+
+enum PointTxType {
+  LIVESTREAM_GIFT
+  SUBSCRIPTION
+  GUARDIAN_PURCHASE
+  COMMISSION
+  TRANSFER_IN
+  TRANSFER_OUT
+  PLATFORM_REWARD
+  WITHDRAWAL
+  WITHDRAWAL_REFUND
+  ADJUSTMENT
+  VIDEO_CALL
+  GIFT_RECEIVE
+  AGENCY_FORCE_EXIT_PENALTY
+  AGENT_COMMISSION
+  AGENT_POINT_TRANSFER
+  PAYROLL_PROCESSING_REWARD
+  WITHDRAWAL_ESCROW
+  WITHDRAWAL_ESCROW_SETTLED
+  PAYROLL_HOST_PAYOUT
+  LIVESTREAM_STREAK_REWARD
+}
+
+enum WithdrawalStatus {
+  PENDING
+  KYC_CHECK
+  APPROVED
+  PROCESSING
+  PAID
+  FAILED
+  REJECTED
+  PENDING_PLATFORM
+  DISPUTED
+}
+
+enum VipMembershipTier {
+  DIAMOND
+  SVIP
+}
+
+enum FaceProfileStatus {
+  PENDING_INDEX
+  INDEXED
+  FAILED
+  REVOKED
+  DUPLICATE_FACE
+}
+
+enum FaceVerificationDecision {
+  PASS
+  FAIL
+  ERROR
+  QUALITY_REJECTED
+  RATE_LIMITED
+}
+
+enum LivePhotoVerificationState {
+  NOT_UPLOADED
+  PENDING_UPLOAD
+  PENDING_VERIFICATION
+  PROCESSING
+  VERIFIED
+  FAILED
+  REJECTED
+}
+
+enum AgencyAgentApplicationStatus {
+  PENDING
+  UNDER_REVIEW
+  MORE_DOCS_REQUIRED
+  APPROVED
+  REJECTED
+}
+
+enum LevelType {
+  WEALTH
+  LIVESTREAM
+}
+
+enum SupportTicketType {
+  CONSULT
+  REPORT_COMPLAINTS
+  FEEDBACK
+  BUSINESS_COOPERATION
+}
+
+enum SupportTicketStatus {
+  OPEN
+  AWAITING_REPLY
+  CLOSED
+  ASSIGNED
+  PENDING_REVIEW
+}
+
+enum SupportMessageSenderType {
+  USER
+  SUPPORT
+}
+
+enum AgencyApplicationStatus {
+  PENDING
+  ACCEPTED
+  REJECTED
+  CANCELLED
+}
+
+enum AgencyLeaveApplicationStatus {
+  PENDING
+  APPROVED
+  REJECTED
+  LATE_APPROVED
+  AUTO_APPROVED
+  CANCELLED
+}
+
+enum AgencyHostHistoryReason {
+  LEAVE_APPROVED
+  LEAVE_AUTO_APPROVED
+  LEAVE_LATE_APPROVED
+  REMOVED_INACTIVE
+  REMOVED_SUSPENDED
+  CS_FORCE_EXIT
+  AGENT_DELETED
+  HOST_DELETED
+  ADMIN_FORCE_EXIT
+  AGENCY_BANNED
+}
+
+enum AgencyTransferChannel {
+  BANK
+  EPAY
 }
 
 /// Active liveness-gated first registration (AWS Face Liveness → reference image → `PENDING_INDEX` → worker-face-index).
@@ -2122,194 +2550,88 @@ enum FaceRegistrationSessionStatus {
   INDEXED
   REJECTED
   EXPIRED
+  VALIDATION_FAILED
 }
 
-model FaceRegistrationSession {
-  id                     String                        @id @default(uuid()) @db.Uuid
-  userId                 String                        @map("user_id") @db.Uuid
-  status                 FaceRegistrationSessionStatus @default(PENDING)
-  /// Amazon Rekognition Face Liveness `SessionId` from CreateFaceLivenessSession.
-  awsSessionId           String?                       @map("aws_session_id") @db.VarChar(128)
-  /// UX + audit: ordered challenge hints (randomized server-side); AWS SDK performs its own challenge.
-  challengeSequence      Json                          @map("challenge_sequence")
-  challengeNonce         String                        @map("challenge_nonce") @db.VarChar(64)
-  supplementalVideoS3Key String?                       @map("supplemental_video_s3_key") @db.Text
-  uploadNonce            String?                       @map("upload_nonce") @db.VarChar(64)
-  riskScore              Float                         @default(0) @map("risk_score")
-  deviceMetadata         Json?                         @map("device_metadata")
-  ipAddress              String?                       @map("ip_address") @db.VarChar(64)
-  failureReason          String?                       @map("failure_reason") @db.Text
-  livenessConfidence     Float?                        @map("liveness_confidence")
-  rekognitionRawStatus   String?                       @map("rekognition_raw_status") @db.VarChar(32)
-  idempotencyKey         String?                       @map("idempotency_key") @db.Uuid
-  awsRequestId           String?                       @map("aws_request_id") @db.VarChar(128)
-  expiresAt              DateTime                      @map("expires_at")
-  verifiedAt             DateTime?                     @map("verified_at")
-  indexedAt              DateTime?                     @map("indexed_at")
-  createdAt              DateTime                      @default(now()) @map("created_at")
-  updatedAt              DateTime                      @updatedAt @map("updated_at")
-
-  user      User                       @relation(fields: [userId], references: [id], onDelete: Cascade)
-  auditLogs FaceRegistrationAuditLog[]
-
-  @@index([userId, status])
-  @@index([userId, createdAt(sort: Desc)])
-  @@index([expiresAt])
-  @@map("face_registration_sessions")
+enum AdminRole {
+  SUPER_ADMIN
+  MODERATOR
+  FINANCE
+  CONTENT
+  CUSTOMER_SUPPORT
 }
 
-model FaceRegistrationAuditLog {
+enum AdminStatus {
+  ACTIVE
+  DISABLED
+  SUSPENDED
+}
+
+enum CsaNotificationType {
+  TICKET_ASSIGNED
+  TICKET_REPLY
+  TICKET_REASSIGNED
+  TICKET_ESCALATED
+  REPORT_ASSIGNED
+}
+
+enum CustomGiftRequestStatus {
+  PENDING
+  COMPLETED
+  FAILED
+}
+
+enum ReportContext {
+  CHAT
+  LIVE
+}
+
+enum SupportTicketPriority {
+  LOW
+  NORMAL
+  HIGH
+  URGENT
+}
+
+enum SupportTicketResolution {
+  RESOLVED
+  REJECTED
+}
+
+model CountryLanguageMapping {
   id        String   @id @default(uuid()) @db.Uuid
-  sessionId String   @map("session_id") @db.Uuid
-  userId    String   @map("user_id") @db.Uuid
-  action    String   @db.VarChar(64)
-  details   Json?
-  ipAddress String?  @map("ip_address") @db.VarChar(64)
-  userAgent String?  @map("user_agent") @db.Text
-  latencyMs Int?     @map("latency_ms")
+  country   String   @unique @db.VarChar(100)
+  language  String   @db.VarChar(10) // e.g. "en", "ru", "es", "hi"
   createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
-  session FaceRegistrationSession @relation(fields: [sessionId], references: [id], onDelete: Cascade)
-  user    User                    @relation(fields: [userId], references: [id], onDelete: Cascade)
-
-  @@index([sessionId, createdAt(sort: Desc)])
-  @@index([userId, createdAt(sort: Desc)])
-  @@map("face_registration_audit_logs")
+  @@map("country_language_mappings")
 }
 
-model Questionnaire {
-  id                String   @id @default(uuid()) @db.Uuid
-  key               String
-  title             String
-  description       String?
-  version           Int      @default(1)
-  isActive          Boolean  @default(true) @map("is_active")
-  requireAllCorrect Boolean  @default(true) @map("require_all_correct")
-  createdAt         DateTime @default(now()) @map("created_at")
-  updatedAt         DateTime @updatedAt @map("updated_at")
-  createdById       String?  @map("created_by_id") @db.Uuid
-  updatedById       String?  @map("updated_by_id") @db.Uuid
-
-  questions QuestionnaireQuestion[]
-  attempts  UserQuestionnaireAttempt[]
-
-  @@unique([key, version])
-  @@index([key, isActive])
-  @@map("questionnaires")
+enum UserRestrictionType {
+  LIVE_CHAT_MUTE
+  LIVE_AUDIO_MUTE
+  MESSAGING_DISABLE
+  LIVE_STREAM_START_BAN
 }
 
-model QuestionnaireQuestion {
-  id              String @id @default(uuid()) @db.Uuid
-  questionnaireId String @map("questionnaire_id") @db.Uuid
-  text            String
-  order           Int
+model UserRestriction {
+  id                String              @id @default(uuid()) @db.Uuid
+  userId            String              @map("user_id") @db.Uuid
+  type              UserRestrictionType
+  restrictedUntil   DateTime            @map("restricted_until") @db.Timestamptz
+  reason            String?             @db.Text
+  reportId          String?             @map("report_id")
+  createdByAdminId  String              @map("created_by_admin_id")
+  clearedAt         DateTime?           @map("cleared_at") @db.Timestamptz
+  clearedByAdminId  String?             @map("cleared_by_admin_id")
+  createdAt         DateTime            @default(now()) @map("created_at") @db.Timestamptz
+  updatedAt         DateTime            @updatedAt @map("updated_at") @db.Timestamptz
 
-  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
-  options       QuestionnaireOption[]
-  answers       UserQuestionnaireAnswer[]
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
-  @@unique([questionnaireId, order])
-  @@map("questionnaire_questions")
+  @@index([userId, type, clearedAt])
+  @@index([userId, restrictedUntil])
+  @@index([reportId])
+  @@map("user_restrictions")
 }
-
-model QuestionnaireOption {
-  id         String  @id @default(uuid()) @db.Uuid
-  questionId String  @map("question_id") @db.Uuid
-  label      String
-  value      String
-  isCorrect  Boolean @default(false) @map("is_correct")
-  order      Int
-
-  question QuestionnaireQuestion @relation(fields: [questionId], references: [id], onDelete: Cascade)
-
-  @@unique([questionId, value])
-  @@unique([questionId, order])
-  @@map("questionnaire_options")
-}
-
-model UserQuestionnaireAttempt {
-  id                   String   @id @default(uuid()) @db.Uuid
-  userId               String   @map("user_id") @db.Uuid
-  questionnaireId      String   @map("questionnaire_id") @db.Uuid
-  questionnaireVersion Int      @map("questionnaire_version")
-  totalQuestions       Int      @map("total_questions")
-  correctCount         Int      @map("correct_count")
-  allCorrect           Boolean  @map("all_correct")
-  completedAt          DateTime @default(now()) @map("completed_at")
-
-  user          User                      @relation(fields: [userId], references: [id], onDelete: Cascade)
-  questionnaire Questionnaire             @relation(fields: [questionnaireId], references: [id], onDelete: Cascade)
-  answers       UserQuestionnaireAnswer[]
-
-  @@index([userId, questionnaireId, completedAt(sort: Desc)])
-  @@index([userId, questionnaireId, questionnaireVersion, allCorrect])
-  @@map("user_questionnaire_attempts")
-}
-
-model UserQuestionnaireAnswer {
-  id               String  @id @default(uuid()) @db.Uuid
-  attemptId        String  @map("attempt_id") @db.Uuid
-  questionId       String  @map("question_id") @db.Uuid
-  selectedOptionId String? @map("selected_option_id") @db.Uuid
-  selectedValue    String? @map("selected_value")
-  isCorrect        Boolean @map("is_correct")
-
-  attempt  UserQuestionnaireAttempt @relation(fields: [attemptId], references: [id], onDelete: Cascade)
-  question QuestionnaireQuestion    @relation(fields: [questionId], references: [id], onDelete: Restrict)
-
-  @@unique([attemptId, questionId])
-  @@map("user_questionnaire_answers")
-}
-
-model ServiceRequest {
-  id          String   @id @default(cuid())
-  userId      String
-  serviceId   String
-  provider    String?
-  status      String   @default("pending")
-  payload     Json?
-  createdAt   DateTime @default(now())
-  updatedAt   DateTime @updatedAt
-}
-
-model LiveStream {
-  id           String   @id @default(uuid())
-
-  userId       String
-  title        String
-
-  streamId     String   @unique
-  streamKey    String
-  playbackId   String?
-
-  isLive       Boolean  @default(false)
-
-  startedAt    DateTime?
-  endedAt      DateTime?
-
-  createdAt    DateTime @default(now())
-  updatedAt    DateTime @updatedAt
-}
-
-model LiveMessage {
-  id         String   @id @default(uuid())
-
-  streamId   String
-  senderId   String
-
-  message    String
-
-  createdAt  DateTime @default(now())
-}
-
-model StreamViewer {
-  id         String   @id @default(uuid())
-
-  streamId   String
-  userId     String
-
-  joinedAt   DateTime @default(now())
-
-  @@unique([streamId, userId])
-}
-

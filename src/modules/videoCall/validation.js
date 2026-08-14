@@ -20,3 +20,8 @@ export const endCallSchema = Joi.object({
 export const heartbeatSchema = Joi.object({
     sessionId: Joi.string().required()
 });
+
+export const translateTextSchema = Joi.object({
+    text: Joi.string().required(),
+    country: Joi.string().required()
+});

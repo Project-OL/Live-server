@@ -1,5 +1,6 @@
 import { Server } from "socket.io";
 import { setupVideoCallSockets } from "../modules/videoCall/socket.js";
+import { setupLiveSockets } from "../routes/service/socket-live-service.js";
 
 let io;
 
@@ -12,6 +13,7 @@ export const initSocket = (server) => {
     });
 
     setupVideoCallSockets(io);
+    setupLiveSockets(io);
 
     io.on("connection", (socket) => {
         console.log("connected", socket.id);

@@ -29,7 +29,7 @@ export const errorHandler = (err, req, res, next) => {
     statusCode >= 500 && process.env.NODE_ENV === "production"
       ? "Internal Server Error"
       : err.message ?? "Internal Server Error";
-      
+
   console.error(err);
 
   return res.status(statusCode).json({
@@ -37,3 +37,5 @@ export const errorHandler = (err, req, res, next) => {
     error: safeMessage,
   });
 };
+
+export default errorHandler;

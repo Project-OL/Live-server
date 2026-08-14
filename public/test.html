@@ -1,5 +1,6 @@
 <!DOCTYPE html>
 <html lang="en">
+
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
@@ -7,75 +8,325 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        .gift-pop {
+            animation: giftPopUp 3s ease-out forwards;
+        }
+
+        @keyframes giftPopUp {
+            0% {
+                transform: scale(0) translateY(100px);
+                opacity: 0;
+            }
+
+            15% {
+                transform: scale(1.4) translateY(-20px);
+                opacity: 1;
+            }
+
+            30% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            85% {
+                transform: scale(1) translateY(-10px);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.5) translateY(-150px);
+                opacity: 0;
+            }
+        }
+
+        .level-up-toast {
+            animation: levelUpFade 4s ease-in-out forwards;
+        }
+
+        @keyframes levelUpFade {
+            0% {
+                transform: scale(0.8) translateY(50px);
+                opacity: 0;
+            }
+
+            10% {
+                transform: scale(1.1) translateY(0);
+                opacity: 1;
+            }
+
+            15% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            90% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.8) translateY(-50px);
+                opacity: 0;
+            }
+        }
+
+        .custom-scrollbar::-webkit-scrollbar {
+            width: 5px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-track {
+            background: transparent;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb {
+            background: #4b5563;
+            border-radius: 4px;
+        }
+
+        .custom-scrollbar::-webkit-scrollbar-thumb:hover {
+            background: #6b7280;
+        }
+    </style>
 </head>
+
 <body class="bg-gray-900 text-white min-h-screen p-8 font-sans">
     <div class="max-w-5xl mx-auto space-y-6">
-        <div class="text-center">
-            <h1 class="text-4xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-blue-400 to-purple-500 mb-2">Video Call Debugger</h1>
-            <p class="text-gray-400 text-sm">Test end-to-end Socket + LiveKit + REST APIs</p>
+        <!-- Quick Setup -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700 space-y-4">
+            <div class="flex items-center justify-between">
+                <h2 class="text-lg font-bold text-gray-200 flex items-center space-x-2">
+                    <span>⚡ Quick Setup (Select Role)</span>
+                    <span id="loaderText" class="text-xs text-blue-400 font-normal animate-pulse">(Loading test
+                        accounts...)</span>
+                </h2>
+                <button id="btnResetDB"
+                    class="bg-red-900/60 hover:bg-red-800 text-red-200 hover:text-white px-3 py-1.5 rounded-lg text-xs font-semibold border border-red-700 transition flex items-center space-x-1">
+                    <span>🧹</span> <span>Reset DB State</span>
+                </button>
+            </div>
+            <div class="grid grid-cols-1 md:grid-cols-2 gap-4">
+                <button id="btnSelectUserA" disabled
+                    class="bg-gray-900 border border-gray-700 hover:border-green-500 p-4 rounded-xl text-left transition transform hover:scale-[1.01] flex items-center justify-between group disabled:opacity-50">
+                    <div>
+                        <div class="font-bold text-green-400 flex items-center space-x-2">
+                            <span>👤 Caller (User A)</span>
+                            <span
+                                class="bg-green-500/20 text-green-400 text-[10px] px-2 py-0.5 rounded-full font-mono font-normal"
+                                id="usernameA">Loading...</span>
+                        </div>
+                        <p class="text-gray-400 text-xs mt-1 font-mono truncate max-w-[320px]" id="userIdA">ID: ...</p>
+                    </div>
+                    <span class="text-gray-500 group-hover:text-green-400 font-bold text-sm">Use Role &rarr;</span>
+                </button>
+
+                <button id="btnSelectUserB" disabled
+                    class="bg-gray-900 border border-gray-700 hover:border-blue-500 p-4 rounded-xl text-left transition transform hover:scale-[1.01] flex items-center justify-between group disabled:opacity-50">
+                    <div>
+                        <div class="font-bold text-blue-400 flex items-center space-x-2">
+                            <span>👤 Receiver (User B)</span>
+                            <span
+                                class="bg-blue-500/20 text-blue-400 text-[10px] px-2 py-0.5 rounded-full font-mono font-normal"
+                                id="usernameB">Loading...</span>
+                        </div>
+                        <p class="text-gray-400 text-xs mt-1 font-mono truncate max-w-[320px]" id="userIdB">ID: ...</p>
+                    </div>
+                    <span class="text-gray-500 group-hover:text-blue-400 font-bold text-sm">Use Role &rarr;</span>
+                </button>
+            </div>
         </div>
-        
+
+        <!-- Global Message Portal -->
+        <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700 space-y-4">
+            <h2 class="text-sm font-black text-gray-200 tracking-wider uppercase flex items-center space-x-2">
+                <span>📢</span> <span>Broadcast Global Live Message (Costs 2000 Coins)</span>
+            </h2>
+            <div class="flex space-x-3">
+                <input id="globalMsgInput" type="text"
+                    class="flex-1 bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-pink-500 outline-none text-sm"
+                    placeholder="Enter global message text here...">
+                <button id="btnSendGlobalMsg" onclick="triggerSendGlobalMessage()"
+                    class="bg-gradient-to-r from-pink-600 to-red-600 hover:from-pink-500 hover:to-red-500 text-white px-6 py-3 rounded-lg font-bold text-sm transition transform active:scale-95 shadow-lg">
+                    📢 Send Broadcast
+                </button>
+            </div>
+        </div>
+
         <!-- Controls -->
         <div class="bg-gray-800 p-6 rounded-xl shadow-2xl border border-gray-700 grid grid-cols-1 md:grid-cols-3 gap-6">
             <div class="col-span-1 md:col-span-3">
-                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My JWT Token (Required for APIs)</label>
-                <input id="myToken" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono text-green-400" placeholder="eyJhbGciOiJIUzI1...">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My JWT Token
+                    (Required for APIs)</label>
+                <input id="myToken" type="text"
+                    class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono text-green-400"
+                    placeholder="eyJhbGciOiJIUzI1...">
             </div>
             <div>
-                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My User ID</label>
-                <input id="myId" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono" placeholder="My UUID from DB">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">My User
+                    ID</label>
+                <input id="myId" type="text"
+                    class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono"
+                    placeholder="My UUID from DB">
             </div>
             <div>
-                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Target User ID (To Call)</label>
-                <input id="targetId" type="text" class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono" placeholder="Target UUID">
+                <label class="block text-xs font-semibold text-gray-400 uppercase tracking-wider mb-2">Target User ID
+                    (To Call)</label>
+                <input id="targetId" type="text"
+                    class="w-full bg-gray-900 p-3 rounded-lg border border-gray-600 focus:border-blue-500 outline-none text-sm font-mono"
+                    placeholder="Target UUID">
             </div>
             <div class="flex items-end space-x-3">
-                <button id="btnConnect" class="bg-green-600 hover:bg-green-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg flex items-center justify-center">
+                <button id="btnConnect"
+                    class="bg-green-600 hover:bg-green-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg flex items-center justify-center">
                     📡 Connect
                 </button>
-                <button id="btnCall" class="bg-blue-600 hover:bg-blue-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg opacity-50 flex items-center justify-center" disabled>
+                <button id="btnCall"
+                    class="bg-blue-600 hover:bg-blue-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg opacity-50 flex items-center justify-center"
+                    disabled>
                     📞 Call
                 </button>
             </div>
         </div>
 
         <!-- Status Bar -->
-        <div class="bg-gray-800 rounded-xl p-4 text-center shadow-inner border border-gray-700">
-            <span id="statusText" class="text-gray-400 font-bold tracking-wide">Status: Disconnected</span>
+        <div
+            class="bg-gray-800 rounded-xl p-4 flex flex-col md:flex-row items-center justify-between shadow-inner border border-gray-700 space-y-2 md:space-y-0">
+            <div class="flex items-center space-x-4">
+                <span id="statusText" class="text-gray-400 font-bold tracking-wide">Status: Disconnected</span>
+                <span id="callTimer"
+                    class="hidden bg-gray-950 border border-gray-700 text-red-400 font-mono text-sm px-3 py-1.5 rounded-lg font-bold">⏱️
+                    00:00</span>
+            </div>
+            <span id="roleBadge"
+                class="bg-gray-900 border border-gray-700 text-gray-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider">
+                Role: Not Selected
+            </span>
         </div>
 
         <!-- Incoming Call Modal -->
-        <div id="incomingModal" class="hidden bg-gradient-to-r from-red-900/80 to-orange-900/80 p-8 rounded-xl border-2 border-red-500 text-center shadow-[0_0_30px_rgba(239,68,68,0.3)] animate-pulse">
+        <div id="incomingModal"
+            class="hidden bg-gradient-to-r from-red-900/80 to-orange-900/80 p-8 rounded-xl border-2 border-red-500 text-center shadow-[0_0_30px_rgba(239,68,68,0.3)] animate-pulse">
             <div class="animate-bounce mb-4 text-5xl">📱</div>
             <h2 class="text-3xl font-black mb-2 tracking-tight">Incoming Video Call!</h2>
             <p class="mb-6 font-mono text-gray-300 text-sm" id="callerIdText">Caller ID: ...</p>
             <div class="flex justify-center space-x-6">
-                <button id="btnAccept" class="bg-green-500 hover:bg-green-400 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">✅ Accept</button>
-                <button id="btnReject" class="bg-red-600 hover:bg-red-500 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">❌ Reject</button>
+                <button id="btnAccept"
+                    class="bg-green-500 hover:bg-green-400 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">✅
+                    Accept</button>
+                <button id="btnReject"
+                    class="bg-red-600 hover:bg-red-500 px-8 py-3 rounded-full font-extrabold text-white shadow-lg transition transform hover:scale-105">❌
+                    Reject</button>
             </div>
         </div>
 
-        <!-- Video Area -->
-        <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="videoGrid">
-            <div class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center group">
-                <div class="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition"></div>
-                <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Local Video</p>
-                <span class="absolute bottom-4 left-4 z-30 bg-black/60 px-3 py-1 rounded text-xs font-bold hidden" id="localTag">YOU</span>
-                <video id="localVideo" class="relative z-10 w-full h-full object-cover hidden" autoplay muted playsinline></video>
+        <!-- Video & Chat Layout -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+            <!-- Video Columns -->
+            <div class="lg:col-span-2 space-y-6">
+                <div class="grid grid-cols-1 md:grid-cols-2 gap-6" id="videoGrid">
+                    <div
+                        class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center group">
+                        <div
+                            class="absolute inset-0 bg-gradient-to-t from-gray-900 to-transparent z-20 pointer-events-none opacity-0 group-hover:opacity-100 transition">
+                        </div>
+                        <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Local Video</p>
+                        <span
+                            class="absolute bottom-4 left-4 z-30 bg-black/60 px-3 py-1 rounded text-xs font-bold hidden"
+                            id="localTag">YOU</span>
+                        <video id="localVideo" class="relative z-10 w-full h-full object-cover hidden" autoplay muted
+                            playsinline></video>
+                    </div>
+
+                    <div
+                        class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center">
+                        <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Remote Video</p>
+                        <!-- LiveKit injects remote tracks here -->
+                        <div id="remoteVideos"
+                            class="relative z-10 w-full h-full flex flex-wrap items-center justify-center">
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Gift Box Container (Only shown for Caller during active call) -->
+                <div id="giftBoxContainer"
+                    class="hidden bg-gray-800 rounded-xl p-4 border border-gray-700 shadow-2xl flex flex-col space-y-4 transition duration-300">
+                    <div class="flex items-center justify-between border-b border-gray-750 pb-2">
+                        <h3
+                            class="text-xs font-black text-gray-300 tracking-wider uppercase flex items-center space-x-2">
+                            <span>🎁</span> <span>Send Live Gift to Host</span>
+                        </h3>
+                    </div>
+                    <!-- List of gifts -->
+                    <div id="giftsGrid" class="grid grid-cols-3 sm:grid-cols-4 gap-3">
+                        <div class="col-span-full text-center text-xs text-gray-500 py-3 font-semibold animate-pulse">
+                            Loading dynamic gifts...
+                        </div>
+                    </div>
+                    <!-- Send button -->
+                    <div class="flex justify-end pt-1">
+                        <button id="btnSendGift" disabled onclick="triggerSendGift()"
+                            class="bg-gradient-to-r from-pink-600 to-purple-600 hover:from-pink-500 hover:to-purple-500 text-white px-6 py-2.5 rounded-xl text-xs font-black tracking-widest transition transform active:scale-95 disabled:opacity-50 disabled:scale-100 disabled:cursor-not-allowed">
+                            SEND GIFT
+                        </button>
+                    </div>
+                </div>
             </div>
-            
-            <div class="relative bg-gray-950 rounded-xl overflow-hidden border border-gray-700 aspect-video shadow-2xl flex items-center justify-center">
-                <p class="text-gray-600 absolute z-0 font-bold tracking-widest uppercase">Remote Video</p>
-                <!-- LiveKit injects remote tracks here -->
-                <div id="remoteVideos" class="relative z-10 w-full h-full flex flex-wrap items-center justify-center"></div>
+
+            <!-- Chat Sidebar Column -->
+            <div id="chatBoxContainer"
+                class="hidden bg-gray-800 rounded-xl p-4 border border-gray-700 shadow-2xl flex flex-col h-[420px] transition duration-300">
+                <div class="flex items-center justify-between border-b border-gray-750 pb-2 mb-3">
+                    <h3 class="text-xs font-black text-gray-300 tracking-wider uppercase flex items-center space-x-2">
+                        <span class="text-base">💬</span> <span>Live Chat Room</span>
+                    </h3>
+                    <span class="flex items-center space-x-1">
+                        <span class="w-2 h-2 rounded-full bg-green-500 animate-ping"></span>
+                        <span class="text-[10px] text-green-400 font-bold">Active</span>
+                    </span>
+                </div>
+                <!-- Messages List -->
+                <div id="chatMessages" class="flex-1 overflow-y-auto space-y-2.5 p-1 text-xs custom-scrollbar">
+                    <div class="text-center text-gray-500 my-2 font-semibold">Welcome to Live Chat!</div>
+                </div>
+                <!-- Input Box -->
+                <div class="flex items-center space-x-2 border-t border-gray-750 pt-3">
+                    <input id="chatInput" type="text" onkeydown="handleChatKeydown(event)" placeholder="Type message..."
+                        class="flex-1 bg-gray-950 border border-gray-850 focus:border-pink-500 focus:ring-1 focus:ring-pink-500/30 outline-none rounded-xl px-3 py-2 text-xs text-gray-200 transition">
+                    <button onclick="sendChatMessage()"
+                        class="bg-pink-600 hover:bg-pink-500 text-white px-4 py-2 rounded-xl text-xs font-black tracking-wider transition transform active:scale-95">
+                        SEND
+                    </button>
+                </div>
             </div>
         </div>
 
         <!-- Call Actions -->
-        <div class="flex justify-center mt-8 pb-12">
-            <button id="btnEnd" class="hidden bg-red-600 hover:bg-red-500 px-12 py-4 rounded-full font-black tracking-widest shadow-[0_0_20px_rgba(220,38,38,0.5)] transition transform hover:scale-105">
+        <div id="callControls" class="hidden flex items-center justify-center space-x-4 mt-8 pb-12">
+            <button id="btnToggleMic"
+                class="bg-gray-700 hover:bg-gray-600 text-white p-4 rounded-full font-bold shadow-lg transition transform hover:scale-105 flex items-center justify-center space-x-2">
+                <span class="text-xl">🎙️</span>
+                <span id="micText">Mute Mic</span>
+            </button>
+            <button id="btnToggleVideo"
+                class="bg-gray-700 hover:bg-gray-600 text-white p-4 rounded-full font-bold shadow-lg transition transform hover:scale-105 flex items-center justify-center space-x-2">
+                <span class="text-xl">📹</span>
+                <span id="videoText">Video Call</span>
+            </button>
+            <button id="btnEnd"
+                class="bg-red-600 hover:bg-red-500 text-white px-8 py-4 rounded-full font-black tracking-widest shadow-[0_0_20px_rgba(220,38,38,0.5)] transition transform hover:scale-105">
                 END CALL
             </button>
+        </div>
+
+
+
+        <!-- Global Gift Animation Overlay -->
+        <div id="giftAnimationOverlay"
+            class="fixed inset-0 pointer-events-none z-50 flex flex-col items-center justify-center space-y-4"></div>
+
+        <!-- Global Live Message Alert Overlay -->
+        <div id="globalMessageOverlay"
+            class="fixed top-6 left-1/2 transform -translate-x-1/2 pointer-events-none z-50 flex flex-col items-center space-y-3 w-full max-w-xl px-4">
         </div>
     </div>
 
@@ -83,9 +334,17 @@
         let socket;
         let room;
         let currentSessionId = null;
+        let moderationInterval = null;
+        let opponentId = null;
 
-        const API_BASE = "http://localhost:5000/api/video-call";
-        const LIVEKIT_URL = "ws://localhost:7880";
+        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+
+        const SERVER_URL = isLocal
+            ? "http://localhost:5000"
+            : window.location.origin;
+
+        const API_BASE = `${SERVER_URL}/api/video-call`;
+        const LIVEKIT_URL = "wss://ofo-rjyi95u0.livekit.cloud";
 
         const E = {
             token: document.getElementById('myToken'),
@@ -96,12 +355,27 @@
             btnAccept: document.getElementById('btnAccept'),
             btnReject: document.getElementById('btnReject'),
             btnEnd: document.getElementById('btnEnd'),
+            callControls: document.getElementById('callControls'),
+            btnToggleMic: document.getElementById('btnToggleMic'),
+            btnToggleVideo: document.getElementById('btnToggleVideo'),
+            micText: document.getElementById('micText'),
+            videoText: document.getElementById('videoText'),
             statusText: document.getElementById('statusText'),
             incomingModal: document.getElementById('incomingModal'),
             callerIdText: document.getElementById('callerIdText'),
             localVideo: document.getElementById('localVideo'),
             remoteVideos: document.getElementById('remoteVideos'),
-            localTag: document.getElementById('localTag')
+            localTag: document.getElementById('localTag'),
+            btnSelectUserA: document.getElementById('btnSelectUserA'),
+            btnSelectUserB: document.getElementById('btnSelectUserB'),
+            usernameA: document.getElementById('usernameA'),
+            usernameB: document.getElementById('usernameB'),
+            userIdA: document.getElementById('userIdA'),
+            userIdB: document.getElementById('userIdB'),
+            loaderText: document.getElementById('loaderText'),
+            btnResetDB: document.getElementById('btnResetDB'),
+            roleBadge: document.getElementById('roleBadge'),
+            callTimer: document.getElementById('callTimer')
         };
 
         const updateStatus = (text, colorClass = "text-yellow-400") => {
@@ -110,51 +384,261 @@
             console.log(`[Status] ${text}`);
         };
 
+        // --- Quick Setup Action Logic ---
+        let testUsers = [];
+
+        async function loadTestUsers() {
+            try {
+                const res = await fetch(`${API_BASE}/test-users`);
+                const data = await res.json();
+                if (data.success && data.users && data.users.length >= 2) {
+                    testUsers = data.users;
+                    E.usernameA.innerText = testUsers[0].name;
+                    E.userIdA.innerText = `ID: ${testUsers[0].id}`;
+
+                    E.usernameB.innerText = testUsers[1].name;
+                    E.userIdB.innerText = `ID: ${testUsers[1].id}`;
+
+                    E.loaderText.innerText = "🟢 Ready";
+                    E.loaderText.className = "text-xs text-green-400 font-bold";
+
+                    E.btnSelectUserA.disabled = false;
+                    E.btnSelectUserB.disabled = false;
+                    updateRoleDisplay();
+                } else {
+                    E.loaderText.innerText = "❌ Failed to load test users";
+                    E.loaderText.className = "text-xs text-red-400 font-bold animate-none";
+                }
+            } catch (err) {
+                console.error("Failed to fetch test users:", err);
+                E.loaderText.innerText = "❌ Server error (check console)";
+                E.loaderText.className = "text-xs text-red-400 font-bold animate-none";
+            }
+        }
+
+        function updateRoleDisplay() {
+            const myIdVal = E.myId.value.trim();
+            if (!myIdVal) {
+                E.roleBadge.innerText = "Role: Not Selected";
+                E.roleBadge.className = "bg-gray-900 border border-gray-700 text-gray-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+                return;
+            }
+
+            const matchedUser = testUsers.find(u => u.id === myIdVal);
+            if (matchedUser) {
+                E.roleBadge.innerText = `Role: ${matchedUser.name} (You)`;
+                if (matchedUser.name === "sahil") {
+                    E.roleBadge.className = "bg-green-500/20 border border-green-500/50 text-green-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+                } else {
+                    E.roleBadge.className = "bg-blue-500/20 border border-blue-500/50 text-blue-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+                }
+            } else {
+                E.roleBadge.innerText = `Role: Custom User (${myIdVal.substring(0, 8)}...)`;
+                E.roleBadge.className = "bg-gray-800 border border-gray-600 text-yellow-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+            }
+        }
+
+        function resetCallButtonState() {
+            E.btnCall.innerText = "📞 Call";
+            E.btnCall.className = "bg-blue-600 hover:bg-blue-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg flex items-center justify-center";
+        }
+
+        function setCallButtonToEndState() {
+            E.btnCall.innerText = "❌ End Call";
+            E.btnCall.className = "bg-red-600 hover:bg-red-500 px-4 py-3 rounded-lg font-bold w-1/2 transition shadow-lg flex items-center justify-center";
+        }
+
+        function disconnectSocket() {
+            if (socket) {
+                socket.disconnect();
+                socket = null;
+            }
+            E.btnConnect.disabled = false;
+            E.btnConnect.classList.remove('opacity-50');
+
+            E.btnCall.disabled = true;
+            E.btnCall.classList.add('opacity-50');
+            resetCallButtonState();
+        }
+
+        E.btnResetDB.onclick = async () => {
+            try {
+                updateStatus("Resetting DB call state...", "text-yellow-400");
+                const res = await fetch(`${API_BASE}/reset`, { method: 'POST' });
+                const data = await res.json();
+                if (data.success) {
+                    updateStatus("DB Call State Reset Successfully 🧹", "text-green-400");
+                    E.myId.value = "";
+                    E.token.value = "";
+                    E.targetId.value = "";
+                    updateRoleDisplay();
+                    await loadTestUsers();
+                    leaveLiveKitRoom();
+                    disconnectSocket();
+                } else {
+                    updateStatus(`Reset failed: ${data.message}`, "text-red-400");
+                }
+            } catch (err) {
+                updateStatus("Network/Server Error resetting DB", "text-red-500");
+            }
+        };
+
+        E.btnSelectUserA.onclick = () => {
+            if (testUsers.length < 2) return;
+            disconnectSocket();
+            E.token.value = testUsers[0].token;
+            E.myId.value = testUsers[0].id;
+            E.targetId.value = testUsers[1].id;
+            updateStatus("Loaded User A (Caller) 👤", "text-green-400");
+            updateRoleDisplay();
+        };
+
+        E.btnSelectUserB.onclick = () => {
+            if (testUsers.length < 2) return;
+            disconnectSocket();
+            E.token.value = testUsers[1].token;
+            E.myId.value = testUsers[1].id;
+            E.targetId.value = testUsers[0].id;
+            updateStatus("Loaded User B (Receiver) 👤", "text-blue-400");
+            updateRoleDisplay();
+        };
+
+        // Load users on mount
+        loadTestUsers();
+        E.myId.oninput = updateRoleDisplay;
+
         // 1. Connect Socket
         E.btnConnect.onclick = () => {
             const userId = E.myId.value.trim();
-            if(!userId) return alert("Enter My User ID first");
+            if (!userId) return alert("Enter My User ID first");
 
-            socket = io("http://localhost:5000", { auth: { userId } });
+            socket = io(SERVER_URL, { auth: { userId } });
 
             socket.on("connect", () => {
                 updateStatus("Socket Connected 🟢", "text-green-400");
                 E.btnCall.disabled = false;
                 E.btnCall.classList.remove('opacity-50');
+
+                // Disable connect button upon connection
+                E.btnConnect.disabled = true;
+                E.btnConnect.classList.add('opacity-50');
             });
 
             socket.on("CALL_INCOMING", (data) => {
-                updateStatus("Incoming Call Ringing... 🔔", "text-orange-400");
+                updateStatus(`Incoming Call from ${data.callerName || 'User'} (ID: ${data.callerPublicId || 'N/A'})... 🔔`, "text-orange-400");
                 currentSessionId = data.sessionId;
-                E.callerIdText.innerText = `Caller ID: ${data.callerId}`;
+                opponentId = data.callerId;
+                E.callerIdText.innerText = `Caller: ${data.callerName || data.callerId} (Public ID: ${data.callerPublicId || data.callerId})`;
                 E.incomingModal.classList.remove('hidden');
             });
 
             socket.on("CALL_ACCEPTED", async (data) => {
-                updateStatus("Call Accepted! Connecting Video... 🎥", "text-green-400");
+                const partnerInfo = data.receiverPublicId ? ` [Partner ID: ${data.receiverPublicId}]` : '';
+                const rateInfo = data.coinRatePerMin ? ` [Rate: ${data.coinRatePerMin} Coins/min]` : '';
+                updateStatus(`Call Accepted!${partnerInfo}${rateInfo} Connecting Video... 🎥`, "text-green-400");
+                currentSessionId = data.sessionId;
+                setCallButtonToEndState();
                 await joinLiveKitRoom(data.token);
             });
 
             socket.on("CALL_REJECTED", () => {
                 updateStatus("Call Rejected ❌", "text-red-400");
                 currentSessionId = null;
+                resetCallButtonState();
             });
 
-            socket.on("CALL_ENDED", () => {
-                updateStatus("Call Ended by other party ⏹️", "text-gray-400");
+            socket.on("CALL_MISSED", () => {
+                updateStatus("Call Missed/Canceled ➡️", "text-gray-400");
+                E.incomingModal.classList.add('hidden');
+                leaveLiveKitRoom();
+            });
+
+            socket.on("CALL_ENDED", (data) => {
+                const reason = data && data.reason ? data.reason : "";
+                if (reason === "INSUFFICIENT_BALANCE") {
+                    updateStatus("Call Ended: Insufficient balance 🪙", "text-red-400");
+                } else if (reason === "HEARTBEAT_LOST") {
+                    updateStatus("Call Ended: Heartbeat lost 📶", "text-red-400");
+                } else if (reason === "VIOLATION_NUDITY") {
+                    updateStatus("Call Blocked: Nudity Detected 🚫", "text-red-500 font-bold animate-pulse");
+                } else {
+                    updateStatus("Call Ended by other party ⏹️", "text-gray-400");
+                }
                 leaveLiveKitRoom();
             });
 
             socket.on("USER_BUSY", () => {
                 updateStatus("User is busy ⏳", "text-red-400");
             });
+
+            socket.on("MODERATION_WARNING", (data) => {
+                console.warn("[Moderation Warning]", data.message);
+                updateStatus(`⚠️ Warning: Adult Content Detected (${data.confidence.toFixed(1)}%)`, "text-yellow-400 font-bold animate-bounce");
+                setTimeout(() => {
+                    if (currentSessionId === data.sessionId) {
+                        updateStatus("Connected & Streaming 🟢", "text-green-500");
+                    }
+                }, 4000);
+            });
+
+            socket.on("GIFT_SENT", (data) => {
+                console.log("[Gift] Received Gift socket event:", data);
+                if (data.success && data.gift) {
+                    showGiftAnimation(data.senderName, data.gift.name, data.wealthLevel, data.isLevelUp, data.gift.effectUrl);
+                }
+            });
+
+            socket.on("GLOBAL_MESSAGE_SENT", (data) => {
+                console.log("[Global Message] Received global message:", data);
+                showGlobalMessageToast(data.senderName, data.message, data.wealthLevel);
+            });
+
+            socket.on("MINUTE_BILLED", (data) => {
+                console.log("[Billing] Minute Billed Event:", data);
+                if (data.coinsDeductedThisMin) {
+                    updateStatus(`⏱️ Min ${data.minsCharged}: -${data.coinsDeductedThisMin} Coins 🪙 (Total: -${data.totalCoinsDeducted})`, "text-yellow-400 font-bold");
+                } else if (data.pointsEarnedThisMin) {
+                    updateStatus(`⏱️ Min ${data.minsCharged}: +${data.pointsEarnedThisMin} Points 💎 (60% Earned, Total: +${data.totalPointsEarned})`, "text-green-400 font-bold");
+                }
+            });
+
+            socket.on("RECEIVE_MESSAGE", (data) => {
+                console.log("[Chat] Message received:", data);
+                appendChatMessage(data.senderId === E.myId.value.trim() ? "You" : "Opponent", data.text, false);
+            });
+
+            socket.on("disconnect", () => {
+                updateStatus("Socket Disconnected 🔴", "text-red-400");
+                E.btnConnect.disabled = false;
+                E.btnConnect.classList.remove('opacity-50');
+                E.btnCall.disabled = true;
+                E.btnCall.classList.add('opacity-50');
+            });
         };
 
-        // 2. Initiate Call
+        // 2. Initiate/End Call Button
         E.btnCall.onclick = async () => {
+            if (E.btnCall.innerText.includes("End Call")) {
+                const token = E.token.value.trim();
+                updateStatus("Ending/Canceling Call...", "text-yellow-400");
+                try {
+                    await fetch(`${API_BASE}/end`, {
+                        method: 'POST',
+                        headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
+                        body: JSON.stringify({ sessionId: currentSessionId, reason: "MANUAL_END" })
+                    });
+                } catch (e) {
+                    console.error("Cancel call error:", e);
+                }
+                leaveLiveKitRoom();
+                updateStatus("Call Canceled ⏹️", "text-gray-400");
+                return;
+            }
+
             const targetId = E.targetId.value.trim();
             const token = E.token.value.trim();
-            if(!targetId || !token) return alert("Token and Target ID required");
+            if (!targetId || !token) return alert("Token and Target ID required");
+            opponentId = targetId;
 
             try {
                 updateStatus("Initiating Call... ⏳", "text-yellow-400");
@@ -164,10 +648,11 @@
                     body: JSON.stringify({ creatorId: targetId })
                 });
                 const data = await res.json();
-                
-                if(data.success) {
+
+                if (data.success) {
                     updateStatus("Ringing... 🔔", "text-yellow-400");
                     currentSessionId = data.data.id; // Prisma object returned
+                    setCallButtonToEndState();
                 } else {
                     updateStatus(`Call Failed: ${data.message}`, "text-red-400");
                 }
@@ -180,7 +665,7 @@
         E.btnAccept.onclick = async () => {
             const token = E.token.value.trim();
             E.incomingModal.classList.add('hidden');
-            
+
             try {
                 updateStatus("Accepting Call...", "text-yellow-400");
                 const res = await fetch(`${API_BASE}/accept`, {
@@ -189,9 +674,11 @@
                     body: JSON.stringify({ sessionId: currentSessionId })
                 });
                 const data = await res.json();
-                
-                if(data.success) {
-                    updateStatus("Connecting to Video... 🎥", "text-green-400");
+
+                if (data.success) {
+                    const partnerInfo = data.data.callerPublicId ? ` [Partner ID: ${data.data.callerPublicId}]` : '';
+                    const rateInfo = data.data.pointRatePerMin ? ` [Earning: ${data.data.pointRatePerMin} Points/min (60%)]` : '';
+                    updateStatus(`Connecting to Video...${partnerInfo}${rateInfo} 🎥`, "text-green-400");
                     await joinLiveKitRoom(data.data.token);
                 } else {
                     updateStatus(`Failed to accept: ${data.message}`, "text-red-400");
@@ -206,32 +693,153 @@
             const token = E.token.value.trim();
             E.incomingModal.classList.add('hidden');
             updateStatus("Call Rejected ❌", "text-red-400");
-            
+
             await fetch(`${API_BASE}/reject`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ sessionId: currentSessionId })
             });
             currentSessionId = null;
+            resetCallButtonState();
         };
 
         // 5. End Call
         E.btnEnd.onclick = async () => {
             const token = E.token.value.trim();
             updateStatus("Ending Call...", "text-yellow-400");
-            
+
             await fetch(`${API_BASE}/end`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json', 'Authorization': `Bearer ${token}` },
                 body: JSON.stringify({ sessionId: currentSessionId, reason: "MANUAL_END" })
             });
-            
+
             leaveLiveKitRoom();
             updateStatus("Call Ended ⏹️", "text-gray-400");
         };
 
-        // --- LiveKit Connection Logic ---
+        // --- LiveKit Connection Logic & Call Controls ---
+        let isMicMuted = false;
+        let isVideoMuted = false;
+
+        E.btnToggleMic.onclick = async () => {
+            if (!room) return;
+            isMicMuted = !isMicMuted;
+            await room.localParticipant.setMicrophoneEnabled(!isMicMuted);
+
+            if (isMicMuted) {
+                E.btnToggleMic.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+                E.btnToggleMic.classList.add('bg-red-600', 'hover:bg-red-500');
+                E.micText.innerText = "Unmute Mic";
+                updateStatus("Microphone Muted 🔇", "text-yellow-400");
+            } else {
+                E.btnToggleMic.classList.remove('bg-red-600', 'hover:bg-red-500');
+                E.btnToggleMic.classList.add('bg-gray-700', 'hover:bg-gray-600');
+                E.micText.innerText = "Mute Mic";
+                updateStatus("Microphone Active 🎙️", "text-green-400");
+            }
+        };
+
+        E.btnToggleVideo.onclick = async () => {
+            if (!room) return;
+            isVideoMuted = !isVideoMuted;
+            await room.localParticipant.setCameraEnabled(!isVideoMuted);
+
+            if (isVideoMuted) {
+                E.btnToggleVideo.classList.remove('bg-gray-700', 'hover:bg-gray-600');
+                E.btnToggleVideo.classList.add('bg-orange-600', 'hover:bg-orange-500');
+                E.videoText.innerText = "Audio Call (Camera Off)";
+                E.localVideo.classList.add('hidden');
+                E.localTag.classList.add('hidden');
+                updateStatus("Switched to Audio Call (Video Off) 📞", "text-orange-400");
+            } else {
+                E.btnToggleVideo.classList.remove('bg-orange-600', 'hover:bg-orange-500');
+                E.btnToggleVideo.classList.add('bg-gray-700', 'hover:bg-gray-600');
+                E.videoText.innerText = "Video Call";
+                updateStatus("Switched to Video Call 🎥", "text-green-400");
+
+                setTimeout(() => {
+                    const videoTracks = Array.from(room.localParticipant.videoTrackPublications.values());
+                    if (videoTracks.length > 0 && videoTracks[0].track) {
+                        E.localVideo.classList.remove('hidden');
+                        E.localTag.classList.remove('hidden');
+                        videoTracks[0].track.attach(E.localVideo);
+                    }
+                }, 800);
+            }
+        };
+
+        let callTimerInterval = null;
+        let callStartTime = null;
+
+        function startCallTimer() {
+            if (callTimerInterval) clearInterval(callTimerInterval);
+            E.callTimer.classList.remove('hidden');
+            callStartTime = Date.now();
+
+            callTimerInterval = setInterval(() => {
+                const elapsedMs = Date.now() - callStartTime;
+                const totalSeconds = Math.floor(elapsedMs / 1000);
+                const minutes = Math.floor(totalSeconds / 60);
+                const seconds = totalSeconds % 60;
+
+                const mm = String(minutes).padStart(2, '0');
+                const ss = String(seconds).padStart(2, '0');
+                E.callTimer.innerText = `⏱️ ${mm}:${ss}`;
+            }, 1000);
+        }
+
+        function stopCallTimer() {
+            if (callTimerInterval) {
+                clearInterval(callTimerInterval);
+                callTimerInterval = null;
+            }
+            E.callTimer.classList.add('hidden');
+            E.callTimer.innerText = "⏱️ 00:00";
+        }
+
+        let heartbeatInterval = null;
+
+        function startHeartbeat() {
+            if (heartbeatInterval) clearInterval(heartbeatInterval);
+
+            heartbeatInterval = setInterval(async () => {
+                const token = E.token.value.trim();
+                if (!currentSessionId || !token) return;
+
+                try {
+                    const res = await fetch(`${API_BASE}/heartbeat`, {
+                        method: 'POST',
+                        headers: {
+                            'Content-Type': 'application/json',
+                            'Authorization': `Bearer ${token}`
+                        },
+                        body: JSON.stringify({ sessionId: currentSessionId })
+                    });
+                    const data = await res.json();
+                    console.log("[Heartbeat] Sent, status:", res.status, data);
+                    if (!res.ok) {
+                        updateStatus(`Heartbeat Failed (${res.status}): ${data.message || 'Error'}`, "text-red-400");
+                    }
+                } catch (err) {
+                    console.error("[Heartbeat] Send error:", err);
+                    updateStatus(`Heartbeat Network Error: ${err.message}`, "text-red-400");
+                }
+            }, 10000);
+        }
+
+        function stopHeartbeat() {
+            if (heartbeatInterval) {
+                clearInterval(heartbeatInterval);
+                heartbeatInterval = null;
+            }
+        }
+
+
+
         async function joinLiveKitRoom(livekitToken) {
+            startCallTimer();
+            startHeartbeat();
             room = new LivekitClient.Room({
                 adaptiveStream: true,
                 dynacast: true,
@@ -240,7 +848,7 @@
             room.on(LivekitClient.RoomEvent.TrackSubscribed, (track, publication, participant) => {
                 if (track.kind === 'video' || track.kind === 'audio') {
                     const el = track.attach();
-                    if(track.kind === 'video') {
+                    if (track.kind === 'video') {
                         el.className = "w-full h-full object-cover shadow-2xl rounded-xl";
                     }
                     E.remoteVideos.appendChild(el);
@@ -251,35 +859,399 @@
                 track.detach().forEach(el => el.remove());
             });
 
+            room.on(LivekitClient.RoomEvent.Disconnected, () => {
+                console.log("[LiveKit] Room disconnected.");
+                updateStatus("Call Ended ⏹️", "text-gray-400");
+                leaveLiveKitRoom();
+            });
+
             await room.connect(LIVEKIT_URL, livekitToken);
             updateStatus("Connected & Streaming 🟢", "text-green-500");
-            
+
             // Start Local Camera and Mic
             await room.localParticipant.setCameraEnabled(true);
             await room.localParticipant.setMicrophoneEnabled(true);
-            
-            // Attach local video manually (since attach() creates a new element, we just bind to our existing one)
+
+            // Attach local video manually
             const videoTracks = Array.from(room.localParticipant.videoTrackPublications.values());
-            if(videoTracks.length > 0 && videoTracks[0].track) {
+            if (videoTracks.length > 0 && videoTracks[0].track) {
                 E.localVideo.classList.remove('hidden');
                 E.localTag.classList.remove('hidden');
                 videoTracks[0].track.attach(E.localVideo);
             }
 
-            E.btnEnd.classList.remove('hidden');
+            E.callControls.classList.remove('hidden');
+
+            // Show gift box container if we are the Caller (User A)
+            const myIdVal = E.myId.value.trim();
+            const callerIdVal = testUsers.length >= 2 ? testUsers[0].id : null;
+            if (myIdVal === callerIdVal) {
+                document.getElementById("giftBoxContainer").classList.remove("hidden");
+                loadGifts();
+            }
+
+            // Show chat sidebar container (available to both Caller and Receiver)
+            document.getElementById("chatBoxContainer").classList.remove("hidden");
         }
 
         function leaveLiveKitRoom() {
-            if(room) {
+            stopCallTimer();
+            stopHeartbeat();
+            if (room) {
                 room.disconnect();
                 room = null;
             }
             E.localVideo.classList.add('hidden');
             E.localTag.classList.add('hidden');
             E.remoteVideos.innerHTML = '';
-            E.btnEnd.classList.add('hidden');
+            E.callControls.classList.add('hidden');
+
+            // Hide and reset gift controls
+            document.getElementById("giftBoxContainer").classList.add("hidden");
+            selectedGiftId = null;
+            document.getElementById("btnSendGift").disabled = true;
+            document.querySelectorAll(".gift-btn").forEach(btn => {
+                btn.classList.remove("border-pink-500");
+                btn.classList.add("border-gray-800");
+            });
+
+            // Hide and reset chat sidebar container
+            document.getElementById("chatBoxContainer").classList.add("hidden");
+            document.getElementById("chatMessages").innerHTML = '<div class="text-center text-gray-500 my-1 font-semibold">Welcome to Live Chat!</div>';
+
             currentSessionId = null;
+            opponentId = null;
+
+            // Reset media states & UI
+            isMicMuted = false;
+            isVideoMuted = false;
+
+            E.btnToggleMic.classList.remove('bg-red-600', 'hover:bg-red-500');
+            E.btnToggleMic.classList.add('bg-gray-700', 'hover:bg-gray-600');
+            E.micText.innerText = "Mute Mic";
+
+            E.btnToggleVideo.classList.remove('bg-orange-600', 'hover:bg-orange-500');
+            E.btnToggleVideo.classList.add('bg-gray-700', 'hover:bg-gray-600');
+            E.videoText.innerText = "Video Call";
+
+            resetCallButtonState();
+        }
+
+        // --- Live Chat Logic ---
+        function toggleChatPanel() {
+            const panel = document.getElementById("floatingChatPanel");
+            panel.classList.toggle("hidden");
+            if (!panel.classList.contains("hidden")) {
+                const chatMessages = document.getElementById("chatMessages");
+                chatMessages.scrollTop = chatMessages.scrollHeight;
+            }
+        }
+
+        function sendChatMessage() {
+            const inputEl = document.getElementById("chatInput");
+            const text = inputEl.value.trim();
+            if (!text || !opponentId) return;
+
+            socket.emit("SEND_MESSAGE", { receiverId: opponentId, text });
+            appendChatMessage("You", text, true);
+            inputEl.value = "";
+        }
+
+        function handleChatKeydown(event) {
+            if (event.key === "Enter") {
+                sendChatMessage();
+            }
+        }
+
+        function appendChatMessage(sender, text, isSelf) {
+            const chatMessages = document.getElementById("chatMessages");
+            if (!chatMessages) return;
+
+            const msgDiv = document.createElement("div");
+            msgDiv.className = `flex flex-col ${isSelf ? 'items-end' : 'items-start'} space-y-0.5`;
+
+            const senderSpan = document.createElement("span");
+            senderSpan.className = "text-[9px] text-gray-400 font-semibold px-1";
+            senderSpan.innerText = sender;
+
+            const textDiv = document.createElement("div");
+            textDiv.className = `max-w-[85%] rounded-xl px-2.5 py-1.5 text-xs break-words shadow-md ${isSelf
+                    ? 'bg-blue-600 text-white rounded-tr-none'
+                    : 'bg-gray-800 text-gray-200 rounded-tl-none'
+                }`;
+            textDiv.innerText = text;
+
+            msgDiv.appendChild(senderSpan);
+            msgDiv.appendChild(textDiv);
+            chatMessages.appendChild(msgDiv);
+            chatMessages.scrollTop = chatMessages.scrollHeight;
+        }
+
+        // --- Live Gift Logic ---
+        let selectedGiftId = null;
+        let allGifts = [];
+
+        async function loadGifts() {
+            const token = E.token.value.trim();
+            if (!token) return;
+            try {
+                const res = await fetch(`${API_BASE}/gifts`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const response = await res.json();
+                if (response.success) {
+                    allGifts = response.data;
+                    renderGifts();
+                } else {
+                    console.error("Failed to load gifts:", response.message);
+                }
+            } catch (err) {
+                console.error("Failed to load gifts:", err);
+            }
+        }
+
+        function renderGifts() {
+            const container = document.getElementById("giftsGrid");
+            if (!container) return;
+            container.innerHTML = "";
+
+            if (allGifts.length === 0) {
+                container.innerHTML = `<div class="col-span-full text-center text-xs text-gray-500 py-3 font-semibold">No active gifts found.</div>`;
+                return;
+            }
+
+            allGifts.forEach(gift => {
+                const btn = document.createElement("button");
+                btn.type = "button";
+                btn.onclick = () => selectGift(gift.id, gift.name, gift.coinCost, btn);
+                btn.className = "gift-btn bg-gray-950 border border-gray-800 hover:border-pink-500 p-3 rounded-xl flex flex-col items-center justify-center transition transform hover:scale-105 w-full overflow-hidden";
+
+                // Show emoji/image or displayImageUrl
+                const nameLower = gift.name.toLowerCase();
+                let iconHtml = `<span class="text-3xl">🎁</span>`;
+                if (gift.displayImageUrl) {
+                    iconHtml = `<img src="${gift.displayImageUrl}" class="w-10 h-10 object-contain rounded" alt="${gift.name}" />`;
+                } else {
+                    if (nameLower.includes("rose")) iconHtml = `<span class="text-3xl">🌹</span>`;
+                    else if (nameLower.includes("heart")) iconHtml = `<span class="text-3xl">💖</span>`;
+                    else if (nameLower.includes("crown")) iconHtml = `<span class="text-3xl">👑</span>`;
+                    else if (nameLower.includes("skull")) iconHtml = `<span class="text-3xl">💀</span>`;
+                }
+
+                btn.innerHTML = `
+                    ${iconHtml}
+                    <span class="text-[10px] text-gray-300 mt-1 font-bold truncate max-w-full" title="${gift.name}">${gift.name}</span>
+                    <span class="text-[9px] text-yellow-400 font-bold bg-yellow-400/10 px-2 py-0.5 rounded-full mt-1">${gift.coinCost}c</span>
+                `;
+                container.appendChild(btn);
+            });
+        }
+
+
+
+        function selectGift(giftId, name, cost, btn) {
+            selectedGiftId = giftId;
+            document.querySelectorAll(".gift-btn").forEach(b => {
+                b.classList.remove("border-pink-500");
+                b.classList.add("border-gray-800");
+            });
+            btn.classList.add("border-pink-500");
+            btn.classList.remove("border-gray-800");
+
+            document.getElementById("btnSendGift").disabled = false;
+        }
+
+        async function triggerSendGift() {
+            if (!currentSessionId || !selectedGiftId) return;
+            const token = E.token.value.trim();
+            if (!token) return alert("My JWT Token is required.");
+
+            const sendBtn = document.getElementById("btnSendGift");
+            sendBtn.disabled = true;
+            sendBtn.innerText = "SENDING...";
+
+            try {
+                const res = await fetch(`${API_BASE}/send-gift`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`
+                    },
+                    body: JSON.stringify({
+                        sessionId: currentSessionId,
+                        giftId: selectedGiftId
+                    })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    updateStatus(`Gift sent! New balance: ${data.data.newBalance} Coins 🪙`, "text-green-400");
+                } else {
+                    alert(`Failed to send gift: ${data.message}`);
+                }
+            } catch (err) {
+                console.error("Error sending gift:", err);
+                alert("Network error sending gift.");
+            } finally {
+                sendBtn.disabled = false;
+                sendBtn.innerText = "SEND GIFT";
+            }
+        }
+
+        function showGiftAnimation(senderName, giftName, wealthLevel, isLevelUp, effectUrl) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay) return;
+
+            const animationDiv = document.createElement("div");
+            animationDiv.className = "gift-pop flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.7)] z-50 transition duration-500 transform scale-100";
+
+            let displayContent = "";
+            let duration = 3000;
+
+            if (effectUrl) {
+                // Check if effectUrl is an MP4 video or animated file
+                const isVideo = effectUrl.toLowerCase().endsWith(".mp4") || effectUrl.includes("effect-") || effectUrl.includes("/video");
+                if (isVideo) {
+                    displayContent = `
+                        <div class="relative w-[320px] h-[320px] flex items-center justify-center rounded-2xl overflow-hidden border border-pink-500/30 bg-black/70 backdrop-blur-md shadow-2xl">
+                            <video src="${effectUrl}" autoplay muted playsinline class="w-full h-full object-cover"></video>
+                        </div>
+                    `;
+                    duration = 6000; // Let video animations play longer (6 seconds)
+                } else {
+                    // Render image/gif
+                    displayContent = `
+                        <img src="${effectUrl}" class="w-[200px] h-[200px] object-contain rounded-2xl animate-bounce" alt="${giftName}" />
+                    `;
+                    duration = 4000;
+                }
+            } else {
+                // Emoji fallback
+                let emoji = "🎁";
+                if (giftName.toLowerCase().includes("rose")) emoji = "🌹";
+                else if (giftName.toLowerCase().includes("heart")) emoji = "💖";
+                else if (giftName.toLowerCase().includes("crown")) emoji = "👑";
+                else if (giftName.toLowerCase().includes("skull")) emoji = "💀";
+
+                displayContent = `<span class="text-8xl animate-bounce">${emoji}</span>`;
+            }
+
+            animationDiv.innerHTML = `
+                ${displayContent}
+                <span class="text-xs bg-black/90 text-white font-black px-5 py-2.5 rounded-full border border-pink-500/40 mt-4 tracking-widest uppercase shadow-lg">
+                    ✨ ${senderName} sent ${giftName}! ✨
+                </span>
+            `;
+
+            overlay.appendChild(animationDiv);
+
+            // Automatic fade out and removal
+            setTimeout(() => {
+                animationDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    animationDiv.remove();
+                }, 500);
+            }, duration);
+
+            if (isLevelUp) {
+                const lvToast = document.createElement("div");
+                lvToast.className = "level-up-toast bg-gradient-to-r from-yellow-500 via-amber-500 to-yellow-600 text-black px-8 py-4 rounded-2xl border-4 border-yellow-300 font-black text-center shadow-2xl pointer-events-none transform scale-110 tracking-wider mt-4";
+                lvToast.innerHTML = `
+                    <div class="text-3xl mb-1">🎉 LEVEL UP! 🎉</div>
+                    <div class="text-sm uppercase">${senderName} reached Wealth Level ${wealthLevel}!</div>
+                `;
+                overlay.appendChild(lvToast);
+
+                setTimeout(() => {
+                    lvToast.remove();
+                }, 4000);
+            }
+        }
+
+        async function triggerSendGlobalMessage() {
+            const input = document.getElementById("globalMsgInput");
+            const btn = document.getElementById("btnSendGlobalMsg");
+            const text = input.value.trim();
+            const token = E.token.value.trim();
+
+            if (!token) {
+                alert("Please select a user or enter your JWT token first!");
+                return;
+            }
+            if (!text) {
+                alert("Please enter message content.");
+                return;
+            }
+
+            try {
+                btn.disabled = true;
+                btn.innerText = "Sending...";
+
+                const res = await fetch(`${SERVER_URL}/api/live-stream/global-message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ message: text })
+                });
+
+                const data = await res.json();
+                if (data.success) {
+                    input.value = "";
+                    updateStatus(`Global message broadcasted successfully! New balance: ${data.data.newBalance} c`, "text-green-400");
+                } else {
+                    alert(`Failed to send global message: ${data.message}`);
+                }
+            } catch (err) {
+                console.error("Error sending global message:", err);
+                alert("Network/Server Error sending global message.");
+            } finally {
+                btn.disabled = false;
+                btn.innerText = "📢 Send Broadcast";
+            }
+        }
+
+        function showGlobalMessageToast(senderName, message, wealthLevel) {
+            const overlay = document.getElementById("globalMessageOverlay");
+            if (!overlay) return;
+
+            const toast = document.createElement("div");
+            toast.className = "w-full bg-gradient-to-r from-red-600 via-pink-600 to-purple-600 p-[2px] rounded-2xl shadow-[0_10px_25px_rgba(219,39,119,0.5)] transition duration-500 transform translate-y-[-50px] opacity-0 flex items-center";
+
+            toast.innerHTML = `
+                <div class="w-full bg-gray-900/90 backdrop-blur-md rounded-2xl p-4 flex items-center space-x-3 text-white">
+                    <div class="flex-shrink-0 bg-gradient-to-tr from-pink-500 to-yellow-400 p-2.5 rounded-xl text-xl animate-pulse">
+                        📢
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-extrabold text-pink-400 text-sm tracking-wide">${senderName}</span>
+                            <span class="bg-yellow-400/20 text-yellow-400 text-[9px] px-1.5 py-0.5 rounded-full font-bold">LV.${wealthLevel || 1}</span>
+                            <span class="text-[10px] text-gray-400 uppercase tracking-widest font-black ml-auto">GLOBAL BROADCAST</span>
+                        </div>
+                        <p class="text-xs text-gray-200 mt-1 font-semibold leading-relaxed break-words">${message}</p>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(toast);
+
+            // Animate In
+            setTimeout(() => {
+                toast.classList.remove("translate-y-[-50px]", "opacity-0");
+                toast.classList.add("translate-y-0", "opacity-100");
+            }, 50);
+
+            // Animate Out & Remove
+            setTimeout(() => {
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-[-20px]", "opacity-0");
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 7000); // Display for 7 seconds
         }
     </script>
 </body>
+
 </html>

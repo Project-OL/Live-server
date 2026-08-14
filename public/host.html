@@ -1,0 +1,2110 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>offoo Host Console</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <style>
+        .gift-pop {
+            animation: giftPopUp 3s ease-out forwards;
+        }
+
+        @keyframes giftPopUp {
+            0% {
+                transform: scale(0) translateY(100px);
+                opacity: 0;
+            }
+
+            15% {
+                transform: scale(1.4) translateY(-20px);
+                opacity: 1;
+            }
+
+            30% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            85% {
+                transform: scale(1) translateY(-10px);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.5) translateY(-150px);
+                opacity: 0;
+            }
+        }
+
+        .level-up-toast {
+            animation: levelUpFade 4s ease-in-out forwards;
+        }
+
+        @keyframes levelUpFade {
+            0% {
+                transform: scale(0.8) translateY(50px);
+                opacity: 0;
+            }
+
+            10% {
+                transform: scale(1.1) translateY(0);
+                opacity: 1;
+            }
+
+            15% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            90% {
+                transform: scale(1) translateY(0);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.8) translateY(-50px);
+                opacity: 0;
+            }
+        }
+
+        /* Premium Chat Bubbles styles */
+        .bubble-gradient-gold {
+            background: linear-gradient(135deg, #fce0ad 0%, #dfa841 50%, #b17d1e 100%) !important;
+            border: 1.5px solid #ffd700 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(253, 224, 71, 0.4) !important;
+        }
+
+        .bubble-gradient-gold span {
+            color: #1f2937 !important;
+        }
+
+        .bubble-gradient-gold button {
+            color: #4b5563 !important;
+        }
+
+        .bubble-gradient-gold p {
+            color: #111827 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-green {
+            background: linear-gradient(135deg, #bbf7d0 0%, #22c55e 100%) !important;
+            border: 1.5px solid #4ade80 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(34, 197, 94, 0.3) !important;
+        }
+
+        .bubble-gradient-green span {
+            color: #14532d !important;
+        }
+
+        .bubble-gradient-green button {
+            color: #14532d !important;
+        }
+
+        .bubble-gradient-green p {
+            color: #052e16 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-blue {
+            background: linear-gradient(135deg, #bae6fd 0%, #0284c7 100%) !important;
+            border: 1.5px solid #38bdf8 !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(14, 165, 233, 0.3) !important;
+        }
+
+        .bubble-gradient-blue span {
+            color: #0369a1 !important;
+        }
+
+        .bubble-gradient-blue button {
+            color: #0369a1 !important;
+        }
+
+        .bubble-gradient-blue p {
+            color: #0c4a6e !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-orange {
+            background: linear-gradient(135deg, #ffedd5 0%, #ea580c 100%) !important;
+            border: 1.5px solid #fb923c !important;
+            border-radius: 20px 20px 20px 4px !important;
+            box-shadow: 0 0 8px rgba(234, 88, 12, 0.3) !important;
+        }
+
+        .bubble-gradient-orange span {
+            color: #7c2d12 !important;
+        }
+
+        .bubble-gradient-orange button {
+            color: #7c2d12 !important;
+        }
+
+        .bubble-gradient-orange p {
+            color: #431407 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-purple {
+            background: linear-gradient(135deg, #f3e8ff 0%, #9333ea 100%) !important;
+            border: 1.5px solid #c084fc !important;
+            border-radius: 16px 16px 16px 4px !important;
+            box-shadow: 0 0 8px rgba(147, 51, 234, 0.3) !important;
+        }
+
+        .bubble-gradient-purple span {
+            color: #581c87 !important;
+        }
+
+        .bubble-gradient-purple button {
+            color: #581c87 !important;
+        }
+
+        .bubble-gradient-purple p {
+            color: #3b0764 !important;
+            font-weight: 600 !important;
+        }
+
+        .bubble-gradient-turquoise {
+            background: linear-gradient(135deg, #ccfbf1 0%, #0d9488 100%) !important;
+            border: 1.5px solid #2dd4bf !important;
+            border-radius: 20px 20px 20px 20px !important;
+            box-shadow: 0 0 8px rgba(13, 148, 136, 0.3) !important;
+        }
+
+        .bubble-gradient-turquoise span {
+            color: #0f766e !important;
+        }
+
+        .bubble-gradient-turquoise button {
+            color: #0f766e !important;
+        }
+
+        .bubble-gradient-turquoise p {
+            color: #042f2e !important;
+            font-weight: 600 !important;
+        }
+
+        /* VIP Ride Entry CSS Animations */
+        @keyframes rideSlideRight {
+            0% {
+                transform: translateX(-120%) scale(0.9);
+                opacity: 0;
+            }
+
+            15% {
+                transform: translateX(0) scale(1.1);
+                opacity: 1;
+            }
+
+            30% {
+                transform: translateX(0) scale(1);
+                opacity: 1;
+            }
+
+            75% {
+                transform: translateX(0) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translateX(120%) scale(0.9);
+                opacity: 0;
+            }
+        }
+
+        @keyframes rideFlyDown {
+            0% {
+                transform: translate(120%, -120%) rotate(-15deg) scale(0.8);
+                opacity: 0;
+            }
+
+            20% {
+                transform: translate(0, 0) rotate(0deg) scale(1.1);
+                opacity: 1;
+            }
+
+            35% {
+                transform: translate(0, 0) rotate(0deg) scale(1);
+                opacity: 1;
+            }
+
+            75% {
+                transform: translate(0, 0) rotate(0deg) scale(1);
+                opacity: 1;
+            }
+
+            100% {
+                transform: translate(-120%, 120%) rotate(15deg) scale(0.8);
+                opacity: 0;
+            }
+        }
+
+        @keyframes rideWarpIn {
+            0% {
+                transform: scale(0) rotate(-180deg);
+                filter: blur(10px);
+                opacity: 0;
+            }
+
+            25% {
+                transform: scale(1.3) rotate(10deg);
+                filter: blur(0);
+                opacity: 1;
+            }
+
+            40% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+
+            80% {
+                transform: scale(1) rotate(0deg);
+                opacity: 1;
+            }
+
+            100% {
+                transform: scale(0.5);
+                filter: blur(5px);
+                opacity: 0;
+            }
+        }
+
+        .ride-animation-slide {
+            animation: rideSlideRight 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        .ride-animation-fly {
+            animation: rideFlyDown 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+
+        .ride-animation-warp {
+            animation: rideWarpIn 4.5s cubic-bezier(0.25, 1, 0.5, 1) forwards;
+        }
+    </style>
+</head>
+
+<body class="bg-gray-950 text-white min-h-screen p-6 font-sans">
+    <div class="max-w-7xl mx-auto space-y-6">
+        <!-- Header -->
+        <div class="flex items-center justify-between border-b border-gray-900 pb-4">
+            <div>
+                <h1
+                    class="text-3xl font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-pink-500">
+                    offoo Host Studio 🖥️
+                </h1>
+                <p class="text-gray-400 text-xs mt-1">Host and publish live WebRTC feeds to viewers</p>
+            </div>
+            <div class="flex items-center space-x-3">
+                <span id="lblConnectionStatus"
+                    class="bg-red-950/60 border border-red-800 text-red-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider">
+                    Offline
+                </span>
+            </div>
+        </div>
+
+        <!-- Workspace Panels -->
+        <div class="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+            <!-- Left Panel: Host controls -->
+            <div class="lg:col-span-1 space-y-6">
+                <div class="bg-gray-900 border border-purple-950 rounded-xl p-5 space-y-4 shadow-xl">
+                    <div class="flex items-center justify-between border-b border-purple-950/50 pb-2.5">
+                        <h2 class="text-sm font-bold text-purple-400 flex items-center space-x-2">
+                            <span>👑</span> <span>Boss Stream Workspace</span>
+                        </h2>
+                        <span class="bg-purple-950 text-purple-400 text-[10px] px-2 py-0.5 rounded font-mono font-bold"
+                            id="lblHostName">Loading...</span>
+                    </div>
+
+                    <div class="space-y-3">
+                        <div>
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Fixed Host
+                                Account</label>
+                            <select id="selHostUser"
+                                class="w-full bg-gray-950 p-2.5 rounded border border-purple-900/50 text-xs font-mono text-purple-300 outline-none focus:border-purple-500">
+                                <option value="">Loading host accounts...</option>
+                            </select>
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Stream
+                                Title</label>
+                            <input id="txtStreamTitle" type="text"
+                                class="w-full bg-gray-950 p-2.5 rounded border border-gray-800 text-sm focus:border-purple-500 outline-none"
+                                placeholder="My Awesome Live Stream!">
+                        </div>
+                        <div>
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Stream Heading
+                                / Category</label>
+                            <select id="selStreamHeading"
+                                class="w-full bg-gray-950 p-2.5 rounded border border-gray-800 text-sm text-gray-300 focus:border-purple-500 outline-none">
+                                <option value="Chatting">Chatting 💬</option>
+                                <option value="Singing">Singing 🎵</option>
+                                <option value="Dancing">Dancing 💃</option>
+                                <option value="Makeup">Makeup 💄</option>
+                                <option value="Gaming">Gaming 🎮</option>
+                            </select>
+                        </div>
+                        <div id="divLivePhotoPreviewContainer" class="hidden space-y-1">
+                            <label class="block text-[11px] text-gray-400 uppercase tracking-wider mb-1">Verified Live
+                                Photo (Cover)</label>
+                            <div
+                                class="relative w-full h-32 bg-gray-950 rounded-lg overflow-hidden border border-gray-800">
+                                <img id="imgLivePhotoPreview" class="w-full h-full object-cover" src=""
+                                    alt="Live Photo Cover">
+                                <div
+                                    class="absolute top-2 right-2 bg-green-500 text-black text-[9px] px-2 py-0.5 rounded font-black uppercase tracking-wider flex items-center space-x-1">
+                                    <span>✔</span> <span>Verified DB Photo</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid grid-cols-2 gap-2.5 pt-2">
+                        <button id="btnHostStart"
+                            class="bg-purple-600 hover:bg-purple-500 py-2.5 rounded-lg text-xs font-bold transition disabled:opacity-50 flex items-center justify-center space-x-1.5"
+                            disabled>
+                            <span>🚀</span> <span>Go Live</span>
+                        </button>
+                        <button id="btnHostEnd"
+                            class="bg-red-600 hover:bg-red-500 py-2.5 rounded-lg text-xs font-bold transition hidden flex items-center justify-center space-x-1.5">
+                            <span>🔴</span> <span>End Stream</span>
+                        </button>
+                    </div>
+                </div>
+
+                <!-- Active Viewers Panel -->
+                <div id="cardActiveViewers"
+                    class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 shadow-xl hidden">
+                    <h3
+                        class="font-bold text-sm text-purple-400 flex justify-between items-center border-b border-gray-850 pb-2">
+                        <span class="flex items-center space-x-1.5">👥 <span>Active Viewers</span></span>
+                    </h3>
+                    <div id="divViewerList" class="space-y-2 pr-1" style="max-height: 200px; overflow-y: auto;">
+                        <p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>
+                    </div>
+                </div>
+
+            </div>
+
+            <!-- Right Panel: Video Feed & Live Chat -->
+            <div class="lg:col-span-2 grid grid-cols-1 md:grid-cols-3 gap-6">
+                <!-- Video Player Container -->
+                <div
+                    class="md:col-span-2 bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col space-y-4 min-h-[360px] shadow-xl">
+                    <div class="flex items-center justify-between border-b border-gray-855 pb-3">
+                        <div>
+                            <h3 class="font-extrabold text-sm text-gray-200" id="lblRoomTitle">Offline Console</h3>
+                            <p class="text-[11px] text-gray-500 mt-0.5" id="lblRoomId">Please click Go Live to start
+                                broadcasting</p>
+                        </div>
+                        <div class="flex items-center space-x-3">
+                            <button id="btnHostSettings"
+                                class="text-gray-400 hover:text-white transition hidden flex items-center justify-center p-1.5 rounded-lg hover:bg-gray-800"
+                                title="Room Settings">
+                                <svg xmlns="http://www.w3.org/2000/svg" class="h-5 w-5" fill="none" viewBox="0 0 24 24"
+                                    stroke="currentColor" stroke-width="2">
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.065 2.572c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.572 1.065c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.065-2.572c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z" />
+                                    <path stroke-linecap="round" stroke-linejoin="round"
+                                        d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
+                                </svg>
+                            </button>
+                            <div class="bg-indigo-500/10 border border-indigo-500/30 text-indigo-400 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1.5 cursor-pointer hover:bg-indigo-500/20 transition hidden"
+                                id="divGiftGalleryBadge" onclick="openGiftGalleryModal()">
+                                <span>🎁 Target: <span id="lblGiftGalleryProgress">0/0</span></span>
+                            </div>
+                            <div class="bg-red-500/10 border border-red-500/30 text-red-400 text-xs px-2.5 py-1 rounded-full font-bold flex items-center space-x-1.5 hidden"
+                                id="divLiveBadge">
+                                <span class="h-2 w-2 rounded-full bg-red-500 animate-ping"></span>
+                                <span>LIVE</span>
+                                <span class="text-gray-400 font-normal">|</span>
+                                <span>👥 <span id="lblViewerCount">0</span></span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Video Frame -->
+                    <div
+                        class="flex-grow bg-black rounded-lg border border-gray-800 relative flex items-center justify-center overflow-hidden aspect-video shadow-inner">
+                        <div id="lblLocalFeedPlaceholder"
+                            class="absolute inset-0 z-0 flex items-center justify-center text-gray-700 font-bold uppercase tracking-widest text-[10px]">
+                            🎥 Local WebCam Feed
+                        </div>
+                        <video id="vidLocal" class="absolute z-10 w-full h-full object-cover hidden" autoplay muted
+                            playsinline></video>
+
+                        <!-- Media Control Overlay -->
+                        <div id="divMediaControls"
+                            class="absolute bottom-3 left-1/2 transform -translate-x-1/2 z-20 bg-gray-950/80 backdrop-blur-md px-4 py-2 rounded-full border border-gray-800 flex items-center space-x-4 hidden shadow-lg">
+                            <button id="btnToggleMic"
+                                class="bg-gray-800 hover:bg-gray-700 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9"
+                                title="Toggle Mic">
+                                <span id="iconMic">🎙️</span>
+                            </button>
+                            <button id="btnToggleCam"
+                                class="bg-gray-800 hover:bg-gray-700 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9"
+                                title="Toggle Camera">
+                                <span id="iconCam">📹</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Chat & Audio Sheet Column -->
+                <div class="md:col-span-1 space-y-6 flex flex-col">
+                    <!-- Chat Feed Container -->
+                    <div
+                        class="bg-gray-900 border border-gray-800 rounded-xl p-5 flex flex-col space-y-3 min-h-[360px] shadow-xl">
+                        <h3
+                            class="font-bold text-sm text-gray-300 flex justify-between items-center border-b border-gray-800 pb-2">
+                            <div class="flex items-center space-x-1.5">
+                                <span>💬</span> <span>Live Room Chat</span>
+                            </div>
+                            <div class="flex items-center space-x-2.5">
+                                <button id="btnClearChat"
+                                    class="text-[10px] text-red-400 hover:text-red-300 bg-red-950/40 border border-red-900/60 px-1.5 py-0.5 rounded font-semibold">🗑️
+                                    Clear</button>
+                                <label
+                                    class="flex items-center space-x-1 text-[10px] text-gray-500 font-normal cursor-pointer select-none">
+                                    <input id="chkChatsOnly" type="checkbox" class="accent-purple-600 rounded">
+                                    <span>Chats Only</span>
+                                </label>
+                            </div>
+                        </h3>
+
+                        <!-- Message Feed -->
+                        <div id="divChatBox"
+                            class="flex-grow bg-gray-950 rounded-lg p-2.5 border border-gray-850 overflow-y-auto space-y-3 text-xs max-h-[250px] min-h-[180px]">
+                            <p class="text-gray-650 text-center italic my-4">Go Live to connect to chat room.</p>
+                        </div>
+
+                        <!-- Reply Banner -->
+                        <div id="replyBanner"
+                            class="hidden bg-purple-950/30 border border-purple-900/60 rounded p-1.5 flex items-center justify-between text-[11px] text-gray-450 mb-1">
+                            <span id="replyBannerText" class="truncate flex-grow text-purple-300">Replying to
+                                @username</span>
+                            <button id="btnCancelReply"
+                                class="text-red-400 hover:text-red-350 font-bold ml-2">✕</button>
+                        </div>
+
+                        <!-- Chat Message Input -->
+                        <div class="flex space-x-1.5">
+                            <input id="txtChatMessage" type="text"
+                                class="flex-grow bg-gray-950 p-2 rounded border border-gray-855 text-xs focus:border-purple-500 outline-none disabled:opacity-50"
+                                placeholder="Send a message..." disabled>
+                            <button id="btnSendChat"
+                                class="bg-purple-600 hover:bg-purple-500 px-3.5 py-2 rounded text-xs font-bold transition disabled:opacity-50"
+                                disabled>
+                                Send
+                            </button>
+                        </div>
+                    </div>
+
+                    <!-- Audio Sheet Panel -->
+                    <div id="cardAudioSheet"
+                        class="bg-gray-900 border border-gray-800 rounded-xl p-5 space-y-3 shadow-xl hidden">
+                        <h3
+                            class="font-bold text-sm text-yellow-400 flex justify-between items-center border-b border-gray-855 pb-2">
+                            <span class="flex items-center space-x-1.5">🎙️ <span>Audio Sheet</span></span>
+                        </h3>
+
+                        <!-- Pending Requests Sub-Section -->
+                        <div id="divPendingRequestsContainer"
+                            class="hidden border-b border-gray-800 pb-2.5 space-y-1.5">
+                            <span class="text-[10px] uppercase font-extrabold tracking-wider text-pink-400">Join
+                                Requests</span>
+                            <div id="divPendingRequestsList" class="space-y-2"></div>
+                        </div>
+
+                        <div id="divSheetUserList" class="space-y-2 max-h-[220px] overflow-y-auto pr-1">
+                            <p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+    <!-- Room Settings Modal -->
+    <div id="settingsModal"
+        class="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center hidden z-50 transition-all duration-300">
+        <div class="bg-gray-900 border border-gray-800 w-full max-w-md rounded-2xl shadow-2xl p-6 relative">
+            <button id="btnCloseSettings"
+                class="absolute top-4 right-4 text-gray-500 hover:text-gray-300 transition text-lg">&times;</button>
+            <h3 class="text-base font-extrabold text-gray-105 flex items-center space-x-2 mb-4">
+                <span>⚙️</span> <span class="text-gray-100 font-extrabold">Stream Settings</span>
+            </h3>
+
+            <div class="space-y-4">
+                <div class="flex items-center justify-between bg-gray-950 p-3 rounded-lg border border-gray-800">
+                    <div>
+                        <p class="text-xs font-bold text-gray-200">Password Protection</p>
+                        <p class="text-[10px] text-gray-500">Require new viewers to enter a password</p>
+                    </div>
+                    <label class="relative inline-flex items-center cursor-pointer">
+                        <input type="checkbox" id="chkPasswordProtected" class="sr-only peer">
+                        <div
+                            class="w-9 h-5 bg-gray-850 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-gray-300 after:border-gray-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-purple-650">
+                        </div>
+                    </label>
+                </div>
+
+                <div id="divPasswordField" class="space-y-1.5 hidden animate-fade-in">
+                    <label class="block text-[11px] text-gray-400 uppercase tracking-wider">Room Password</label>
+                    <input id="txtRoomPassword" type="text"
+                        class="w-full bg-gray-950 p-2.5 rounded border border-gray-800 text-xs text-gray-250 focus:border-purple-500 outline-none"
+                        placeholder="Enter stream password">
+                </div>
+
+                <button id="btnSaveSettings"
+                    class="w-full bg-purple-600 hover:bg-purple-500 py-2.5 rounded-lg text-xs font-bold transition flex items-center justify-center space-x-1.5 mt-2">
+                    Save Changes
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // Global Error Boundary for Debugging
+        window.onerror = function (message, source, lineno, colno, error) {
+            const errDiv = document.createElement("div");
+            errDiv.style.position = "fixed";
+            errDiv.style.top = "10px";
+            errDiv.style.left = "10px";
+            errDiv.style.backgroundColor = "rgba(220, 38, 38, 0.95)";
+            errDiv.style.color = "white";
+            errDiv.style.padding = "15px";
+            errDiv.style.zIndex = "99999";
+            errDiv.style.borderRadius = "8px";
+            errDiv.style.fontFamily = "monospace";
+            errDiv.style.fontSize = "12px";
+            errDiv.style.maxWidth = "80%";
+            errDiv.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
+            errDiv.innerHTML = `<strong>JS Error:</strong> ${message}<br><small>at ${source}:${lineno}:${colno}</small>`;
+            document.body.appendChild(errDiv);
+            return false;
+        };
+
+        window.onunhandledrejection = function (event) {
+            const errDiv = document.createElement("div");
+            errDiv.style.position = "fixed";
+            errDiv.style.top = "10px";
+            errDiv.style.left = "10px";
+            errDiv.style.backgroundColor = "rgba(220, 38, 38, 0.95)";
+            errDiv.style.color = "white";
+            errDiv.style.padding = "15px";
+            errDiv.style.zIndex = "99999";
+            errDiv.style.borderRadius = "8px";
+            errDiv.style.fontFamily = "monospace";
+            errDiv.style.fontSize = "12px";
+            errDiv.style.maxWidth = "80%";
+            errDiv.style.boxShadow = "0 4px 15px rgba(0,0,0,0.5)";
+            errDiv.innerHTML = `<strong>Unhandled Rejection:</strong> ${event.reason}`;
+            document.body.appendChild(errDiv);
+        };
+
+        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
+        const SERVER_URL = isLocal ? "http://localhost:5000" : window.location.origin;
+        const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
+        const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
+        const LIVEKIT_URL = "wss://ofo-rjyi95u0.livekit.cloud";
+
+        let socket = null;
+        let room = null;
+        let hostUser = null; // Boss (sahil)
+        let currentLiveStreamRecord = null;
+        let currentRoomUuid = null;
+        let messageHistory = [];
+
+        let isMicEnabled = true;
+        let isCamEnabled = true;
+
+        function updateMediaControlUI() {
+            const btnMic = document.getElementById('btnToggleMic');
+            const iconMic = document.getElementById('iconMic');
+            const btnCam = document.getElementById('btnToggleCam');
+            const iconCam = document.getElementById('iconCam');
+            const placeholder = document.getElementById('lblLocalFeedPlaceholder');
+
+            if (isMicEnabled) {
+                btnMic.className = "bg-gray-805 hover:bg-gray-700 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9 shadow";
+                iconMic.innerText = "🎙️";
+            } else {
+                btnMic.className = "bg-red-600 hover:bg-red-500 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9 shadow";
+                iconMic.innerText = "🔇";
+            }
+
+            if (isCamEnabled) {
+                btnCam.className = "bg-gray-805 hover:bg-gray-700 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9 shadow";
+                iconCam.innerText = "📹";
+                E.vidLocal.classList.remove('hidden');
+                placeholder.innerText = "🎥 Local WebCam Feed";
+            } else {
+                btnCam.className = "bg-red-600 hover:bg-red-500 text-white p-2 rounded-full transition flex items-center justify-center h-9 w-9 shadow";
+                iconCam.innerText = "🚫";
+                E.vidLocal.classList.add('hidden');
+                placeholder.innerText = "🚫 Camera is Off";
+            }
+        }
+
+        document.getElementById('btnToggleMic').onclick = async () => {
+            if (!room) return;
+            isMicEnabled = !isMicEnabled;
+            await room.localParticipant.setMicrophoneEnabled(isMicEnabled);
+            updateMediaControlUI();
+            appendSystemAlert(isMicEnabled ? "🎙️ Microphone unmuted." : "🔇 Microphone muted.");
+        };
+
+        document.getElementById('btnToggleCam').onclick = async () => {
+            if (!room) return;
+            isCamEnabled = !isCamEnabled;
+            await room.localParticipant.setCameraEnabled(isCamEnabled);
+            updateMediaControlUI();
+            appendSystemAlert(isCamEnabled ? "📹 Camera turned on." : "🚫 Camera turned off.");
+        };
+
+        const E = {
+            lblConnectionStatus: document.getElementById('lblConnectionStatus'),
+            lblHostName: document.getElementById('lblHostName'),
+            selHostUser: document.getElementById('selHostUser'),
+            txtStreamTitle: document.getElementById('txtStreamTitle'),
+            btnHostStart: document.getElementById('btnHostStart'),
+            btnHostEnd: document.getElementById('btnHostEnd'),
+            lblRoomTitle: document.getElementById('lblRoomTitle'),
+            lblRoomId: document.getElementById('lblRoomId'),
+            divLiveBadge: document.getElementById('divLiveBadge'),
+            lblViewerCount: document.getElementById('lblViewerCount'),
+            vidLocal: document.getElementById('vidLocal'),
+            divChatBox: document.getElementById('divChatBox'),
+            txtChatMessage: document.getElementById('txtChatMessage'),
+            btnSendChat: document.getElementById('btnSendChat'),
+            chkChatsOnly: document.getElementById('chkChatsOnly'),
+            btnClearChat: document.getElementById('btnClearChat'),
+            cardActiveViewers: document.getElementById('cardActiveViewers'),
+            divViewerList: document.getElementById('divViewerList'),
+            btnHostSettings: document.getElementById('btnHostSettings'),
+            settingsModal: document.getElementById('settingsModal'),
+            btnCloseSettings: document.getElementById('btnCloseSettings'),
+            chkPasswordProtected: document.getElementById('chkPasswordProtected'),
+            divPasswordField: document.getElementById('divPasswordField'),
+            txtRoomPassword: document.getElementById('txtRoomPassword'),
+            btnSaveSettings: document.getElementById('btnSaveSettings'),
+            cardAudioSheet: document.getElementById('cardAudioSheet'),
+            divPendingRequestsContainer: document.getElementById('divPendingRequestsContainer'),
+            divPendingRequestsList: document.getElementById('divPendingRequestsList'),
+            divSheetUserList: document.getElementById('divSheetUserList'),
+            btnCancelReply: document.getElementById('btnCancelReply')
+        };
+
+        let currentViewers = [];
+        let activeReplyState = null;
+        let moderationInterval = null;
+        let availableHostUsers = [];
+
+        function setReplyTarget(messageId, userId, username, text) {
+            activeReplyState = { messageId, userId, username, text };
+            const banner = document.getElementById("replyBanner");
+            const bannerText = document.getElementById("replyBannerText");
+            if (banner && bannerText) {
+                bannerText.innerText = `Replying to @${username}: "${text.substring(0, 25)}${text.length > 25 ? '...' : ''}"`;
+                banner.classList.remove("hidden");
+            }
+            const input = document.getElementById("txtChatMessage");
+            if (input) input.focus();
+        }
+        window.setReplyTarget = setReplyTarget;
+
+        function cancelReply() {
+            activeReplyState = null;
+            const banner = document.getElementById("replyBanner");
+            if (banner) {
+                banner.classList.add("hidden");
+            }
+        }
+        window.cancelReply = cancelReply;
+
+        function mentionUserInChat(username) {
+            const input = document.getElementById("txtChatMessage");
+            if (input) {
+                input.value = `@${username} ` + input.value;
+                input.focus();
+            }
+            const modal = document.getElementById('userProfileModal');
+            if (modal) modal.remove();
+        }
+        window.mentionUserInChat = mentionUserInChat;
+
+        window.openUserProfileFromChat = function (userId, username) {
+            const found = activeViewers.find(v => v.id === userId);
+            if (found) {
+                showUserProfileModal(found, found.isAdmin ? "Room Admin" : "Room Viewer");
+                return;
+            }
+            showUserProfileModal({ id: userId, username: username }, "User");
+        };
+
+        async function switchHostAccount(userId) {
+            const selected = availableHostUsers.find(u => u.id === userId);
+            if (!selected) return;
+
+            hostUser = selected;
+            E.lblHostName.innerText = hostUser.name.toUpperCase();
+            E.btnHostStart.disabled = false;
+
+            appendSystemAlert(`👑 Fixed Host Account Set: ${hostUser.name} (${hostUser.id})`);
+
+            await connectSocket(hostUser.id);
+            await fetchMyLivePhoto(hostUser.token);
+            await checkForActiveHostStream();
+        }
+
+        // Load config & setup host
+        async function initHost() {
+            try {
+                const res = await fetch(`${VIDEO_API_BASE}/test-users`);
+                const data = await res.json();
+                if (data.success && data.users && data.users.length > 0) {
+                    availableHostUsers = data.users;
+
+                    // Populate Host Dropdown
+                    E.selHostUser.innerHTML = availableHostUsers.map(u =>
+                        `<option value="${u.id}" ${u.name === 'sahil' ? 'selected' : ''}>👑 ${u.name.toUpperCase()} (ID: ${u.id.substring(0, 8)}...)</option>`
+                    ).join('');
+
+                    E.selHostUser.onchange = (e) => switchHostAccount(e.target.value);
+
+                    // Set default fixed host (sahil or first user)
+                    const sahilUser = availableHostUsers.find(u => u.name === 'sahil') || availableHostUsers[0];
+                    await switchHostAccount(sahilUser.id);
+                }
+            } catch (err) {
+                console.error("Host init error:", err);
+            }
+        }
+
+        async function fetchMyLivePhoto(token) {
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/my-photo`, {
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.imageUrl) {
+                    document.getElementById('divLivePhotoPreviewContainer').classList.remove('hidden');
+                    document.getElementById('imgLivePhotoPreview').src = data.imageUrl;
+                } else {
+                    appendSystemAlert("⚠️ Note: No verified live photo cover found in database. Go Live might fail.");
+                }
+            } catch (err) {
+                console.error("Fetch live photo error:", err);
+            }
+        }
+
+        async function connectSocket(userId) {
+            if (socket) socket.disconnect();
+            socket = io(SERVER_URL, { auth: { userId } });
+
+            socket.on("connect", () => {
+                E.lblConnectionStatus.innerText = "Online";
+                E.lblConnectionStatus.className = "bg-green-950 border border-green-800 text-green-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+                if (currentRoomUuid) {
+                    socket.emit("join_stream", { streamId: currentRoomUuid });
+                    console.log("[Socket] Reconnected and rejoined room:", currentRoomUuid);
+                }
+            });
+
+            socket.on("disconnect", () => {
+                E.lblConnectionStatus.innerText = "Offline";
+                E.lblConnectionStatus.className = "bg-red-950/60 border border-red-800 text-red-400 text-xs px-3 py-1.5 rounded-full font-bold uppercase tracking-wider";
+            });
+
+            socket.on("new_message", (msg) => {
+                appendMessage(msg);
+            });
+
+            socket.on("GIFT_SENT", (data) => {
+                if (data && data.gift) {
+                    showGiftAnimation(data.senderName, data.gift.name, data.wealthLevel, data.isLevelUp, data.gift.effectUrl, data.targetUserName);
+                }
+            });
+
+            socket.on("GIFT_GALLERY_UPDATE", (data) => {
+                if (data && data.hostUserId) {
+                    updateGiftGalleryTargetsUI(data.currentProgress, data.totalTarget, data.unlockedGiftId);
+                }
+            });
+
+            socket.on("GLOBAL_MESSAGE_SENT", (data) => {
+                showGlobalMessageToast(data.senderName, data.message, data.wealthLevel);
+            });
+
+            socket.on("GLOBAL_ANNOUNCEMENT", (announcement) => {
+                showGlobalAnnouncement(announcement);
+            });
+
+            socket.on("chat_cleared", () => {
+                messageHistory = [];
+                renderChatBox();
+                appendSystemAlert("✨ Chat was cleared by host/admin.");
+            });
+
+            socket.on("user_joined", (data) => {
+                E.lblViewerCount.innerText = data.viewerCount;
+                syncStreamViewers();
+                if (data.ride) {
+                    showEntryRideAnimation(data.username, data.ride);
+                }
+            });
+
+            socket.on("user_left", (data) => {
+                E.lblViewerCount.innerText = data.viewerCount;
+                syncStreamViewers();
+            });
+
+            socket.on("admin_status_changed", (data) => {
+                syncStreamViewers();
+            });
+
+            socket.on("user_kicked", (data) => {
+                syncStreamViewers();
+            });
+
+            socket.on("stream_blocked", (data) => {
+                cleanupContext();
+
+                // Show gorgeous suspension overlay
+                const overlay = document.createElement("div");
+                overlay.className = "fixed inset-0 z-[9999] bg-gray-950/95 backdrop-blur-xl flex flex-col items-center justify-center text-white px-6 text-center";
+
+                const localSuspensionTime = data.suspendedUntil ? new Date(data.suspendedUntil).toLocaleString() : "Unknown";
+
+                overlay.innerHTML = `
+                    <div class="max-w-md w-full bg-gray-900 border border-red-500/20 rounded-3xl p-8 shadow-[0_20px_50px_rgba(239,68,68,0.2)]">
+                        <div class="w-20 h-20 bg-red-500/10 border border-red-500/30 text-red-500 rounded-2xl flex items-center justify-center text-4xl mx-auto mb-6 animate-bounce">
+                            ⚠️
+                        </div>
+                        <h2 class="text-2xl font-black tracking-tight text-red-400 mb-2">Stream Suspended</h2>
+                        <p class="text-sm text-gray-400 mb-6 font-medium">Your live stream was automatically terminated due to explicit content (nudity) violation.</p>
+                        
+                        <div class="bg-gray-950/50 rounded-2xl p-5 mb-6 text-left border border-white/5 space-y-3">
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-gray-400">Violation Level:</span>
+                                <span class="text-red-400 font-bold">Ban #${data.banNumber || 1}</span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs">
+                                <span class="text-gray-400">Ban Duration:</span>
+                                <span class="text-red-400 font-bold">${data.banDurationHours || 1} Hour(s)</span>
+                            </div>
+                            <div class="flex justify-between items-center text-xs border-t border-white/5 pt-3">
+                                <span class="text-gray-400">Suspended Until:</span>
+                                <span class="text-white font-bold">${localSuspensionTime}</span>
+                            </div>
+                        </div>
+
+                        <p class="text-xs text-gray-500 mb-6 leading-relaxed">Please ensure stream content follows our safety guidelines. Future violations will result in longer suspension times.</p>
+                        
+                        <button onclick="window.location.reload()" class="w-full bg-gradient-to-r from-red-600 to-pink-600 hover:from-red-500 hover:to-pink-500 text-white font-bold py-3.5 px-6 rounded-2xl shadow-lg transition duration-200">
+                            Acknowledge & Exit
+                        </button>
+                    </div>
+                `;
+                document.body.appendChild(overlay);
+            });
+
+            socket.on("stream_warning", (data) => {
+                appendSystemAlert(`⚠️ Moderation Warning: ${data.message}`);
+                alert(`⚠️ Moderation Warning: ${data.message}`);
+            });
+
+            // Audio sheet events
+            socket.on("sheet_invite_declined", ({ username }) => {
+                appendSystemAlert(`🎙️ ${username} declined your invitation to the sheet.`);
+            });
+
+            socket.on("sheet_request_received", ({ userId, username }) => {
+                appendSystemAlert(`🎙️ ${username} requested to join the sheet.`);
+                addSheetRequest(userId, username);
+            });
+
+            socket.on("user_joined_sheet", (data) => {
+                appendSystemAlert(`🎙️ ${data.username} joined the sheet.`);
+                syncSheetUsers();
+                syncStreamViewers(); // Update viewers list to show "Sheet" badge
+            });
+
+            socket.on("user_left_sheet", (data) => {
+                syncSheetUsers();
+                syncStreamViewers(); // Update viewers list to show "Invite" button
+            });
+
+            socket.on("sheet_mute_changed", (data) => {
+                syncSheetUsers();
+            });
+        }
+
+        async function checkForActiveHostStream() {
+            if (!hostUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/list`, {
+                    headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.data) {
+                    const activeStream = data.data.find(stream => stream.userId === hostUser.id);
+                    if (activeStream) {
+                        appendSystemAlert("🔄 Restoring active live stream session...");
+                        currentLiveStreamRecord = activeStream;
+                        currentRoomUuid = activeStream.streamId;
+
+                        E.lblRoomTitle.innerText = activeStream.title;
+                        E.lblRoomId.innerText = `Stream UUID: ${currentRoomUuid}`;
+                        E.divLiveBadge.classList.remove('hidden');
+
+                        // Get stream details to load viewer counts
+                        const detailsRes = await fetch(`${STREAM_API_BASE}/${activeStream.id}`, {
+                            headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                        });
+                        const detailsData = await detailsRes.json();
+                        if (detailsData.success) {
+                            E.lblViewerCount.innerText = detailsData.viewerCount;
+                        }
+
+                        // Update buttons
+                        E.btnHostStart.classList.add('hidden');
+                        E.btnHostEnd.classList.remove('hidden');
+                        E.btnHostSettings.classList.remove('hidden');
+                        E.cardActiveViewers.classList.remove('hidden');
+                        E.cardAudioSheet.classList.remove('hidden');
+                        await syncStreamViewers();
+                        await syncSheetUsers();
+
+                        // Join socket room
+                        socket.emit("join_stream", { streamId: currentRoomUuid });
+
+                        // Get Host token and connect LiveKit
+                        const startRes = await fetch(`${STREAM_API_BASE}/start/${activeStream.id}`, {
+                            method: 'POST',
+                            headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                        });
+                        const startData = await startRes.json();
+                        if (startData.success) {
+                            await connectLiveKitHost(startData.token);
+                        }
+
+                        // Enable chat
+                        E.txtChatMessage.disabled = false;
+                        E.btnSendChat.disabled = false;
+                        await fetchChatHistory(activeStream.id);
+                        await fetchGiftGalleryTargets(hostUser.id);
+                    }
+                }
+            } catch (err) {
+                console.error("Check active host stream error:", err);
+            }
+        }
+
+        E.btnHostStart.onclick = async () => {
+            const title = E.txtStreamTitle.value.trim() || "Live Broadcast";
+            const heading = document.getElementById('selStreamHeading').value;
+            const token = hostUser.token;
+
+            try {
+                const t0 = performance.now();
+                appendSystemAlert("⚡ Launching Super-Fast Go-Live...");
+
+                const goLiveRes = await fetch(`${STREAM_API_BASE}/go-live`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${token}`
+                    },
+                    body: JSON.stringify({ title, heading })
+                });
+                const goLiveData = await goLiveRes.json();
+                const t1 = performance.now();
+                const durationMs = (t1 - t0).toFixed(2);
+
+                if (!goLiveData.success) return alert(`Failed to go live: ${goLiveData.message}`);
+
+                currentLiveStreamRecord = goLiveData.data;
+                currentRoomUuid = currentLiveStreamRecord.streamId;
+
+                appendSystemAlert(`🚀 Stream Live in ${durationMs} ms!`);
+
+                E.lblRoomTitle.innerText = currentLiveStreamRecord.title;
+                E.lblRoomId.innerText = `Stream UUID: ${currentRoomUuid}`;
+                E.divLiveBadge.classList.remove('hidden');
+                E.lblViewerCount.innerText = "0";
+
+                E.btnHostStart.classList.add('hidden');
+                E.btnHostEnd.classList.remove('hidden');
+                E.btnHostSettings.classList.remove('hidden');
+                E.cardActiveViewers.classList.remove('hidden');
+                E.cardAudioSheet.classList.remove('hidden');
+                await syncStreamViewers();
+                await syncSheetUsers();
+
+                socket.emit("join_stream", { streamId: currentRoomUuid });
+                await connectLiveKitHost(goLiveData.token);
+
+                E.txtChatMessage.disabled = false;
+                E.btnSendChat.disabled = false;
+                await fetchGiftGalleryTargets(hostUser.id);
+                await fetchChatHistory(currentLiveStreamRecord.id);
+
+                /*
+                // =========================================================================
+                // GUIDE: NUDE MONITORING INTERVAL (EVERY 20 SECONDS)
+                // =========================================================================
+                // To activate automatic nude monitoring on the host side:
+                // 1. Uncomment this block.
+                // 2. This grabs frames from the local video feed, encodes them as JPEG,
+                //    and sends them to the backend verification endpoint.
+                // 3. The backend runs AWS Rekognition to check for inappropriate content.
+                
+                moderationInterval = setInterval(async () => {
+                    if (!currentLiveStreamRecord || !room) return;
+                    
+                    try {
+                        // Grab the video element from the local webcam feed container
+                        const localVideo = E.vidLocal.querySelector('video');
+                        if (!localVideo) return;
+                        
+                        // Draw the current video frame on a canvas
+                        const canvas = document.createElement('canvas');
+                        canvas.width = localVideo.videoWidth || 640;
+                        canvas.height = localVideo.videoHeight || 480;
+                        const ctx = canvas.getContext('2d');
+                        ctx.drawImage(localVideo, 0, 0, canvas.width, canvas.height);
+                        
+                        // Convert frame to base64 JPEG format (0.7 compression ratio)
+                        const base64Image = canvas.toDataURL('image/jpeg', 0.7);
+                        
+                        // POST the frame to the backend moderation endpoint
+                        const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}/verify-frame`, {
+                            method: 'POST',
+                            headers: {
+                                'Content-Type': 'application/json',
+                                'Authorization': `Bearer ${hostUser.token}`
+                            },
+                            body: JSON.stringify({ base64Image })
+                        });
+                        
+                        const result = await res.json();
+                        console.log("[Moderation Check Result]:", result);
+                    } catch (err) {
+                        console.error("[Moderation Check Error]:", err);
+                    }
+                }, 20000); // 20 seconds interval
+                */
+            } catch (err) {
+                console.error("Go Live error:", err);
+            }
+        };
+
+        E.btnHostEnd.onclick = async () => {
+            if (!currentLiveStreamRecord) return;
+            const token = hostUser.token;
+
+            try {
+                appendSystemAlert("Shutting down stream...");
+                await fetch(`${STREAM_API_BASE}/end/${currentLiveStreamRecord.id}`, {
+                    method: 'POST',
+                    headers: { 'Authorization': `Bearer ${token}` }
+                });
+                cleanupContext();
+            } catch (err) {
+                console.error("End stream error:", err);
+            }
+        };
+
+        async function connectLiveKitHost(livekitToken) {
+            try {
+                if (room) room.disconnect();
+                room = new LivekitClient.Room({ adaptiveStream: true, dynacast: true });
+                await room.connect(LIVEKIT_URL, livekitToken);
+
+                isMicEnabled = true;
+                isCamEnabled = true;
+                updateMediaControlUI();
+                document.getElementById('divMediaControls').classList.remove('hidden');
+
+                await room.localParticipant.setCameraEnabled(true);
+                await room.localParticipant.setMicrophoneEnabled(true);
+
+                const videoTracks = Array.from(room.localParticipant.videoTrackPublications.values());
+                if (videoTracks.length > 0 && videoTracks[0].track) {
+                    E.vidLocal.classList.remove('hidden');
+                    videoTracks[0].track.attach(E.vidLocal);
+                }
+                appendSystemAlert("🔌 Camera Feed Published.");
+            } catch (err) {
+                console.error("LiveKit connection error:", err);
+                appendSystemAlert("❌ LiveKit access failed.");
+            }
+        }
+
+        E.btnClearChat.onclick = () => {
+            if (socket && currentRoomUuid) {
+                socket.emit("clear_chat", { streamId: currentRoomUuid });
+            }
+        };
+
+        E.chkChatsOnly.onchange = async () => {
+            if (currentLiveStreamRecord) {
+                await fetchChatHistory(currentLiveStreamRecord.id);
+            } else {
+                renderChatBox();
+            }
+        };
+
+        async function fetchChatHistory(streamDbId) {
+            try {
+                const chatsOnly = E.chkChatsOnly.checked;
+                const res = await fetch(`${STREAM_API_BASE}/${streamDbId}/messages?chatsOnly=${chatsOnly}`, {
+                    headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.data) {
+                    messageHistory = data.data;
+                    renderChatBox();
+                }
+            } catch (err) {
+                console.error("Fetch chat history error:", err);
+            }
+        }
+
+        E.btnSendChat.onclick = sendChatMessage;
+        E.txtChatMessage.onkeydown = (e) => {
+            if (e.key === 'Enter') sendChatMessage();
+        };
+        E.btnCancelReply.onclick = cancelReply;
+
+        async function sendChatMessage() {
+            const text = E.txtChatMessage.value.trim();
+            if (!text || !currentLiveStreamRecord || !hostUser) return;
+
+            const payload = { message: text };
+            if (activeReplyState) {
+                payload.replyToMessageId = activeReplyState.messageId;
+                payload.replyToUserId = activeReplyState.userId;
+                payload.replyToUsername = activeReplyState.username;
+                payload.replyToText = activeReplyState.text;
+            }
+
+            try {
+                await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}/message`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${hostUser.token}`
+                    },
+                    body: JSON.stringify(payload)
+                });
+                E.txtChatMessage.value = "";
+                cancelReply();
+            } catch (err) {
+                console.error("Send message error:", err);
+            }
+        }
+
+        const SYSTEM_SENDER_ID = "00000000-0000-0000-0000-000000000000";
+
+        function renderChatBox() {
+            E.divChatBox.innerHTML = "";
+            const chatsOnly = E.chkChatsOnly.checked;
+
+            messageHistory.forEach(msg => {
+                if (chatsOnly && msg.senderId === SYSTEM_SENDER_ID) {
+                    return;
+                }
+
+                if (msg.senderId === SYSTEM_SENDER_ID) {
+                    const div = document.createElement("div");
+                    div.className = "p-1.5 bg-purple-950/20 text-purple-300 rounded border border-purple-900/30 text-center text-[10px] italic my-1";
+                    div.innerText = msg.message;
+                    E.divChatBox.appendChild(div);
+                } else {
+                    const div = document.createElement("div");
+                    let customBubbleClass = "bg-gray-900 border border-gray-855";
+                    if (msg.chatBubble && msg.chatBubble.effectUrl) {
+                        customBubbleClass = `bubble-gradient-${msg.chatBubble.effectUrl}`;
+                    }
+                    div.className = `p-2 ${customBubbleClass} rounded flex flex-col space-y-0.5 text-left my-1`;
+                    const senderName = msg.sender?.username || "Guest";
+                    const dateStr = new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                    let replyBlockHtml = "";
+                    if (msg.replyToUsername && msg.replyToText) {
+                        replyBlockHtml = `
+                            <div class="bg-gray-950/60 p-1 border-l-2 border-purple-500 rounded text-[9px] text-gray-400 mb-1 truncate">
+                                ↩️ Reply to @${msg.replyToUsername}: "${msg.replyToText}"
+                            </div>
+                        `;
+                    }
+
+                    const cleanMsgText = msg.message.replace(/'/g, "\\'").replace(/"/g, '\\"');
+
+                    div.innerHTML = `
+                        <div class="flex justify-between items-center text-[10px] mb-0.5">
+                            <span class="font-extrabold text-purple-400 cursor-pointer hover:underline" onclick="openUserProfileFromChat('${msg.senderId}', '${senderName}')">${senderName}</span>
+                            <div class="flex items-center space-x-1.5">
+                                <button class="text-purple-400 hover:text-purple-300 font-bold" onclick="setReplyTarget('${msg.id}', '${msg.senderId}', '${senderName}', '${cleanMsgText}')">Reply</button>
+                                <span class="text-gray-500 font-mono">${dateStr}</span>
+                            </div>
+                        </div>
+                        ${replyBlockHtml}
+                        <p class="text-gray-200 leading-tight">${msg.message}</p>
+                    `;
+                    E.divChatBox.appendChild(div);
+                }
+            });
+            E.divChatBox.scrollTop = E.divChatBox.scrollHeight;
+        }
+
+        function appendMessage(msg) {
+            messageHistory.push(msg);
+            renderChatBox();
+        }
+
+        function appendSystemAlert(text) {
+            const div = document.createElement("div");
+            div.className = "p-1.5 bg-purple-950/20 text-purple-300 rounded border border-purple-900/30 text-center text-[10px] italic my-1";
+            div.innerText = text;
+            E.divChatBox.appendChild(div);
+            E.divChatBox.scrollTop = E.divChatBox.scrollHeight;
+        }
+
+        function cleanupContext() {
+            if (moderationInterval) {
+                clearInterval(moderationInterval);
+                moderationInterval = null;
+            }
+            if (room) {
+                room.disconnect();
+                room = null;
+            }
+            E.vidLocal.classList.add('hidden');
+            E.divLiveBadge.classList.add('hidden');
+            E.lblRoomTitle.innerText = "Offline Console";
+            E.lblRoomId.innerText = "Please click Go Live to start broadcasting";
+
+            E.btnHostStart.classList.remove('hidden');
+            E.btnHostEnd.classList.add('hidden');
+            E.btnHostSettings.classList.add('hidden');
+            E.settingsModal.classList.add('hidden');
+            E.cardActiveViewers.classList.add('hidden');
+            E.cardAudioSheet.classList.add('hidden');
+            E.divViewerList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>';
+            E.divSheetUserList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>';
+            pendingSheetRequests = [];
+            renderSheetRequests();
+
+            E.txtChatMessage.disabled = true;
+            E.btnSendChat.disabled = true;
+
+            document.getElementById('divMediaControls').classList.add('hidden');
+            document.getElementById('lblLocalFeedPlaceholder').innerText = "🎥 Local WebCam Feed";
+
+            currentLiveStreamRecord = null;
+            currentRoomUuid = null;
+            messageHistory = [];
+            appendSystemAlert("🔌 Session ended.");
+        }
+
+        let pendingSheetRequests = []; // Array of { userId, username }
+        let sheetUsers = [];           // Array of { userId, username, isMuted }
+        let activeViewers = [];
+
+        function addSheetRequest(userId, username) {
+            if (!pendingSheetRequests.find(r => r.userId === userId)) {
+                pendingSheetRequests.push({ userId, username });
+            }
+            renderSheetRequests();
+        }
+
+        function removeSheetRequest(userId) {
+            pendingSheetRequests = pendingSheetRequests.filter(r => r.userId !== userId);
+            renderSheetRequests();
+        }
+
+        function renderSheetRequests() {
+            if (pendingSheetRequests.length === 0) {
+                E.divPendingRequestsContainer.classList.add('hidden');
+                E.divPendingRequestsList.innerHTML = "";
+                return;
+            }
+
+            E.divPendingRequestsContainer.classList.remove('hidden');
+            E.divPendingRequestsList.innerHTML = pendingSheetRequests.map(req => `
+                <div class="flex items-center justify-between bg-purple-950/40 border border-purple-900/60 p-2 rounded">
+                    <span class="text-xs font-semibold text-purple-300">${req.username}</span>
+                    <div class="flex space-x-1.5">
+                        <button onclick="acceptSheetRequest('${req.userId}')" class="bg-green-600 hover:bg-green-500 text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition text-white">Accept</button>
+                        <button onclick="rejectSheetRequest('${req.userId}')" class="bg-red-600 hover:bg-red-500 text-[10px] px-2.5 py-1 rounded font-bold cursor-pointer transition text-white">Reject</button>
+                    </div>
+                </div>
+            `).join('');
+        }
+
+        window.acceptSheetRequest = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("accept_sheet_request", { streamId: currentRoomUuid, targetUserId });
+                removeSheetRequest(targetUserId);
+            }
+        };
+
+        window.rejectSheetRequest = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("reject_sheet_request", { streamId: currentRoomUuid, targetUserId });
+                removeSheetRequest(targetUserId);
+            }
+        };
+
+        window.inviteToSheet = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("invite_to_sheet", {
+                    streamId: currentRoomUuid,
+                    targetUserId
+                });
+                appendSystemAlert(`🎙️ Invitation sent to user.`);
+            }
+        };
+
+        window.toggleSheetMute = (targetUserId, currentMuteState) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("toggle_sheet_mute", {
+                    streamId: currentRoomUuid,
+                    targetUserId,
+                    muteState: !currentMuteState
+                });
+            }
+        };
+
+        window.removeFromSheet = (targetUserId) => {
+            if (socket && currentRoomUuid) {
+                socket.emit("remove_from_sheet", {
+                    streamId: currentRoomUuid,
+                    targetUserId
+                });
+            }
+        };
+
+        async function syncSheetUsers() {
+            if (!currentLiveStreamRecord || !hostUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                });
+                const data = await res.json();
+                if (data.success && data.sheetUsers) {
+                    sheetUsers = data.sheetUsers;
+                    renderSheetUsers();
+                }
+            } catch (err) {
+                console.error("Failed to sync sheet users:", err);
+            }
+        }
+
+        function renderSheetUsers() {
+            if (sheetUsers.length === 0) {
+                E.divSheetUserList.innerHTML = `<p class="text-gray-500 italic text-[11px] text-center my-2">Sheet is empty</p>`;
+                return;
+            }
+
+            E.divSheetUserList.innerHTML = sheetUsers.map(u => {
+                const muteLabel = u.isMuted ? "Unmute" : "Mute";
+                const muteClass = u.isMuted ? "bg-amber-600 hover:bg-amber-500" : "bg-gray-850 hover:bg-gray-800";
+                const muteIcon = u.isMuted ? "🔇" : "🎙️";
+                return `
+                    <div class="flex items-center justify-between bg-gray-950 p-2 border border-gray-850 rounded">
+                        <div class="flex items-center space-x-1.5">
+                            <span class="text-xs text-yellow-450">${muteIcon}</span>
+                            <span class="text-xs font-semibold text-gray-200">${u.username}</span>
+                        </div>
+                        <div class="flex space-x-1.5">
+                            <button onclick="toggleSheetMute('${u.userId}', ${u.isMuted})" class="${muteClass} text-[10px] px-2 py-0.5 rounded cursor-pointer transition text-white font-semibold">${muteLabel}</button>
+                            <button onclick="removeFromSheet('${u.userId}')" class="bg-red-650 hover:bg-red-500 text-[10px] px-2 py-0.5 rounded cursor-pointer transition text-white font-semibold">Remove</button>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        async function syncStreamViewers() {
+            if (!currentLiveStreamRecord || !hostUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    E.lblViewerCount.innerText = data.viewerCount;
+                    activeViewers = data.viewers || [];
+                    renderViewerList();
+                }
+            } catch (err) {
+                console.error("Sync viewers failed:", err);
+            }
+        }
+
+        function renderViewerList() {
+            E.divViewerList.innerHTML = "";
+
+            if (activeViewers.length === 0) {
+                E.divViewerList.innerHTML = '<p class="text-gray-500 italic text-[11px] text-center my-2">No active viewers</p>';
+                return;
+            }
+
+            activeViewers.forEach(v => {
+                const div = document.createElement("div");
+                div.className = "flex items-center justify-between p-2 bg-gray-950 rounded border border-gray-800 text-xs";
+
+                const nameSpan = document.createElement("span");
+                nameSpan.className = "font-semibold flex items-center space-x-1.5 cursor-pointer hover:text-pink-400 transition";
+                nameSpan.innerHTML = `
+                    <span class="text-gray-300">${v.username || 'Guest User'}</span>
+                    ${v.isAdmin ? '<span class="bg-purple-950/80 text-purple-400 text-[9px] px-1.5 py-0.5 rounded font-bold border border-purple-800/40">Admin 👑</span>' : ''}
+                `;
+                nameSpan.onclick = () => showUserProfileModal(v, v.isAdmin ? "Room Admin" : "Room Viewer");
+
+                const actionDiv = document.createElement("div");
+                actionDiv.className = "flex items-center space-x-1.5";
+
+                // Admin Toggle Button
+                const btnAdmin = document.createElement("button");
+                btnAdmin.className = v.isAdmin
+                    ? "bg-purple-950 border border-purple-800 text-purple-400 hover:bg-purple-900 px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer"
+                    : "bg-gray-800 hover:bg-gray-700 text-gray-300 px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer";
+                btnAdmin.innerText = v.isAdmin ? "Demote" : "Promote";
+                btnAdmin.onclick = () => toggleAdminStatus(v.id);
+
+                // Kick Button
+                const btnKick = document.createElement("button");
+                btnKick.className = "bg-red-950/40 border border-red-900/60 text-red-400 hover:bg-red-900/40 px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer";
+                btnKick.innerText = "Kick";
+                btnKick.onclick = () => kickUser(v.id);
+
+                // Invite to Sheet / Sheet Badge
+                const isOnSheet = sheetUsers.some(su => su.userId === v.id);
+                if (isOnSheet) {
+                    const sheetBadge = document.createElement("span");
+                    sheetBadge.className = "bg-yellow-950/80 text-yellow-400 text-[9px] px-1.5 py-1.5 rounded font-bold border border-yellow-800/40 mr-1";
+                    sheetBadge.innerText = "🎙️ Sheet";
+                    actionDiv.appendChild(sheetBadge);
+                } else {
+                    const btnInvite = document.createElement("button");
+                    btnInvite.className = "bg-yellow-600 hover:bg-yellow-500 text-white px-2 py-1 rounded text-[10px] font-bold transition cursor-pointer mr-1";
+                    btnInvite.innerText = "Invite";
+                    btnInvite.onclick = () => inviteToSheet(v.id);
+                    actionDiv.appendChild(btnInvite);
+                }
+
+                actionDiv.appendChild(btnAdmin);
+                actionDiv.appendChild(btnKick);
+
+                div.appendChild(nameSpan);
+                div.appendChild(actionDiv);
+                E.divViewerList.appendChild(div);
+            });
+        }
+
+        async function toggleAdminStatus(targetUserId) {
+            if (!currentLiveStreamRecord || !hostUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}/toggle-admin`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${hostUser.token}`
+                    },
+                    body: JSON.stringify({ targetUserId })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    alert(data.message);
+                } else {
+                    await syncStreamViewers();
+                }
+            } catch (err) {
+                console.error("Toggle admin failed:", err);
+            }
+        }
+
+        async function kickUser(targetUserId) {
+            if (!currentLiveStreamRecord || !hostUser) return;
+            if (!confirm("Are you sure you want to remove this user from the stream?")) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}/kick`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${hostUser.token}`
+                    },
+                    body: JSON.stringify({ targetUserId })
+                });
+                const data = await res.json();
+                if (!data.success) {
+                    alert(data.message);
+                } else {
+                    await syncStreamViewers();
+                }
+            } catch (err) {
+                console.error("Kick user failed:", err);
+            }
+        }
+
+        function showUserProfileModal(userObj, role) {
+            const existing = document.getElementById('userProfileModal');
+            if (existing) existing.remove();
+
+            const modal = document.createElement("div");
+            modal.id = "userProfileModal";
+            modal.className = "fixed inset-0 bg-black/70 backdrop-blur-sm z-[9999] flex items-center justify-center p-4";
+
+            modal.innerHTML = `
+                <div class="bg-gray-950 border border-gray-800 rounded-2xl w-full max-w-sm p-6 shadow-2xl space-y-5 relative">
+                    <!-- Close button -->
+                    <button onclick="document.getElementById('userProfileModal').remove()" class="absolute top-4 right-4 text-gray-400 hover:text-white transition cursor-pointer text-lg font-bold">✕</button>
+                    
+                    <!-- Header/Avatar placeholder -->
+                    <div class="flex flex-col items-center text-center space-y-2.5">
+                        <div class="h-16 w-16 bg-gradient-to-tr from-pink-500 to-purple-600 rounded-full flex items-center justify-center text-2xl font-black text-white shadow-lg">
+                            ${userObj.username.charAt(0).toUpperCase()}
+                        </div>
+                        <div>
+                            <h4 class="text-base font-extrabold text-gray-100">${userObj.username}</h4>
+                            <p class="text-[10px] uppercase font-bold tracking-widest text-purple-400 mt-0.5">${role}</p>
+                        </div>
+                    </div>
+
+                    <!-- Details grid -->
+                    <div class="grid grid-cols-2 gap-3 bg-gray-900/60 p-4 rounded-xl border border-gray-800">
+                        <div class="text-center space-y-0.5">
+                            <span class="block text-[10px] text-gray-500 uppercase font-medium">Wealth Level</span>
+                            <span class="block text-base font-black text-yellow-500">🏆 Lvl ${userObj.wealthLevel || 0}</span>
+                        </div>
+                        <div class="text-center space-y-0.5">
+                            <span class="block text-[10px] text-gray-500 uppercase font-medium">Live Level</span>
+                            <span class="block text-base font-black text-pink-500">🔥 Lvl ${userObj.livestreamLevel || 0}</span>
+                        </div>
+                    </div>
+
+                    <!-- Action Button -->
+                    ${(hostUser && userObj.id !== hostUser.id) ? `
+                    <div class="flex flex-col gap-2 pt-2">
+                        <button onclick="mentionUserInChat('${userObj.username}')" class="w-full bg-gradient-to-r from-blue-500 to-indigo-600 hover:from-blue-600 hover:to-indigo-700 text-white font-semibold py-2 px-4 rounded-xl shadow-lg transition cursor-pointer text-xs flex items-center justify-center gap-1.5">
+                            <span>💬</span> Mention in Chat
+                        </button>
+                    </div>
+                    ` : ''}
+                </div>
+            `;
+
+            document.body.appendChild(modal);
+        }
+
+        // Settings Modal Event Listeners
+        E.btnHostSettings.onclick = async () => {
+            if (!currentLiveStreamRecord || !hostUser) return;
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}`, {
+                    headers: { 'Authorization': `Bearer ${hostUser.token}` }
+                });
+                const data = await res.json();
+                if (data.success) {
+                    const isProtected = data.isPasswordProtected;
+                    const pwd = data.roomPassword || "";
+
+                    E.chkPasswordProtected.checked = isProtected;
+                    E.txtRoomPassword.value = pwd;
+
+                    if (isProtected) {
+                        E.divPasswordField.classList.remove('hidden');
+                    } else {
+                        E.divPasswordField.classList.add('hidden');
+                    }
+
+                    E.settingsModal.classList.remove('hidden');
+                } else {
+                    alert("Failed to load stream settings: " + data.message);
+                }
+            } catch (err) {
+                console.error("Load settings error:", err);
+            }
+        };
+
+        E.btnCloseSettings.onclick = () => {
+            E.settingsModal.classList.add('hidden');
+        };
+
+        E.settingsModal.onclick = (e) => {
+            if (e.target === E.settingsModal) {
+                E.settingsModal.classList.add('hidden');
+            }
+        };
+
+        E.chkPasswordProtected.onchange = () => {
+            if (E.chkPasswordProtected.checked) {
+                E.divPasswordField.classList.remove('hidden');
+            } else {
+                E.divPasswordField.classList.add('hidden');
+            }
+        };
+
+        E.btnSaveSettings.onclick = async () => {
+            if (!currentLiveStreamRecord || !hostUser) return;
+
+            const isChecked = E.chkPasswordProtected.checked;
+            const password = isChecked ? E.txtRoomPassword.value.trim() : "";
+
+            if (isChecked && !password) {
+                alert("Please enter a password or disable password protection.");
+                return;
+            }
+
+            E.btnSaveSettings.disabled = true;
+            E.btnSaveSettings.innerText = "Saving...";
+
+            try {
+                const res = await fetch(`${STREAM_API_BASE}/${currentLiveStreamRecord.id}/password`, {
+                    method: 'POST',
+                    headers: {
+                        'Content-Type': 'application/json',
+                        'Authorization': `Bearer ${hostUser.token}`
+                    },
+                    body: JSON.stringify({ password })
+                });
+                const data = await res.json();
+                if (data.success) {
+                    appendSystemAlert(isChecked ? "🔒 Room password protected." : "🔓 Password protection disabled.");
+                    E.settingsModal.classList.add('hidden');
+                } else {
+                    alert("Failed to update password: " + data.message);
+                }
+            } catch (err) {
+                console.error("Save settings error:", err);
+                alert("An error occurred while saving settings.");
+            } finally {
+                E.btnSaveSettings.disabled = false;
+                E.btnSaveSettings.innerText = "Save Changes";
+            }
+        };
+
+        function showGiftAnimation(senderName, giftName, wealthLevel, isLevelUp, effectUrl, targetUserName) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay) return;
+
+            const animationDiv = document.createElement("div");
+            animationDiv.className = "gift-pop flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.7)] z-50 transition duration-500 transform scale-100";
+
+            let displayContent = "";
+            let duration = 3000;
+
+            if (effectUrl) {
+                const isVideo = effectUrl.toLowerCase().endsWith(".mp4") || effectUrl.includes("effect-") || effectUrl.includes("/video");
+                if (isVideo) {
+                    displayContent = `
+                        <div class="relative w-[280px] h-[280px] flex items-center justify-center rounded-2xl overflow-hidden border border-pink-500/30 bg-black/70 backdrop-blur-md shadow-2xl">
+                            <video src="${effectUrl}" autoplay muted playsinline class="w-full h-full object-cover"></video>
+                        </div>
+                    `;
+                    duration = 6000;
+                } else {
+                    displayContent = `
+                        <img src="${effectUrl}" class="w-[180px] h-[180px] object-contain rounded-2xl animate-bounce" alt="${giftName}" />
+                    `;
+                    duration = 4000;
+                }
+            } else {
+                let emoji = "🎁";
+                if (giftName.toLowerCase().includes("rose")) emoji = "🌹";
+                else if (giftName.toLowerCase().includes("heart")) emoji = "💖";
+                else if (giftName.toLowerCase().includes("crown")) emoji = "👑";
+                else if (giftName.toLowerCase().includes("skull")) emoji = "💀";
+
+                displayContent = `<span class="text-7xl animate-bounce">${emoji}</span>`;
+            }
+
+            const targetText = targetUserName ? ` to @${targetUserName}` : '';
+            animationDiv.innerHTML = `
+                ${displayContent}
+                <span class="text-[10px] bg-black/90 text-white font-black px-4 py-2 rounded-full border border-pink-500/40 mt-3 tracking-widest uppercase shadow-lg">
+                    ✨ ${senderName} sent ${giftName}${targetText}! ✨
+                </span>
+            `;
+
+            overlay.appendChild(animationDiv);
+
+            setTimeout(() => {
+                animationDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    animationDiv.remove();
+                }, 500);
+            }, duration);
+
+            if (isLevelUp) {
+                const lvToast = document.createElement("div");
+                lvToast.className = "level-up-toast bg-gradient-to-r from-yellow-500 via-amber-500 to-yellow-600 text-black px-6 py-3 rounded-xl border-2 border-yellow-300 font-black text-center shadow-2xl pointer-events-none transform scale-110 tracking-wider mt-3";
+                lvToast.innerHTML = `
+                    <div class="text-xl mb-0.5">🎉 LEVEL UP! 🎉</div>
+                    <div class="text-[10px] uppercase">${senderName} reached Wealth Level ${wealthLevel}!</div>
+                `;
+                overlay.appendChild(lvToast);
+
+                setTimeout(() => {
+                    lvToast.remove();
+                }, 4000);
+            }
+        }
+
+        function showEntryRideAnimation(username, ride) {
+            const overlay = document.getElementById("giftAnimationOverlay");
+            if (!overlay || !ride) return;
+
+            const animationDiv = document.createElement("div");
+            animationDiv.className = "flex flex-col items-center justify-center pointer-events-none drop-shadow-[0_15px_30px_rgba(0,0,0,0.8)] z-50 transition duration-500 transform";
+
+            // Choose animation keyframe class based on effectUrl
+            let animationClass = "ride-animation-slide"; // default slide
+            let vehicleSvgOrImg = "";
+
+            if (ride.effectUrl === "dragon") {
+                animationClass = "ride-animation-fly";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🐉</span>`;
+            } else if (ride.effectUrl === "spaceship") {
+                animationClass = "ride-animation-warp";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🛸</span>`;
+            } else if (ride.effectUrl === "gold-car") {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">🏎️</span>`;
+            } else if (ride.effectUrl === "royal-carriage") {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl animate-pulse">👑🐴</span>`;
+            } else if (ride.displayImageUrl) {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<img src="${ride.displayImageUrl}" class="w-[180px] h-[180px] object-contain" alt="${ride.name}" />`;
+            } else {
+                animationClass = "ride-animation-slide";
+                vehicleSvgOrImg = `<span class="text-9xl">🚗</span>`;
+            }
+
+            animationDiv.classList.add(animationClass);
+
+            animationDiv.innerHTML = `
+                <div class="flex flex-col items-center justify-center">
+                    ${vehicleSvgOrImg}
+                    <div class="mt-4 px-6 py-3 rounded-2xl bg-gradient-to-r from-purple-900/90 via-indigo-950/90 to-purple-900/90 border-2 border-purple-500/50 shadow-2xl backdrop-blur-md text-center max-w-md">
+                        <div class="text-[10px] text-purple-400 font-extrabold uppercase tracking-widest animate-pulse">✨ Premium Entrance ✨</div>
+                        <div class="text-sm font-black text-transparent bg-clip-text bg-gradient-to-r from-yellow-400 via-amber-200 to-yellow-400 mt-1">
+                            ${username} has joined the room on ${ride.name}!
+                        </div>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(animationDiv);
+
+            setTimeout(() => {
+                animationDiv.classList.add("opacity-0", "scale-75");
+                setTimeout(() => {
+                    animationDiv.remove();
+                }, 500);
+            }, 4500);
+        }
+
+        function showGlobalMessageToast(senderName, message, wealthLevel) {
+            const overlay = document.getElementById("globalMessageOverlay");
+            if (!overlay) return;
+
+            const toast = document.createElement("div");
+            toast.className = "w-full bg-gradient-to-r from-red-600 via-pink-600 to-purple-600 p-[2px] rounded-2xl shadow-[0_10px_25px_rgba(219,39,119,0.5)] transition duration-500 transform translate-y-[-50px] opacity-0 flex items-center pointer-events-auto";
+
+            toast.innerHTML = `
+                <div class="w-full bg-gray-900/90 backdrop-blur-md rounded-2xl p-4 flex items-center space-x-3 text-white">
+                    <div class="flex-shrink-0 bg-gradient-to-tr from-pink-500 to-yellow-400 p-2.5 rounded-xl text-xl animate-pulse">
+                        📢
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="font-extrabold text-pink-400 text-sm tracking-wide">${senderName}</span>
+                            <span class="bg-yellow-400/20 text-yellow-400 text-[9px] px-1.5 py-0.5 rounded-full font-bold">LV.${wealthLevel || 1}</span>
+                            <span class="text-[10px] text-gray-400 uppercase tracking-widest font-black ml-auto">GLOBAL BROADCAST</span>
+                        </div>
+                        <p class="text-xs text-gray-200 mt-1 font-semibold leading-relaxed break-words">${message}</p>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(toast);
+
+            // Animate In
+            setTimeout(() => {
+                toast.classList.remove("translate-y-[-50px]", "opacity-0");
+                toast.classList.add("translate-y-0", "opacity-100");
+            }, 50);
+
+            // Animate Out & Remove
+            setTimeout(() => {
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-[-20px]", "opacity-0");
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 7000); // Display for 7 seconds
+        }
+
+        function showGlobalAnnouncement(announcement) {
+            const overlay = document.getElementById("globalMessageOverlay");
+            if (!overlay || !announcement) return;
+
+            const { type, data } = announcement;
+            const toast = document.createElement("div");
+
+            let bgGradient = "from-red-600 via-pink-600 to-purple-600 shadow-[0_10px_25px_rgba(219,39,119,0.5)]";
+            let icon = "📢";
+            let messageHtml = "";
+
+            if (type === "HIGH_VALUE_GIFT") {
+                bgGradient = "from-yellow-500 via-amber-500 to-yellow-600 shadow-[0_10px_25px_rgba(245,158,11,0.5)]";
+                icon = "🎁";
+                messageHtml = `
+                    <span class="font-black text-yellow-400">${data.senderName}</span>
+                    <span class="text-gray-300">sent a premium</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-amber-200 uppercase">${data.giftName}</span>
+                    <span class="text-gray-300">(${data.coinCost} coins) to Host</span>
+                    <span class="font-black text-pink-400">${data.hostName}</span>!
+                `;
+            } else if (type === "WEALTH_LEVEL_UP") {
+                bgGradient = "from-purple-600 via-indigo-600 to-purple-700 shadow-[0_10px_25px_rgba(168,85,247,0.5)]";
+                icon = "👑";
+                messageHtml = `
+                    <span class="text-gray-300">Congratulations to</span>
+                    <span class="font-black text-purple-300">${data.username}</span>
+                    <span class="text-gray-300">for reaching</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-yellow-300 to-yellow-500">Wealth Level ${data.newLevel}</span>!
+                `;
+            } else if (type === "PREMIUM_ENTRANCE") {
+                bgGradient = "from-indigo-600 via-purple-600 to-pink-600 shadow-[0_10px_25px_rgba(99,102,241,0.5)]";
+                icon = "🛸";
+                messageHtml = `
+                    <span class="text-gray-200">VIP</span>
+                    <span class="font-black text-yellow-300">${data.username}</span>
+                    <span class="text-gray-200">has joined the room of</span>
+                    <span class="font-black text-pink-400">${data.hostName}</span>
+                    <span class="text-gray-200">riding a</span>
+                    <span class="font-extrabold text-transparent bg-clip-text bg-gradient-to-r from-pink-300 to-purple-300 uppercase">${data.rideName}</span>!
+                `;
+            }
+
+            toast.className = `w-full bg-gradient-to-r ${bgGradient} p-[2px] rounded-2xl transition duration-500 transform translate-y-[-50px] opacity-0 flex items-center pointer-events-auto`;
+
+            toast.innerHTML = `
+                <div class="w-full bg-gray-950/95 backdrop-blur-md rounded-2xl p-4 flex items-center space-x-3 text-white">
+                    <div class="flex-shrink-0 bg-white/10 p-2 rounded-xl text-xl animate-bounce">
+                        ${icon}
+                    </div>
+                    <div class="flex-1 min-w-0">
+                        <div class="flex items-center space-x-2">
+                            <span class="text-[10px] text-yellow-400 uppercase tracking-widest font-black">Global Announcement</span>
+                        </div>
+                        <p class="text-xs text-gray-100 mt-1 font-semibold leading-relaxed break-words">
+                            ${messageHtml}
+                        </p>
+                    </div>
+                </div>
+            `;
+
+            overlay.appendChild(toast);
+
+            // Animate In
+            setTimeout(() => {
+                toast.classList.remove("translate-y-[-50px]", "opacity-0");
+                toast.classList.add("translate-y-0", "opacity-100");
+            }, 50);
+
+            // Animate Out & Remove
+            setTimeout(() => {
+                toast.classList.remove("translate-y-0", "opacity-100");
+                toast.classList.add("translate-y-[-20px]", "opacity-0");
+                setTimeout(() => {
+                    toast.remove();
+                }, 500);
+            }, 8000); // Display for 8 seconds
+        }
+
+        let giftGalleryData = null;
+
+        async function fetchGiftGalleryTargets(hostId) {
+            try {
+                if (!hostUser) return;
+                const res = await fetch(`${STREAM_API_BASE}/gift-gallery/targets?hostId=${hostId}`, {
+                    headers: { "Authorization": `Bearer ${hostUser.token}` }
+                });
+                const json = await res.json();
+                if (json.success && json.data) {
+                    giftGalleryData = json.data;
+                    updateGiftGalleryBadge();
+                }
+            } catch (err) {
+                console.error("Failed to fetch gift gallery targets:", err);
+            }
+        }
+
+        function updateGiftGalleryBadge() {
+            if (!giftGalleryData) return;
+            const badge = document.getElementById("divGiftGalleryBadge");
+            const label = document.getElementById("lblGiftGalleryProgress");
+
+            if (badge && label) {
+                label.innerText = `${giftGalleryData.currentProgress}/${giftGalleryData.totalTarget}`;
+                badge.classList.remove("hidden");
+            }
+        }
+
+        function updateGiftGalleryTargetsUI(currentProgress, totalTarget, unlockedGiftId) {
+            if (giftGalleryData) {
+                giftGalleryData.currentProgress = currentProgress;
+                giftGalleryData.totalTarget = totalTarget;
+                if (giftGalleryData.gifts) {
+                    const gift = giftGalleryData.gifts.find(g => g.giftId === unlockedGiftId);
+                    if (gift) {
+                        gift.isReceived = true;
+                    }
+                }
+                updateGiftGalleryBadge();
+                if (document.getElementById("modalGiftGallery") && !document.getElementById("modalGiftGallery").classList.contains("hidden")) {
+                    renderGiftGalleryModalContent();
+                }
+            }
+        }
+
+        function openGiftGalleryModal() {
+            const modal = document.getElementById("modalGiftGallery");
+            if (!modal) return;
+            renderGiftGalleryModalContent();
+            modal.classList.remove("hidden");
+            setTimeout(() => {
+                modal.classList.remove("opacity-0");
+                modal.querySelector(".transform").classList.remove("scale-95");
+            }, 10);
+        }
+
+        function closeGiftGalleryModal() {
+            const modal = document.getElementById("modalGiftGallery");
+            if (!modal) return;
+            modal.classList.add("opacity-0");
+            modal.querySelector(".transform").classList.add("scale-95");
+            setTimeout(() => {
+                modal.classList.add("hidden");
+            }, 300);
+        }
+
+        function renderGiftGalleryModalContent() {
+            if (!giftGalleryData) return;
+
+            const progressText = document.getElementById("lblModalGalleryProgressText");
+            const progressBar = document.getElementById("progressBarModalGallery");
+            const grid = document.getElementById("divGiftGalleryGrid");
+
+            if (progressText) progressText.innerText = `${giftGalleryData.currentProgress}/${giftGalleryData.totalTarget} Collected`;
+
+            if (progressBar) {
+                const percent = giftGalleryData.totalTarget > 0 ? (giftGalleryData.currentProgress / giftGalleryData.totalTarget) * 100 : 0;
+                progressBar.style.width = `${percent}%`;
+            }
+
+            if (grid) {
+                grid.innerHTML = "";
+                if (!giftGalleryData.gifts || giftGalleryData.gifts.length === 0) {
+                    grid.innerHTML = `<div class="col-span-3 text-center py-4 text-xs text-gray-500">No target gifts configured for this month.</div>`;
+                    return;
+                }
+
+                giftGalleryData.gifts.forEach(item => {
+                    const card = document.createElement("div");
+                    card.className = `flex flex-col items-center p-2 rounded-xl border relative transition-all duration-300 ${item.isReceived
+                        ? "bg-indigo-500/10 border-indigo-500/30 text-gray-100"
+                        : "bg-gray-800/40 border-gray-800/80 opacity-60 text-gray-400"
+                        }`;
+
+                    card.innerHTML = `
+                        <div class="relative w-12 h-12 mb-1 flex items-center justify-center">
+                            <img src="${item.displayImageUrl || '/images/gift-default.png'}" alt="${item.name}" class="w-10 h-10 object-contain rounded-md" onerror="this.src='/placeholder-gift.png'">
+                            ${item.isReceived ? `
+                                <div class="absolute -top-1 -right-1 bg-green-500 text-white rounded-full w-4 h-4 flex items-center justify-center text-[9px] font-bold shadow-md">
+                                    ✓
+                                </div>
+                            ` : `
+                                <div class="absolute inset-0 bg-black/40 rounded-md flex items-center justify-center">
+                                    🔒
+                                </div>
+                            `}
+                        </div>
+                        <span class="text-[10px] font-bold text-center truncate w-full">${item.name}</span>
+                        <span class="text-[8px] text-gray-500 mt-0.5">${item.coinCost} Coins</span>
+                    `;
+                    grid.appendChild(card);
+                });
+            }
+        }
+
+        initHost();
+    </script>
+    <!-- Gift Gallery Target Modal -->
+    <div id="modalGiftGallery"
+        class="fixed inset-0 z-50 bg-black/70 backdrop-blur-sm flex items-center justify-center hidden opacity-0 transition-opacity duration-300">
+        <div
+            class="bg-gray-900 border border-gray-800 w-full max-w-md rounded-2xl p-6 shadow-2xl transform scale-95 transition-transform duration-300">
+            <div class="flex items-center justify-between border-b border-gray-800 pb-3">
+                <div class="flex items-center space-x-2">
+                    <span class="text-xl">🎁</span>
+                    <h3 class="font-extrabold text-base text-gray-200">Monthly Gift Gallery Target</h3>
+                </div>
+                <button onclick="closeGiftGalleryModal()" class="text-gray-400 hover:text-white transition">
+                    <svg xmlns="http://www.w3.org/2000/svg" class="h-6 w-6" fill="none" viewBox="0 0 24 24"
+                        stroke="currentColor">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2"
+                            d="M6 18L18 6M6 6l12 12" />
+                    </svg>
+                </button>
+            </div>
+
+            <div class="my-4">
+                <div class="flex justify-between items-center mb-1.5 text-xs text-gray-400">
+                    <span>Monthly Progress</span>
+                    <span class="font-bold text-indigo-400" id="lblModalGalleryProgressText">0/0 Collected</span>
+                </div>
+                <div class="w-full bg-gray-800 rounded-full h-2">
+                    <div id="progressBarModalGallery" class="bg-indigo-500 h-2 rounded-full transition-all duration-500"
+                        style="width: 0%"></div>
+                </div>
+            </div>
+
+            <div class="grid grid-cols-3 gap-3 max-h-60 overflow-y-auto pr-1" id="divGiftGalleryGrid">
+                <!-- Grid of gifts loaded dynamically -->
+            </div>
+
+            <div class="mt-4 pt-3 border-t border-gray-800 text-[10px] text-gray-500 text-center">
+                Collect all monthly gallery gifts to achieve your target!
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Gift Animation Overlay -->
+    <div id="giftAnimationOverlay"
+        class="fixed inset-0 pointer-events-none z-50 flex flex-col items-center justify-center space-y-4"></div>
+
+    <!-- Global Live Message Alert Overlay -->
+    <div id="globalMessageOverlay"
+        class="fixed top-6 left-1/2 transform -translate-x-1/2 pointer-events-none z-50 flex flex-col items-center space-y-3 w-full max-w-xl px-4">
+    </div>
+</body>
+
+</html>
