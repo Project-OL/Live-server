@@ -1,6 +1,6 @@
 import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
-import { endLiveStreamService } from './serviceLive.js';
+import { endLiveStreamService, toggleUserSheetMuteService } from './serviceLive.js';
 
 export const VALID_RESTRICTION_TYPES = [
   'LIVE_CHAT_MUTE',
@@ -128,7 +128,7 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
         restrictedUntil: restrictionEndDate,
         reason: reason || null,
         reportId: reportId || null,
-        createdByAdminId: adminId
+        createdByAdminId: adminId || userId
       }
     });
   });
@@ -147,7 +147,8 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
         const activeStream = await prisma.liveStream.findFirst({
           where: {
             userId: userId,
-            status: 'LIVE'
+            isLive: true,
+            endedAt: null
           }
         });
 
@@ -161,7 +162,57 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
     });
   }
 
+  // 3. If LIVE_AUDIO_MUTE applied, immediately auto-mute the user if sitting on any active audio sheet
+  if (type === 'LIVE_AUDIO_MUTE') {
+    setImmediate(async () => {
+      try {
+        const { broadcastToStream } = await import('./socket-live-service.js');
+        const activeStreams = await prisma.liveStream.findMany({
+          where: { isLive: true, endedAt: null },
+          select: { streamId: true, id: true }
+        });
+        for (const s of activeStreams) {
+          const sid = s.streamId || s.id;
+          const rawUser = await redisClient.hGet(`stream:sheet:${sid}`, userId);
+          if (rawUser) {
+            await toggleUserSheetMuteService({ streamId: sid, userId, muteState: true, mutedByHost: true });
+            broadcastToStream(sid, "sheet_mute_changed", { userId, isMuted: true });
+            console.log(`[Admin Restriction] Auto-muted user ${userId} on audio sheet for stream ${sid} due to LIVE_AUDIO_MUTE`);
+          }
+        }
+      } catch (muteErr) {
+        console.error('[Admin Restriction Auto-Mute Error]:', muteErr.message);
+      }
+    });
+  }
+
   return createdRestriction;
+}
+
+/**
+ * Helper to auto-unmute user on audio sheet when LIVE_AUDIO_MUTE is cleared
+ */
+async function autoUnmuteSheetUserIfRestricted(userId) {
+  setImmediate(async () => {
+    try {
+      const { broadcastToStream } = await import('./socket-live-service.js');
+      const activeStreams = await prisma.liveStream.findMany({
+        where: { isLive: true, endedAt: null },
+        select: { streamId: true, id: true }
+      });
+      for (const s of activeStreams) {
+        const sid = s.streamId || s.id;
+        const rawUser = await redisClient.hGet(`stream:sheet:${sid}`, userId);
+        if (rawUser) {
+          await toggleUserSheetMuteService({ streamId: sid, userId, muteState: false, mutedByHost: false });
+          broadcastToStream(sid, "sheet_mute_changed", { userId, isMuted: false });
+          console.log(`[Admin Restriction Clear] Auto-unmuted user ${userId} on audio sheet for stream ${sid}`);
+        }
+      }
+    } catch (unmuteErr) {
+      console.error('[Admin Restriction Auto-Unmute Error]:', unmuteErr.message);
+    }
+  });
 }
 
 /**
@@ -187,8 +238,13 @@ export async function clearRestrictionByIdService(userId, restrictionId, adminId
     }
   });
 
-  if (result.count > 0 && restriction && redisClient.isOpen) {
-    redisClient.del(`user:restriction:${userId}:${restriction.type}`).catch(() => {});
+  if (result.count > 0 && restriction) {
+    if (redisClient.isOpen) {
+      redisClient.del(`user:restriction:${userId}:${restriction.type}`).catch(() => {});
+    }
+    if (restriction.type === 'LIVE_AUDIO_MUTE') {
+      await autoUnmuteSheetUserIfRestricted(userId);
+    }
   }
 
   return result.count > 0;
@@ -211,8 +267,13 @@ export async function clearRestrictionsByTypeService(userId, type, adminId) {
     }
   });
 
-  if (result.count > 0 && redisClient.isOpen) {
-    redisClient.del(`user:restriction:${userId}:${type}`).catch(() => {});
+  if (result.count > 0) {
+    if (redisClient.isOpen) {
+      redisClient.del(`user:restriction:${userId}:${type}`).catch(() => {});
+    }
+    if (type === 'LIVE_AUDIO_MUTE') {
+      await autoUnmuteSheetUserIfRestricted(userId);
+    }
   }
 
   return result.count;

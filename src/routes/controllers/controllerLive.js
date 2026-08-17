@@ -31,7 +31,8 @@ import {
     getUserEffectSettingsService,
     updateUserEffectSettingsService,
     getFansRankingService,
-    sortRoomViewersService
+    sortRoomViewersService,
+    startLocalHlsEgressService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
@@ -99,10 +100,22 @@ const fastGoLiveStream = async (req, res) => {
     try {
         const banRestriction = await isUserRestrictedFast(req.userId, 'LIVE_STREAM_START_BAN');
         if (banRestriction) {
+            const untilIso = new Date(banRestriction.restrictedUntil).toISOString();
+            const formattedTime = new Date(banRestriction.restrictedUntil).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
             return res.status(403).json({
                 success: false,
                 code: 'LIVE_STREAM_START_BANNED',
-                message: `You are banned from starting a live stream until ${new Date(banRestriction.restrictedUntil).toLocaleString()}`
+                message: `You are banned from starting a live stream until ${formattedTime}`,
+                restrictedUntil: untilIso
             });
         }
 
@@ -209,6 +222,31 @@ const joinLiveStream = async (req, res) => {
         });
 
         const finalViewerCount = viewers.length;
+        const cdnDomain = process.env.CDN_DOMAIN;
+
+        let mode = "WEBRTC";
+        let hlsUrl = null;
+
+        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC, Viewers 51+ get BunnyCDN HLS
+        if (finalViewerCount > 50 && req.userId !== stream.userId) {
+            mode = "HLS";
+            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live.m3u8`;
+
+            // Auto-start Local Egress if not already active
+            if (redisClient.isOpen) {
+                const egressKey = `stream:egress:${stream.streamId}`;
+                redisClient.get(egressKey).then(async (activeEgressId) => {
+                    if (!activeEgressId) {
+                        const newEgressId = await startLocalHlsEgressService(stream.streamId);
+                        if (newEgressId) {
+                            await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                        }
+                    }
+                }).catch(err => console.error("Egress start check error:", err.message));
+            } else {
+                startLocalHlsEgressService(stream.streamId).catch(err => console.error(err.message));
+            }
+        }
 
         if (isStealth) {
             getOrCreateSessionAlias(stream.streamId, req.userId).catch(() => { });
@@ -217,7 +255,9 @@ const joinLiveStream = async (req, res) => {
 
         return res.json({
             success: true,
-            token,
+            mode,
+            token: mode === "HLS" ? null : token,
+            hlsUrl,
             stream,
             viewerCount: finalViewerCount,
             viewers,
@@ -318,7 +358,7 @@ const getLiveStreams = async (req, res) => {
         const [hostUsers, videoCallSettingsList] = await Promise.all([
             hostUserIds.length > 0 ? prisma.user.findMany({
                 where: { id: { in: hostUserIds } },
-                select: { id: true, country: true }
+                select: { id: true, country: true, admin_tags: true }
             }) : [],
             hostUserIds.length > 0 ? prisma.videoCallSettings.findMany({
                 where: { userId: { in: hostUserIds } },
@@ -326,6 +366,7 @@ const getLiveStreams = async (req, res) => {
             }) : []
         ]);
         const hostCountryMap = new Map(hostUsers.map(u => [u.id, u.country || null]));
+        const hostAdminTagsMap = new Map(hostUsers.map(u => [u.id, u.admin_tags || []]));
         const videoCallRateMap = new Map(videoCallSettingsList.map(s => [s.userId, s.pricePerMin]));
 
         const passwordKeys = streamIds.map(sId => `stream:password:${sId}`);
@@ -335,19 +376,41 @@ const getLiveStreams = async (req, res) => {
             passwordMap.set(sId, passwords[index]);
         });
 
+        const getHostTagPriority = (tags = []) => {
+            if (!Array.isArray(tags) || tags.length === 0) return 3;
+            const normalized = tags.map(t => String(t).toLowerCase().trim());
+            const isCelebrity = normalized.some(t => t.includes('celebrity host') || t === 'celebrity');
+            const isRoyal = normalized.some(t => t.includes('royal host') || t === 'royal');
+            if (isCelebrity) return 1;
+            if (isRoyal) return 2;
+            return 3;
+        };
+
         const data = streams.map((stream) => {
             const password = passwordMap.get(stream.streamId);
             const pricePerMin = videoCallRateMap.get(stream.userId) || 1800;
             const coinsPerMin = Math.ceil((pricePerMin * 5) / 3);
+            const adminTags = hostAdminTagsMap.get(stream.userId) || [];
 
             return {
                 ...stream,
                 hostAvatar: stream.coverImageUrl || null,
                 hostCountry: hostCountryMap.get(stream.userId) || null,
+                adminTags,
                 isPasswordProtected: !!password,
                 videoCallPricePerMin: pricePerMin,
                 videoCallCoinsPerMin: coinsPerMin
             };
+        });
+
+        // Priority Sorting: 'celebrity host' (Priority 1) -> 'royal host' (Priority 2) -> Normal Hosts (Priority 3)
+        data.sort((a, b) => {
+            const priorityA = getHostTagPriority(a.adminTags);
+            const priorityB = getHostTagPriority(b.adminTags);
+            if (priorityA !== priorityB) {
+                return priorityA - priorityB;
+            }
+            return 0;
         });
 
         return res.json({
@@ -420,10 +483,22 @@ const sendMessage = async (req, res) => {
     try {
         const chatMute = await isUserRestrictedFast(req.userId, 'LIVE_CHAT_MUTE');
         if (chatMute) {
+            const untilIso = new Date(chatMute.restrictedUntil).toISOString();
+            const formattedTime = new Date(chatMute.restrictedUntil).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
             return res.status(403).json({
                 success: false,
                 code: 'LIVE_CHAT_MUTED',
-                message: `You are muted from sending messages in live stream until ${new Date(chatMute.restrictedUntil).toLocaleString()}`
+                message: `You are muted from sending messages in live stream until ${formattedTime}`,
+                restrictedUntil: untilIso
             });
         }
 

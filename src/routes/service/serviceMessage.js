@@ -58,11 +58,31 @@ export const sendMessageService = async ({
     if (senderId !== SYSTEM_SENDER_ID) {
         const chatMute = await isUserRestrictedFast(senderId, 'LIVE_CHAT_MUTE');
         if (chatMute) {
-            throw new Error(`You are muted from sending chat messages until ${new Date(chatMute.restrictedUntil).toLocaleString()}`);
+            const formattedTime = new Date(chatMute.restrictedUntil).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+            throw new Error(`You are muted from sending chat messages until ${formattedTime}`);
         }
         const msgDisable = await isUserRestrictedFast(senderId, 'MESSAGING_DISABLE');
         if (msgDisable) {
-            throw new Error(`Messaging has been disabled for your account until ${new Date(msgDisable.restrictedUntil).toLocaleString()}`);
+            const formattedTime = new Date(msgDisable.restrictedUntil).toLocaleString('en-IN', {
+                timeZone: 'Asia/Kolkata',
+                day: '2-digit',
+                month: 'short',
+                year: 'numeric',
+                hour: '2-digit',
+                minute: '2-digit',
+                second: '2-digit',
+                hour12: true
+            });
+            throw new Error(`Messaging has been disabled for your account until ${formattedTime}`);
         }
 
         // Validate chat permission

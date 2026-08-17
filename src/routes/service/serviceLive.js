@@ -16,6 +16,13 @@ import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 
+export {
+    cleanOldHlsSegmentsService,
+    removeHlsStreamDirService,
+    startLocalHlsEgressService,
+    stopLocalHlsEgressService
+} from './serviceHlsEgress.js';
+
 dotenv.config();
 
 const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
@@ -26,11 +33,6 @@ const roomService = new RoomServiceClient(livekitHost, apiKey, apiSecret);
 const egressClient = new EgressClient(livekitHost, apiKey, apiSecret);
 const isProduction = process.env.isProduction === 'true';
 
-export const getHlsUrl = (roomName) => {
-    const bucket = process.env.AWS_S3_BUCKET
-    const region = process.env.AWS_REGION
-    return `https://${bucket}.s3.${region}.amazonaws.com/${roomName}_live.m3u8`;
-};
 
 export const generateStreamHostToken = async (roomName, participantId) => {
     const at = new AccessToken(apiKey, apiSecret, {
@@ -73,7 +75,6 @@ export const fastGoLiveStreamService = async ({
     title,
     heading
 }) => {
-    // Fast Redis cache check for active stream and suspension
     const activeStreamKey = `user:active_stream:${userId}`;
     const suspendedCacheKey = `user:suspended:${userId}`;
 
@@ -82,12 +83,45 @@ export const fastGoLiveStreamService = async ({
         redisClient.get(suspendedCacheKey)
     ]) : [null, null];
 
+    const banRestriction = await isUserRestrictedFast(userId, 'LIVE_STREAM_START_BAN');
+    if (banRestriction) {
+        const formattedTime = new Date(banRestriction.restrictedUntil).toLocaleString('en-IN', {
+            timeZone: 'Asia/Kolkata',
+            day: '2-digit',
+            month: 'short',
+            year: 'numeric',
+            hour: '2-digit',
+            minute: '2-digit',
+            second: '2-digit',
+            hour12: true
+        });
+        throw new Error(`You are banned from starting a live stream until ${formattedTime}`);
+    }
+
     if (isSuspended === "true") {
         throw new Error("Your streaming privileges are suspended due to moderation violations.");
     }
 
     if (activeStreamId) {
-        throw new Error("You already have an active live stream. End it first.");
+        const dbActiveStream = await prisma.liveStream.findFirst({
+            where: {
+                userId,
+                isLive: true
+            },
+            select: { id: true }
+        });
+        if (!dbActiveStream) {
+            console.warn(`[Self-Healing] Cleaning up stale Redis active stream key for user ${userId} (StreamId: ${activeStreamId})`);
+            if (redisClient.isOpen) {
+                await Promise.all([
+                    redisClient.del(activeStreamKey),
+                    redisClient.del(`stream:info:${activeStreamId}`)
+                ]).catch(() => {});
+            }
+            activeStreamId = null;
+        } else {
+            throw new Error("You already have an active live stream. End it first.");
+        }
     }
 
     // 1. Parallel DB validations (only if not cached in Redis)
@@ -208,8 +242,18 @@ export const endLiveStreamService = async ({
         }
     }
 
-    const endedAt = new Date();
     const streamIdKey = stream.streamId || id;
+    if (redisClient.isOpen) {
+        const egressKey = `stream:egress:${streamIdKey}`;
+        redisClient.get(egressKey).then(async (activeEgressId) => {
+            if (activeEgressId) {
+                await stopLocalHlsEgressService(activeEgressId, streamIdKey);
+                await redisClient.del(egressKey);
+            }
+        }).catch(err => console.error("Egress cleanup error:", err.message));
+    }
+
+    const endedAt = new Date();
     const keyOff = `stream:camera_off_at:${streamIdKey}`;
     const keyUncounted = `stream:uncounted_seconds:${streamIdKey}`;
 
@@ -661,11 +705,12 @@ export const getChatPermissionService = async ({ streamId }) => {
 };
 
 export const addUserToSheetService = async ({ streamId, userId, username }) => {
+    const isAudioRestricted = await isUserRestrictedFast(userId, 'LIVE_AUDIO_MUTE');
     await redisClient.hSet(`stream:sheet:${streamId}`, userId, JSON.stringify({
         userId,
         username,
-        isMuted: false,
-        mutedByHost: false
+        isMuted: Boolean(isAudioRestricted),
+        mutedByHost: Boolean(isAudioRestricted)
     }));
 };
 
@@ -1139,7 +1184,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 
             if (redisClient.isOpen) {
                 if (txAgencyUserId) {
-                    await redisClient.del(`agency:me:${txAgencyUserId}`).catch(() => {});
+                    await redisClient.del(`agency:me:${txAgencyUserId}`).catch(() => { });
                 }
                 const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
                 if (keys && keys.length > 0) {
@@ -1606,6 +1651,9 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
             // 5. Clean Redis
             try {
                 await redisClient.del([
+                    `user:active_stream:${stream.userId}`,
+                    `stream:info:${stream.streamId}`,
+                    `stream:info:${id}`,
                     `stream:active:${stream.streamId}`,
                     `stream:history:${stream.streamId}`,
                     `stream:chats:${stream.streamId}`,
@@ -2175,4 +2223,36 @@ export const getUserPrivacyService = async ({ userId }) => {
     }
 
     return result;
+};
+
+export const cleanupStaleLiveStreamRedisKeys = async () => {
+    if (!redisClient.isOpen) return { cleanedCount: 0 };
+    try {
+        const activeUserKeys = await redisClient.keys("user:active_stream:*");
+        let cleanedCount = 0;
+
+        for (const key of activeUserKeys) {
+            const userId = key.replace("user:active_stream:", "");
+            const streamId = await redisClient.get(key);
+
+            if (streamId) {
+                const dbStream = await prisma.liveStream.findFirst({
+                    where: { id: streamId, userId, isLive: true }
+                });
+
+                if (!dbStream) {
+                    console.log(`[Stale Key Cleaner] Deleting stale Redis key ${key} for ended stream ${streamId}`);
+                    await Promise.all([
+                        redisClient.del(key),
+                        redisClient.del(`stream:info:${streamId}`)
+                    ]).catch(() => {});
+                    cleanedCount++;
+                }
+            }
+        }
+        return { cleanedCount, totalChecked: activeUserKeys.length };
+    } catch (err) {
+        console.error("[Stale Key Cleaner Error]:", err.message);
+        return { cleanedCount: 0, error: err.message };
+    }
 };

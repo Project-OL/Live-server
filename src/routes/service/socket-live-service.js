@@ -6,17 +6,33 @@ import {
     toggleUserSheetMuteService,
     getSheetUsersService,
     isStreamAdminService,
+    getStreamAdminsService,
     getMicPermissionService,
     setMicPermissionService,
     setChatPermissionService,
     sendStreamGiftService,
-    handleCameraStateChangeService
+    handleCameraStateChangeService,
+    endLiveStreamService
 } from './serviceLive.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
+import { isUserRestrictedFast } from './serviceAdmin.js';
 
 let ioInstance = null;
 const autoUnmuteTimers = new Map();
+
+const checkUserRestriction = async (userId, type) => {
+    try {
+        if (typeof isUserRestrictedFast === 'function') {
+            return await isUserRestrictedFast(userId, type);
+        }
+        const { isUserRestrictedFast: fn } = await import('./serviceAdmin.js');
+        return await fn(userId, type);
+    } catch (e) {
+        console.error("[Socket Restriction Check Error]:", e.message);
+        return null;
+    }
+};
 
 const checkIsHostOrAdmin = async (streamId, userId) => {
     if (!userId) return false;
@@ -78,16 +94,31 @@ export const setupLiveSockets = (io) => {
 
                         // Fetch the host ID of the stream to exclude them if needed
                         let hostId = null;
+                        let dbStreamId = null;
                         const streamObj = await prisma.liveStream.findFirst({
                             where: { streamId, endedAt: null },
-                            select: { userId: true }
+                            select: { id: true, userId: true }
                         });
                         if (streamObj) {
                             hostId = streamObj.userId;
+                            dbStreamId = streamObj.id;
                         }
 
-                        if (hostId && userId === hostId) {
+                        const isHost = Boolean(hostId && userId === hostId);
+                        socket.data.isHost = isHost;
+                        socket.data.dbStreamId = dbStreamId;
+
+                        if (isHost) {
                             await redisClient.sRem(`stream:active:${streamId}`, userId);
+                            // Clear 1-minute disconnect grace timer on Host reconnect
+                            if (redisClient.isOpen) {
+                                const timerKey = `host:disconnect_timer:${streamId}`;
+                                const pendingTimer = await redisClient.get(timerKey);
+                                if (pendingTimer) {
+                                    console.log(`[Socket Host Reconnect] Host ${userId} reconnected to stream ${streamId}. Clearing 1-minute disconnect timer.`);
+                                    await redisClient.del(timerKey).catch(() => {});
+                                }
+                            }
                         }
                     }
 
@@ -180,7 +211,57 @@ export const setupLiveSockets = (io) => {
         socket.on("disconnect", async () => {
             console.log(`[Socket] User ${userId || 'unknown'} disconnected`);
             if (socket.data && socket.data.streamId && socket.data.userId) {
-                const { streamId, userId, isStealth } = socket.data;
+                const { streamId, userId, isStealth, isHost, dbStreamId } = socket.data;
+
+                // If disconnected user is Host, start 30-second network loss disconnect timer (Total ~60s with socket heartbeat)
+                if (isHost) {
+                    console.warn(`[Socket Host Disconnect] Host ${userId} disconnected from stream ${streamId}. Starting 30s network loss timer.`);
+                    const timerKey = `host:disconnect_timer:${streamId}`;
+                    if (redisClient.isOpen) {
+                        await redisClient.set(timerKey, "pending", "EX", 30).catch(() => {});
+                    }
+
+                    // 30-second background worker check
+                    setTimeout(async () => {
+                        try {
+                            let isStillPending = true;
+                            if (redisClient.isOpen) {
+                                const val = await redisClient.get(timerKey);
+                                isStillPending = (val === "pending");
+                            }
+
+                            if (isStillPending) {
+                                console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within 30s grace period. Auto-ending live stream...`);
+                                if (redisClient.isOpen) {
+                                    await redisClient.del(timerKey).catch(() => {});
+                                }
+
+                                // Verify stream is still live before auto-ending
+                                const activeStream = await prisma.liveStream.findFirst({
+                                    where: {
+                                        OR: [{ streamId }, { id: dbStreamId || streamId }],
+                                        isLive: true
+                                    }
+                                });
+
+                                if (activeStream) {
+                                    broadcastToStream(streamId, "stream_ended", {
+                                        streamId,
+                                        reason: "HOST_DISCONNECTED_TIMEOUT",
+                                        message: "Live stream ended due to host network disconnection."
+                                    });
+                                    await endLiveStreamService({ id: activeStream.id, userId });
+                                    console.log(`[Socket Host Disconnect Timeout] Successfully auto-ended live stream ${streamId} after network loss timeout! ✅`);
+                                }
+                            } else {
+                                console.log(`[Socket Host Disconnect Cancelled] Host reconnected within grace period for stream ${streamId}.`);
+                            }
+                        } catch (timeoutErr) {
+                            console.error("[Socket Host Disconnect Timeout Error]:", timeoutErr.message);
+                        }
+                    }, 30000);
+                }
+
                 try {
                     await removeUserFromSheetService({ streamId, userId });
                     broadcastToStream(streamId, "user_left_sheet", { userId });
@@ -259,14 +340,15 @@ export const setupLiveSockets = (io) => {
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
+                const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
                 await addUserToSheetService({ streamId, userId, username: displayUsername });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : userId,
                     username: displayUsername,
-                    isMuted: false,
+                    isMuted: Boolean(isAudioRestricted),
                     isMystery: isStealth
                 });
-                console.log(`[Socket] User ${userId} accepted sheet invite and joined sheet in stream ${streamId}`);
+                console.log(`[Socket] User ${userId} accepted sheet invite and joined sheet in stream ${streamId} (isMuted: ${Boolean(isAudioRestricted)})`);
             } catch (err) {
                 console.error("[Socket] accept_sheet_invite failed:", err.message);
             }
@@ -324,15 +406,16 @@ export const setupLiveSockets = (io) => {
 
                     if (!micPermissionRequired) {
                         // Direct Join Mode: Add user to audio sheet immediately without requiring host approval
+                        const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
                         await addUserToSheetService({ streamId, userId, username: displayUsername });
                         ioInstance.to(`user:${userId}`).emit("sheet_request_accepted", { streamId });
                         broadcastToStream(streamId, "user_joined_sheet", {
                             userId: isStealth ? null : userId,
                             username: displayUsername,
-                            isMuted: false,
+                            isMuted: Boolean(isAudioRestricted),
                             isMystery: isStealth
                         });
-                        console.log(`[Socket] Direct Mic Join: User ${userId} (${displayUsername}) joined sheet automatically in stream ${streamId}`);
+                        console.log(`[Socket] Direct Mic Join: User ${userId} (${displayUsername}) joined sheet automatically in stream ${streamId} (isMuted: ${Boolean(isAudioRestricted)})`);
                     } else {
                         // Permission Required Mode: Send REAL name & ID to Host and Admins for approval
                         ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
@@ -370,12 +453,13 @@ export const setupLiveSockets = (io) => {
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? user.username : "Guest");
+                const isAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
                 await addUserToSheetService({ streamId, userId: targetUserId, username: displayUsername });
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_request_accepted", { streamId });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : targetUserId,
                     username: displayUsername,
-                    isMuted: false,
+                    isMuted: Boolean(isAudioRestricted),
                     isMystery: isStealth
                 });
                 console.log(`[Socket] Host/Admin accepted sheet request for ${targetUserId} in stream ${streamId}`);
@@ -407,6 +491,17 @@ export const setupLiveSockets = (io) => {
                     console.warn(`[Socket] Unauthorized toggle_sheet_mute by user ${userId} in stream ${streamId}`);
                     return;
                 }
+
+                // If Host/Admin attempts to UNMUTE (muteState === false), check if target user is restricted by Admin
+                if (!muteState) {
+                    const isTargetAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
+                    if (isTargetAudioRestricted) {
+                        console.log(`[Socket] Blocked Host/Admin ${userId} from unmuting user ${targetUserId} due to active Admin LIVE_AUDIO_MUTE restriction`);
+                        socket.emit("error", { message: "User is restricted by Admin from speaking in live audio seats." });
+                        return;
+                    }
+                }
+
                 const updatedUser = await toggleUserSheetMuteService({ streamId, userId: targetUserId, muteState, mutedByHost: muteState });
                 if (updatedUser) {
                     broadcastToStream(streamId, "sheet_mute_changed", {
@@ -487,6 +582,14 @@ export const setupLiveSockets = (io) => {
         // Speaker toggles their own mute state
         socket.on("toggle_self_mute", async ({ streamId, muteState }) => {
             try {
+                // If user has LIVE_AUDIO_MUTE restriction, prevent unmuting
+                const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
+                if (isAudioRestricted && !muteState) {
+                    console.log(`[Socket] Rejected self-unmute request for user ${userId} due to active LIVE_AUDIO_MUTE restriction`);
+                    socket.emit("error", { message: "You are restricted from speaking in live audio seats." });
+                    return;
+                }
+
                 // Get the current sheet status from Redis first
                 const rawUser = await redisClient.hGet(`stream:sheet:${streamId}`, userId);
                 if (rawUser) {
