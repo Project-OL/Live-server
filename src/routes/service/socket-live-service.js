@@ -334,21 +334,27 @@ export const setupLiveSockets = (io) => {
         // Viewer accepts host's invite
         socket.on("accept_sheet_invite", async ({ streamId }) => {
             try {
+                const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
+                if (isAudioRestricted) {
+                    console.log(`[Socket] Blocked user ${userId} from accepting sheet invite due to active LIVE_AUDIO_MUTE restriction`);
+                    socket.emit("error", { message: "You are restricted by Admin from joining live audio seats." });
+                    return;
+                }
+
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
                     select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
-                const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
                 await addUserToSheetService({ streamId, userId, username: displayUsername });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : userId,
                     username: displayUsername,
-                    isMuted: Boolean(isAudioRestricted),
+                    isMuted: false,
                     isMystery: isStealth
                 });
-                console.log(`[Socket] User ${userId} accepted sheet invite and joined sheet in stream ${streamId} (isMuted: ${Boolean(isAudioRestricted)})`);
+                console.log(`[Socket] User ${userId} accepted sheet invite and joined sheet in stream ${streamId}`);
             } catch (err) {
                 console.error("[Socket] accept_sheet_invite failed:", err.message);
             }
@@ -391,6 +397,13 @@ export const setupLiveSockets = (io) => {
         // Viewer requests to join the sheet (or directly joins if mic permission is not required)
         socket.on("request_to_join_sheet", async ({ streamId }) => {
             try {
+                const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
+                if (isAudioRestricted) {
+                    console.log(`[Socket] Blocked user ${userId} from requesting sheet join due to active LIVE_AUDIO_MUTE restriction`);
+                    socket.emit("error", { message: "You are restricted by Admin from joining live audio seats." });
+                    return;
+                }
+
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
                     select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
@@ -406,16 +419,15 @@ export const setupLiveSockets = (io) => {
 
                     if (!micPermissionRequired) {
                         // Direct Join Mode: Add user to audio sheet immediately without requiring host approval
-                        const isAudioRestricted = await checkUserRestriction(userId, 'LIVE_AUDIO_MUTE');
                         await addUserToSheetService({ streamId, userId, username: displayUsername });
                         ioInstance.to(`user:${userId}`).emit("sheet_request_accepted", { streamId });
                         broadcastToStream(streamId, "user_joined_sheet", {
                             userId: isStealth ? null : userId,
                             username: displayUsername,
-                            isMuted: Boolean(isAudioRestricted),
+                            isMuted: false,
                             isMystery: isStealth
                         });
-                        console.log(`[Socket] Direct Mic Join: User ${userId} (${displayUsername}) joined sheet automatically in stream ${streamId} (isMuted: ${Boolean(isAudioRestricted)})`);
+                        console.log(`[Socket] Direct Mic Join: User ${userId} (${displayUsername}) joined sheet automatically in stream ${streamId}`);
                     } else {
                         // Permission Required Mode: Send REAL name & ID to Host and Admins for approval
                         ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
@@ -447,19 +459,26 @@ export const setupLiveSockets = (io) => {
                     console.warn(`[Socket] Unauthorized accept_sheet_request by user ${userId} in stream ${streamId}`);
                     return;
                 }
+
+                const isTargetAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
+                if (isTargetAudioRestricted) {
+                    console.log(`[Socket] Blocked Host from accepting sheet request for user ${targetUserId} due to active LIVE_AUDIO_MUTE restriction`);
+                    socket.emit("error", { message: "This user is restricted by Admin from joining live audio seats." });
+                    return;
+                }
+
                 const user = await prisma.user.findUnique({
                     where: { id: targetUserId },
                     select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? user.username : "Guest");
-                const isAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
                 await addUserToSheetService({ streamId, userId: targetUserId, username: displayUsername });
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_request_accepted", { streamId });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : targetUserId,
                     username: displayUsername,
-                    isMuted: Boolean(isAudioRestricted),
+                    isMuted: false,
                     isMystery: isStealth
                 });
                 console.log(`[Socket] Host/Admin accepted sheet request for ${targetUserId} in stream ${streamId}`);

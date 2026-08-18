@@ -1,6 +1,6 @@
 import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
-import { endLiveStreamService, toggleUserSheetMuteService } from './serviceLive.js';
+import { endLiveStreamService, toggleUserSheetMuteService, removeUserFromSheetService } from './serviceLive.js';
 
 export const VALID_RESTRICTION_TYPES = [
   'LIVE_CHAT_MUTE',
@@ -162,7 +162,7 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
     });
   }
 
-  // 3. If LIVE_AUDIO_MUTE applied, immediately auto-mute the user if sitting on any active audio sheet
+  // 3. If LIVE_AUDIO_MUTE applied, immediately kick the user off any active audio sheet
   if (type === 'LIVE_AUDIO_MUTE') {
     setImmediate(async () => {
       try {
@@ -175,13 +175,13 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
           const sid = s.streamId || s.id;
           const rawUser = await redisClient.hGet(`stream:sheet:${sid}`, userId);
           if (rawUser) {
-            await toggleUserSheetMuteService({ streamId: sid, userId, muteState: true, mutedByHost: true });
-            broadcastToStream(sid, "sheet_mute_changed", { userId, isMuted: true });
-            console.log(`[Admin Restriction] Auto-muted user ${userId} on audio sheet for stream ${sid} due to LIVE_AUDIO_MUTE`);
+            await removeUserFromSheetService({ streamId: sid, userId });
+            broadcastToStream(sid, "user_left_sheet", { userId, reason: "ADMIN_RESTRICTION" });
+            console.log(`[Admin Restriction] Auto-kicked user ${userId} off audio sheet for stream ${sid} due to LIVE_AUDIO_MUTE`);
           }
         }
-      } catch (muteErr) {
-        console.error('[Admin Restriction Auto-Mute Error]:', muteErr.message);
+      } catch (kickErr) {
+        console.error('[Admin Restriction Auto-Kick Sheet Error]:', kickErr.message);
       }
     });
   }

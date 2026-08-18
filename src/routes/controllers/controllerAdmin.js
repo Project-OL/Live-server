@@ -1,5 +1,5 @@
 import express from 'express';
-import auth from '../../middlewares/authMiddleware.js';
+import { authenticateAdmin } from '../../middlewares/adminAuthMiddleware.js';
 import {
   applyUserRestrictionService,
   getUserRestrictionsHistory,
@@ -167,9 +167,9 @@ export const getMyRestrictions = async (req, res, next) => {
 };
 
 // Admin Endpoints
-router.post('/users/:userId/restrictions', auth, applyUserRestriction);
-router.get('/users/:userId/restrictions', auth, getUserRestrictions);
-router.delete('/users/:userId/restrictions/:restrictionId', auth, clearUserRestrictionById);
-router.post('/users/:userId/restrictions/:type/clear', auth, clearUserRestrictionByType);
+router.post('/users/:userId/restrictions', authenticateAdmin, applyUserRestriction);
+router.get('/users/:userId/restrictions', authenticateAdmin, getUserRestrictions);
+router.delete('/users/:userId/restrictions/:restrictionId', authenticateAdmin, clearUserRestrictionById);
+router.post('/users/:userId/restrictions/:type/clear', authenticateAdmin, clearUserRestrictionByType);
 
 export default router;
