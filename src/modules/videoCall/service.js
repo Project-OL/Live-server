@@ -146,6 +146,34 @@ export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedger
     return { agencyUserId, commissionPoints, agentLedgerEntry };
 };
 
+/**
+ * Drop ol-node /commission/me + dashboard snapshots after a live/video-call
+ * commission credit. INCR epoch so GET misses even if KEYS is empty.
+ */
+export const bustAgencyCommissionCaches = async (agencyUserId) => {
+    if (!agencyUserId) return;
+    try {
+        await redisClient.incr(`agency:cache:epoch:${agencyUserId}`);
+        await redisClient.del(`agency:rate:${agencyUserId}`);
+        await redisClient.del(`agency:me:${agencyUserId}`);
+        await redisClient.del(`agency:dashboard:today:${agencyUserId}`);
+        const patterns = [
+            `agency:commission:me:${agencyUserId}:*`,
+            `agency:dashboard:earnings:${agencyUserId}:*`,
+            `agency:dashboard:hosts:${agencyUserId}:*`,
+            `agency:host:breakdown:${agencyUserId}:*`
+        ];
+        for (const pattern of patterns) {
+            const keys = await redisClient.keys(pattern);
+            if (keys && keys.length > 0) {
+                await redisClient.del(keys);
+            }
+        }
+    } catch (e) {
+        console.error("[Agency] Cache invalidation error:", e);
+    }
+};
+
 export const invalidateCaches = async (callerId, hostId, agencyUserId = null) => {
     try {
         await redisClient.del(`wallet:coins:${callerId}`);
@@ -155,21 +183,7 @@ export const invalidateCaches = async (callerId, hostId, agencyUserId = null) =>
         await redisClient.del(`level:stream:${hostId}`);
 
         if (agencyUserId) {
-            await redisClient.del(`agency:rate:${agencyUserId}`);
-            await redisClient.del(`agency:me:${agencyUserId}`);
-            await redisClient.del(`agency:dashboard:today:${agencyUserId}`);
-
-            const patterns = [
-                `agency:commission:me:${agencyUserId}:*`,
-                `agency:dashboard:earnings:${agencyUserId}:*`,
-                `agency:dashboard:hosts:${agencyUserId}:*`
-            ];
-            for (const pattern of patterns) {
-                const keys = await redisClient.keys(pattern);
-                if (keys && keys.length > 0) {
-                    await redisClient.del(keys);
-                }
-            }
+            await bustAgencyCommissionCaches(agencyUserId);
         }
     } catch (e) {
         console.error("[VideoCall] Cache invalidation error:", e);

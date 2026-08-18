@@ -10,6 +10,7 @@ import {
     getFastCoinBalance,
     getFastPointBalance,
     updateUserLevel,
+    bustAgencyCommissionCaches,
 } from '../../modules/videoCall/service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
@@ -1287,7 +1288,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 
             if (redisClient.isOpen) {
                 if (txAgencyUserId) {
-                    await redisClient.del(`agency:me:${txAgencyUserId}`).catch(() => { });
+                    await bustAgencyCommissionCaches(txAgencyUserId);
                 }
                 const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
                 if (keys && keys.length > 0) {
@@ -1453,38 +1454,36 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
     const rateBp = ratesMap[levelKey] || 400;
     const commissionPoints = BigInt(Math.floor((Number(hostPoints) * rateBp) / 10000));
 
-    // Non-blocking background worker for logging agency daily earnings & processed record
-    setImmediate(async () => {
-        try {
-            await prisma.agencyCommissionProcessed.create({
-                data: { hostLedgerEntryId }
-            });
+    // Same transaction as the gift: /commission/me totals join these rows.
+    try {
+        await tx.agencyCommissionProcessed.create({
+            data: { hostLedgerEntryId }
+        });
+    } catch (e) {
+        if (e?.code !== 'P2002') throw e;
+    }
 
-            const today = new Date();
-            today.setUTCHours(0, 0, 0, 0);
+    const today = new Date();
+    today.setUTCHours(0, 0, 0, 0);
 
-            await prisma.agencyDailyEarning.upsert({
-                where: {
-                    agencyUserId_hostUserId_day: {
-                        agencyUserId,
-                        hostUserId: receiverId,
-                        day: today
-                    }
-                },
-                update: {
-                    hostEarningsPoints: { increment: hostPoints },
-                    hostCommissionPoints: { increment: commissionPoints }
-                },
-                create: {
-                    agencyUserId,
-                    hostUserId: receiverId,
-                    day: today,
-                    hostEarningsPoints: hostPoints,
-                    hostCommissionPoints: commissionPoints
-                }
-            });
-        } catch (bgErr) {
-            console.error("[Agency Daily Earning Logging Error]:", bgErr.message);
+    await tx.agencyDailyEarning.upsert({
+        where: {
+            agencyUserId_hostUserId_day: {
+                agencyUserId,
+                hostUserId: receiverId,
+                day: today
+            }
+        },
+        update: {
+            hostEarningsPoints: { increment: hostPoints },
+            hostCommissionPoints: { increment: commissionPoints }
+        },
+        create: {
+            agencyUserId,
+            hostUserId: receiverId,
+            day: today,
+            hostEarningsPoints: hostPoints,
+            hostCommissionPoints: commissionPoints
         }
     });
 

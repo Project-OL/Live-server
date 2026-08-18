@@ -9,7 +9,7 @@ import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType } from '@prisma/client';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
-import { getOrCreateWallet, getFastCoinBalance, getFastPointBalance } from '../../modules/videoCall/service.js';
+import { getOrCreateWallet, getFastCoinBalance, getFastPointBalance, bustAgencyCommissionCaches } from '../../modules/videoCall/service.js';
 import { processLiveStreamAgencyCommission } from './serviceLive.js';
 import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
@@ -178,7 +178,10 @@ export const sendLuckyGiftService = async ({
         try {
             if (isCombo && hostPoints > 0n) {
                 const effectiveReceiverId = receiverId || senderId;
-                await processLiveStreamAgencyCommission(prisma, effectiveReceiverId, hostPoints, txRecord.id);
+                const commRes = await processLiveStreamAgencyCommission(prisma, effectiveReceiverId, hostPoints, txRecord.id);
+                if (commRes?.agencyUserId) {
+                    await bustAgencyCommissionCaches(commRes.agencyUserId);
+                }
             }
             await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });
             if (redisClient.isOpen) {
