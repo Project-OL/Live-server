@@ -11,12 +11,34 @@ dotenv.config();
 
 const app = express();
 
+function corsAllowedOrigins() {
+  const raw = [
+    process.env.CORS_ORIGINS,
+    process.env.ALLOWED_ORIGINS,
+    process.env.CLIENT_URL,
+    process.env.ADMIN_CLIENT_URL,
+  ]
+    .filter(Boolean)
+    .flatMap((value) => String(value).split(','))
+    .map((origin) => origin.trim())
+    .filter(Boolean)
+  return [...new Set(raw)]
+}
+
+const allowedOrigins = corsAllowedOrigins()
+
 app.use(
   cors({
-    origin: process.env.CLIENT_URL,
+    origin(origin, callback) {
+      if (!origin) return callback(null, true)
+      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+        return callback(null, true)
+      }
+      return callback(null, false)
+    },
     credentials: true,
   })
-);
+)
 
 app.use(express.json({ limit: "50mb" }));
 
