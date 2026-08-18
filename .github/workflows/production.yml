@@ -1,0 +1,87 @@
+name: Production build and deploy
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+
+concurrency:
+  group: production-ec2-live-server
+  cancel-in-progress: false
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies (validate lockfile + Prisma)
+        run: npm ci
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+
+      - name: Pack artifact
+        run: |
+          tar -czf live-server-artifact.tgz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=.env \
+            --exclude=scratch \
+            --exclude=exp.js \
+            --exclude=test-creds.txt \
+            --exclude=google-credentials.json \
+            server.js package.json package-lock.json prisma prisma.config.ts src public
+          ls -lh live-server-artifact.tgz
+
+      - name: Upload GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-server-${{ github.sha }}
+          path: live-server-artifact.tgz
+          retention-days: 30
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: live-server-${{ github.sha }}
+
+      - name: Check EC2 secrets
+        env:
+          KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.EC2_HOST }}
+          USER: ${{ secrets.EC2_USER }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Set repo secrets EC2_SSH_PRIVATE_KEY, EC2_HOST, and EC2_USER (see workflow comments)."
+            exit 1
+          fi
+
+      - name: Deploy to EC2
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.EC2_HOST }}
+          EC2_USER: ${{ secrets.EC2_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            live-server-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/live-server-artifact.tgz"
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" 'bash -s' < .github/deploy/ec2-unpack-live-server.sh
+# Required GitHub Actions secrets (repo or org):
+#   EC2_HOST              e.g. 13.232.76.134
+#   EC2_USER              e.g. ec2-user
+#   EC2_SSH_PRIVATE_KEY   PEM / OpenSSH private key for that user
