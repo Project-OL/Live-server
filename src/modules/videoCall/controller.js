@@ -145,7 +145,7 @@ export const getTestUsers = async (req, res) => {
             return {
                 id: u.id,
                 publicId: u.publicId != null ? Number(u.publicId) : null,
-                name: u.username || "User",
+                name: u.username || "User" + "test production deployment",
                 token: token
             };
         });
