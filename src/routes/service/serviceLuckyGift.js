@@ -173,7 +173,7 @@ export const sendLuckyGiftService = async ({
         return log;
     }, { timeout: 15000, maxWait: 10000 });
 
-    // Non-blocking background worker for Agency Commission & Reserve Pool updates
+    // Non-blocking background worker for Agency Commission, Reserve Pool & Level Cache invalidating
     setImmediate(async () => {
         try {
             if (isCombo && hostPoints > 0n) {
@@ -181,6 +181,10 @@ export const sendLuckyGiftService = async ({
                 await processLiveStreamAgencyCommission(prisma, effectiveReceiverId, hostPoints, txRecord.id);
             }
             await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });
+            if (redisClient.isOpen) {
+                redisClient.del(`level:wealth:${senderId}`).catch(() => {});
+                if (receiverId) redisClient.del(`level:stream:${receiverId}`).catch(() => {});
+            }
         } catch (bgErr) {
             console.error("[LuckyGift Background Worker Error]:", bgErr.message);
         }

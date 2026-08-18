@@ -321,9 +321,14 @@ const getLiveStreams = async (req, res) => {
         let country = req.query.country || null;
         const type = req.query.type || null;
         const followingOnly = type === 'following' || req.query.following === 'true';
+        const nearbyOnly = type === 'nearby' || req.query.nearby === 'true';
+        const userLat = req.query.lat || req.query.latitude || null;
+        const userLng = req.query.lng || req.query.longitude || null;
+        const minKm = parseFloat(req.query.minKm) || 9;
+        const maxKm = parseFloat(req.query.maxKm) || 40;
 
-        // Default to logged-in user's own country if no explicit country or following filter is provided
-        if (!country && !followingOnly && req.userId) {
+        // Default to logged-in user's own country if no explicit country, following, or nearby filter is provided
+        if (!country && !followingOnly && !nearbyOnly && req.userId) {
             const currentUser = await prisma.user.findUnique({
                 where: { id: req.userId },
                 select: { country: true }
@@ -338,7 +343,12 @@ const getLiveStreams = async (req, res) => {
             limit,
             country,
             followerUserId: req.userId,
-            followingOnly
+            followingOnly,
+            nearbyOnly,
+            userLat,
+            userLng,
+            minKm,
+            maxKm
         });
         if (!streams || streams.length === 0) {
             return res.json({

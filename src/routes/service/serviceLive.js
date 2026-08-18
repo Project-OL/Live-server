@@ -456,7 +456,26 @@ export const endLiveStreamService = async ({
     };
 };
 
-export const getLiveStreamsService = async ({ page = 1, limit = 20, country = null, followerUserId = null, followingOnly = false } = {}) => {
+export const calculateDistanceKm = (lat1, lon1, lat2, lon2) => {
+    if (lat1 === null || lon1 === null || lat2 === null || lon2 === null) return null;
+    const nLat1 = Number(lat1);
+    const nLon1 = Number(lon1);
+    const nLat2 = Number(lat2);
+    const nLon2 = Number(lon2);
+    if (isNaN(nLat1) || isNaN(nLon1) || isNaN(nLat2) || isNaN(nLon2)) return null;
+
+    const R = 6371; // Earth's radius in KM
+    const dLat = (nLat2 - nLat1) * (Math.PI / 180);
+    const dLon = (nLon2 - nLon1) * (Math.PI / 180);
+    const a =
+        Math.sin(dLat / 2) * Math.sin(dLat / 2) +
+        Math.cos(nLat1 * (Math.PI / 180)) * Math.cos(nLat2 * (Math.PI / 180)) *
+        Math.sin(dLon / 2) * Math.sin(dLon / 2);
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+    return parseFloat((R * c).toFixed(2));
+};
+
+export const getLiveStreamsService = async ({ page = 1, limit = 20, country = null, followerUserId = null, followingOnly = false, nearbyOnly = false, userLat = null, userLng = null, minKm = 9, maxKm = 40 } = {}) => {
     const pageNum = Math.max(1, parseInt(page, 10) || 1);
     const limitNum = Math.max(1, parseInt(limit, 10) || 20);
     const skip = (pageNum - 1) * limitNum;
@@ -464,11 +483,103 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
     let whereClause = {
         isLive: true
     };
-    let isFallback = false;
 
     const normCountry = (country && typeof country === 'string') ? country.trim().toLowerCase() : null;
     const isGlobalOrRandom = normCountry && ['all', 'global', 'random', 'world'].includes(normCountry);
 
+    // --- 1. NEARBY FILTER (9km - 40km Range) ---
+    if (nearbyOnly) {
+        let finalUserLat = userLat !== null && userLat !== undefined ? Number(userLat) : null;
+        let finalUserLng = userLng !== null && userLng !== undefined ? Number(userLng) : null;
+
+        // If user coordinates not explicitly provided, fetch from DB
+        if ((finalUserLat === null || finalUserLng === null || isNaN(finalUserLat) || isNaN(finalUserLng)) && followerUserId) {
+            const currentUser = await prisma.user.findUnique({
+                where: { id: followerUserId },
+                select: { lastLatitude: true, lastLongitude: true }
+            });
+            if (currentUser && currentUser.lastLatitude !== null && currentUser.lastLongitude !== null) {
+                finalUserLat = Number(currentUser.lastLatitude);
+                finalUserLng = Number(currentUser.lastLongitude);
+            }
+        }
+
+        // If user location is still missing, return empty list (No Fallback)
+        if (finalUserLat === null || finalUserLng === null || isNaN(finalUserLat) || isNaN(finalUserLng)) {
+            return {
+                streams: [],
+                total: 0,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: 0
+            };
+        }
+
+        // Fetch all active streams and their hosts' locations
+        const allActiveStreams = await prisma.liveStream.findMany({
+            where: { isLive: true },
+            orderBy: { startedAt: 'desc' }
+        });
+
+        if (allActiveStreams.length === 0) {
+            return {
+                streams: [],
+                total: 0,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: 0
+            };
+        }
+
+        const hostUserIds = [...new Set(allActiveStreams.map(s => s.userId).filter(Boolean))];
+        const hostUsers = await prisma.user.findMany({
+            where: { id: { in: hostUserIds } },
+            select: { id: true, lastLatitude: true, lastLongitude: true }
+        });
+
+        const hostLocationMap = new Map();
+        hostUsers.forEach(u => {
+            if (u.lastLatitude !== null && u.lastLongitude !== null) {
+                hostLocationMap.set(u.id, {
+                    lat: Number(u.lastLatitude),
+                    lng: Number(u.lastLongitude)
+                });
+            }
+        });
+
+        const nearbyStreams = [];
+        const minDist = Number(minKm) || 9;
+        const maxDist = Number(maxKm) || 40;
+
+        for (const stream of allActiveStreams) {
+            const loc = hostLocationMap.get(stream.userId);
+            if (!loc) continue;
+
+            const dist = calculateDistanceKm(finalUserLat, finalUserLng, loc.lat, loc.lng);
+            if (dist !== null && dist >= minDist && dist <= maxDist) {
+                nearbyStreams.push({
+                    ...stream,
+                    distanceKm: dist
+                });
+            }
+        }
+
+        // Sort by distance ascending (nearest first)
+        nearbyStreams.sort((a, b) => a.distanceKm - b.distanceKm);
+
+        const totalNearby = nearbyStreams.length;
+        const paginatedStreams = nearbyStreams.slice(skip, skip + limitNum);
+
+        return {
+            streams: paginatedStreams,
+            total: totalNearby,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(totalNearby / limitNum)
+        };
+    }
+
+    // --- 2. FOLLOWING FILTER ---
     if (followingOnly && followerUserId && !isGlobalOrRandom) {
         const follows = await prisma.userFollow.findMany({
             where: { followerId: followerUserId },
@@ -476,12 +587,16 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
         });
         const followingIds = follows.map(f => f.followingId);
 
-        if (followingIds.length > 0) {
-            whereClause.userId = { in: followingIds };
-        } else {
-            isFallback = true;
-            whereClause = { isLive: true };
+        if (followingIds.length === 0) {
+            return {
+                streams: [],
+                total: 0,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: 0
+            };
         }
+        whereClause.userId = { in: followingIds };
     } else if (normCountry && !isGlobalOrRandom) {
         const countryUsers = await prisma.user.findMany({
             where: {
@@ -494,15 +609,19 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
         });
 
         const userIds = countryUsers.map(u => u.id);
-        if (userIds.length > 0) {
-            whereClause.userId = { in: userIds };
-        } else {
-            isFallback = true;
-            whereClause = { isLive: true };
+        if (userIds.length === 0) {
+            return {
+                streams: [],
+                total: 0,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: 0
+            };
         }
+        whereClause.userId = { in: userIds };
     }
 
-    let [streams, total] = await Promise.all([
+    const [streams, total] = await Promise.all([
         prisma.liveStream.findMany({
             where: whereClause,
             orderBy: {
@@ -516,31 +635,12 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
         })
     ]);
 
-    if ((followingOnly || country) && !isFallback && streams.length === 0) {
-        whereClause = { isLive: true };
-        [streams, total] = await Promise.all([
-            prisma.liveStream.findMany({
-                where: whereClause,
-                orderBy: {
-                    startedAt: 'desc'
-                },
-                skip,
-                take: limitNum
-            }),
-            prisma.liveStream.count({
-                where: whereClause
-            })
-        ]);
-        isFallback = true;
-    }
-
     return {
         streams,
         total,
         page: pageNum,
         limit: limitNum,
-        totalPages: Math.ceil(total / limitNum),
-        isFallback
+        totalPages: Math.ceil(total / limitNum)
     };
 };
 
@@ -1006,6 +1106,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const balanceAfterPoints = currentReceiverPoints + pointsAwarded;
     if (redisClient.isOpen) {
         await redisClient.set(receiverPointsKey, balanceAfterPoints.toString(), "EX", 3600);
+        // Level XP Cache Invalidation for sender wealth level & receiver stream level
+        redisClient.del(`level:wealth:${senderId}`).catch(() => {});
+        redisClient.del(`level:stream:${receiverId}`).catch(() => {});
     }
 
     const socketPayload = {

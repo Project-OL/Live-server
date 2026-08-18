@@ -110,13 +110,27 @@ export const setupLiveSockets = (io) => {
 
                         if (isHost) {
                             await redisClient.sRem(`stream:active:${streamId}`, userId);
-                            // Clear 1-minute disconnect grace timer on Host reconnect
                             if (redisClient.isOpen) {
-                                const timerKey = `host:disconnect_timer:${streamId}`;
-                                const pendingTimer = await redisClient.get(timerKey);
-                                if (pendingTimer) {
-                                    console.log(`[Socket Host Reconnect] Host ${userId} reconnected to stream ${streamId}. Clearing 1-minute disconnect timer.`);
-                                    await redisClient.del(timerKey).catch(() => {});
+                                // 1. Clear 30s disconnect grace timer
+                                const disconnectTimerKey = `host:disconnect_timer:${streamId}`;
+                                const pendingDisconnect = await redisClient.get(disconnectTimerKey);
+                                if (pendingDisconnect) {
+                                    console.log(`[Socket Host Reconnect] Host ${userId} reconnected to stream ${streamId}. Clearing disconnect timer.`);
+                                    await redisClient.del(disconnectTimerKey).catch(() => { });
+                                }
+
+                                // 2. Check and clear 2-minute Video Call Return Grace Timer
+                                const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
+                                const pendingReturn = await redisClient.get(returnTimerKey);
+                                if (pendingReturn) {
+                                    console.log(`[Socket Host Rejoin] Host ${userId} returned to stream ${streamId} within 2-minute window. Resuming live stream! ✅`);
+                                    await redisClient.del(returnTimerKey).catch(() => { });
+
+                                    // Broadcast HOST_LIVE_RESUMED to room
+                                    broadcastToStream(streamId, "HOST_LIVE_RESUMED", {
+                                        streamId,
+                                        isPaused: false
+                                    });
                                 }
                             }
                         }
@@ -218,7 +232,7 @@ export const setupLiveSockets = (io) => {
                     console.warn(`[Socket Host Disconnect] Host ${userId} disconnected from stream ${streamId}. Starting 30s network loss timer.`);
                     const timerKey = `host:disconnect_timer:${streamId}`;
                     if (redisClient.isOpen) {
-                        await redisClient.set(timerKey, "pending", "EX", 30).catch(() => {});
+                        await redisClient.set(timerKey, "pending", "EX", 30).catch(() => { });
                     }
 
                     // 30-second background worker check
@@ -233,7 +247,7 @@ export const setupLiveSockets = (io) => {
                             if (isStillPending) {
                                 console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within 30s grace period. Auto-ending live stream...`);
                                 if (redisClient.isOpen) {
-                                    await redisClient.del(timerKey).catch(() => {});
+                                    await redisClient.del(timerKey).catch(() => { });
                                 }
 
                                 // Verify stream is still live before auto-ending
@@ -245,6 +259,27 @@ export const setupLiveSockets = (io) => {
                                 });
 
                                 if (activeStream) {
+                                    // Check 1: Is host in an active Video Call?
+                                    const activeCall = await prisma.videoCallSession.findFirst({
+                                        where: {
+                                            OR: [{ creatorId: userId }, { callerId: userId }],
+                                            status: "ACTIVE"
+                                        }
+                                    });
+
+                                    // Check 2: Is host in 2-minute Video Call Return Grace Period?
+                                    let isReturnGraceActive = false;
+                                    if (redisClient.isOpen) {
+                                        const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
+                                        const returnVal = await redisClient.get(returnTimerKey);
+                                        isReturnGraceActive = (returnVal === "pending");
+                                    }
+
+                                    if (activeCall || isReturnGraceActive) {
+                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping 30s auto-end for stream ${streamId}.`);
+                                        return;
+                                    }
+
                                     broadcastToStream(streamId, "stream_ended", {
                                         streamId,
                                         reason: "HOST_DISCONNECTED_TIMEOUT",
@@ -288,6 +323,14 @@ export const setupLiveSockets = (io) => {
                     console.warn(`[Socket] Unauthorized invite_to_sheet by user ${userId} in stream ${streamId}`);
                     return;
                 }
+
+                const isTargetAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
+                if (isTargetAudioRestricted) {
+                    console.log(`[Socket] Blocked Host ${userId} from inviting user ${targetUserId} due to active LIVE_AUDIO_MUTE restriction`);
+                    socket.emit("error", { message: "This user is restricted by Admin from joining live audio seats." });
+                    return;
+                }
+
                 const hostUser = await prisma.user.findUnique({
                     where: { id: userId },
                     select: { username: true }

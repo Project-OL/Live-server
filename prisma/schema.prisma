@@ -45,6 +45,9 @@ model User {
   lastActiveAt                                                 DateTime?                      @map("last_active_at")
   currentAgencyId                                              String?                        @map("current_agency_id") @db.Uuid
   lastIpAddress                                                String?                        @map("last_ip_address") @db.VarChar(45)
+  lastLatitude                                                 Decimal?                       @map("last_latitude") @db.Decimal(9, 6)
+  lastLongitude                                                Decimal?                       @map("last_longitude") @db.Decimal(9, 6)
+  lastLocatedAt                                                DateTime?                      @map("last_located_at")
   tokenVersion                                                 Int                            @default(0) @map("token_version")
   createdAt                                                    DateTime                       @default(now()) @map("created_at")
   updatedAt                                                    DateTime                       @updatedAt @map("updated_at")

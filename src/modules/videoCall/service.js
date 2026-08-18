@@ -632,21 +632,63 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
         scheduledDisconnects.delete(sessionId);
     }
 
-    // Resume live stream & auto-unmute mic seat speakers if host was live streaming
+    // 2-Minute Host Return Grace Period for Live Stream
     (async () => {
         try {
             const streamId = await redisClient.get(`video_call:stream_pause:${sessionId}`);
             if (streamId) {
-                broadcastToStream(streamId, "HOST_LIVE_RESUMED", {
-                    streamId,
-                    isPaused: false
-                });
+                const hostId = session.creatorId;
+                const returnTimerKey = `host:return_timer:${streamId}:${hostId}`;
+                
+                // Set 120-second (2 minute) return grace timer in Redis
+                if (redisClient.isOpen) {
+                    await redisClient.set(returnTimerKey, "pending", "EX", 120).catch(() => {});
+                }
 
-                await redisClient.del(`video_call:stream_pause:${sessionId}`);
-                await redisClient.del(`video_call:paused_mic_users:${sessionId}`);
+                console.log(`[VideoCall End] Host ${hostId} has 2 minutes (120s) to return to live stream ${streamId} from Home screen.`);
+
+                // 2-minute (120,000 ms) background worker
+                setTimeout(async () => {
+                    try {
+                        let isStillPending = true;
+                        if (redisClient.isOpen) {
+                            const val = await redisClient.get(returnTimerKey);
+                            isStillPending = (val === "pending");
+                        }
+
+                        if (isStillPending) {
+                            console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} did NOT return to live stream ${streamId} within 2 minutes. Auto-ending live stream...`);
+                            if (redisClient.isOpen) {
+                                await redisClient.del(returnTimerKey).catch(() => {});
+                                await redisClient.del(`video_call:stream_pause:${sessionId}`).catch(() => {});
+                            }
+
+                            const activeStream = await prisma.liveStream.findFirst({
+                                where: {
+                                    OR: [{ streamId }, { userId: hostId }],
+                                    isLive: true
+                                }
+                            });
+
+                            if (activeStream) {
+                                broadcastToStream(streamId, "stream_ended", {
+                                    streamId,
+                                    reason: "HOST_NOT_RETURNED_2MIN",
+                                    message: "Live stream ended because host did not return within 2 minutes after video call."
+                                });
+
+                                const { endLiveStreamService } = await import("../../routes/service/serviceLive.js");
+                                await endLiveStreamService({ id: activeStream.id, userId: hostId });
+                                console.log(`[VideoCall 2-Min Return Timeout] Auto-ended live stream ${streamId} successfully! ✅`);
+                            }
+                        }
+                    } catch (timeoutErr) {
+                        console.error("[VideoCall 2-Min Return Timeout Error]:", timeoutErr.message);
+                    }
+                }, 120000);
             }
         } catch (resumeErr) {
-            console.error("[VideoCall] Live Stream resume on call end error:", resumeErr);
+            console.error("[VideoCall] Live Stream 2-min return setup error:", resumeErr);
         }
     })();
 
@@ -1097,6 +1139,24 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
 
     emitToUser(session.callerId, "GIFT_SENT", socketPayload);
     emitToUser(session.creatorId, "GIFT_SENT", socketPayload);
+
+    // Also emit RECEIVE_MESSAGE for Video Call Chat Window rendering (same as live stream)
+    const chatMsgPayload = {
+        senderId,
+        senderName,
+        text: `${senderName} sent ${gift.name} ×${giftCount}`,
+        wealthLevel: finalLevel,
+        isGift: true,
+        gift: {
+            id: gift.id,
+            name: gift.name,
+            displayImageUrl: gift.displayImageUrl,
+            count: giftCount
+        },
+        timestamp: new Date().toISOString()
+    };
+    emitToUser(session.callerId, "RECEIVE_MESSAGE", chatMsgPayload);
+    emitToUser(session.creatorId, "RECEIVE_MESSAGE", chatMsgPayload);
 
     setImmediate(async () => {
         try {
