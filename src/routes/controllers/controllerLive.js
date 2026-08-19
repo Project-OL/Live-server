@@ -125,7 +125,8 @@ const fastGoLiveStream = async (req, res) => {
         const result = await fastGoLiveStreamService({
             userId: req.userId,
             title: value.title,
-            heading: value.heading
+            heading: value.heading,
+            isCameraOn: req.body.isCameraOn
         });
 
         return res.status(201).json({

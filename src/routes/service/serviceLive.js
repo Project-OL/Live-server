@@ -74,7 +74,8 @@ export const closeLivekitRoom = async (roomName) => {
 export const fastGoLiveStreamService = async ({
     userId,
     title,
-    heading
+    heading,
+    isCameraOn = true
 }) => {
     const activeStreamKey = `user:active_stream:${userId}`;
     const suspendedCacheKey = `user:suspended:${userId}`;
@@ -186,6 +187,10 @@ export const fastGoLiveStreamService = async ({
             redisClient.set(`stream:info:${streamId}`, JSON.stringify(createdStream), "EX", 86400),
             redisClient.set(activeStreamKey, streamId, "EX", 86400)
         ]);
+    }
+
+    if (isCameraOn === false || isCameraOn === "false") {
+        await handleCameraStateChangeService({ streamId, isCameraOn: false, userId });
     }
 
     const token = await generateStreamHostToken(streamId, userId);

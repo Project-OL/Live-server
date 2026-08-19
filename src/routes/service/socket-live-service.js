@@ -708,7 +708,7 @@ export const setupLiveSockets = (io) => {
         // Host toggles their camera ON/OFF state
         socket.on("toggle_camera_state", async ({ streamId, isCameraOn }) => {
             try {
-                await handleCameraStateChangeService({ streamId, isCameraOn });
+                await handleCameraStateChangeService({ streamId, isCameraOn, userId });
                 broadcastToStream(streamId, "camera_state_changed", {
                     userId,
                     isCameraOn: Boolean(isCameraOn)
