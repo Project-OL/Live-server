@@ -120,11 +120,16 @@ export const setupLiveSockets = (io) => {
                                 }
 
                                 // 2. Check and clear 2-minute Video Call Return Grace Timer
-                                const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
-                                const pendingReturn = await redisClient.get(returnTimerKey);
-                                if (pendingReturn) {
+                                const returnTimerKey1 = `host:return_timer:${streamId}:${userId}`;
+                                const returnTimerKey2 = `host:return_timer:${userId}`;
+                                const val1 = await redisClient.get(returnTimerKey1);
+                                const val2 = await redisClient.get(returnTimerKey2);
+                                if (val1 === "pending" || val2 === "pending") {
                                     console.log(`[Socket Host Rejoin] Host ${userId} returned to stream ${streamId} within 2-minute window. Resuming live stream! ✅`);
-                                    await redisClient.del(returnTimerKey).catch(() => { });
+                                    await Promise.all([
+                                        redisClient.del(returnTimerKey1),
+                                        redisClient.del(returnTimerKey2)
+                                    ]).catch(() => { });
 
                                     // Broadcast HOST_LIVE_RESUMED to room
                                     broadcastToStream(streamId, "HOST_LIVE_RESUMED", {
@@ -270,9 +275,9 @@ export const setupLiveSockets = (io) => {
                                     // Check 2: Is host in 2-minute Video Call Return Grace Period?
                                     let isReturnGraceActive = false;
                                     if (redisClient.isOpen) {
-                                        const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
-                                        const returnVal = await redisClient.get(returnTimerKey);
-                                        isReturnGraceActive = (returnVal === "pending");
+                                        const val1 = await redisClient.get(`host:return_timer:${streamId}:${userId}`);
+                                        const val2 = await redisClient.get(`host:return_timer:${userId}`);
+                                        isReturnGraceActive = (val1 === "pending" || val2 === "pending");
                                     }
 
                                     if (activeCall || isReturnGraceActive) {
