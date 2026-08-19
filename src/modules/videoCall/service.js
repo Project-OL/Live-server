@@ -13,6 +13,16 @@ export const heartbeatCache = new Map();
 
 export const scheduledDisconnects = new Map();
 
+export const activeReturnTimeouts = new Map();
+
+export const clearHostReturnTimeout = (hostId) => {
+    if (activeReturnTimeouts.has(hostId)) {
+        console.log(`[Return Grace Timer] Clearing stale background return timeout for host ${hostId}`);
+        clearTimeout(activeReturnTimeouts.get(hostId));
+        activeReturnTimeouts.delete(hostId);
+    }
+};
+
 export const getOrCreateWallet = async (userId, currencyType, tx = prisma) => {
     let wallet = await tx.wallet.findUnique({
         where: { userId_currencyType: { userId, currencyType } }
@@ -684,8 +694,12 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
 
                 console.log(`[VideoCall End] Host ${hostId} has 2 minutes (120s) to return to live stream ${streamId} from Home screen.`);
 
+                // Clear any previous stale 2-minute return timeout for this host
+                clearHostReturnTimeout(hostId);
+
                 // 2-minute (120,000 ms) background worker
-                setTimeout(async () => {
+                const returnHandle = setTimeout(async () => {
+                    activeReturnTimeouts.delete(hostId);
                     try {
                         let isStillPending = true;
                         if (redisClient.isOpen) {
@@ -727,6 +741,8 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                         console.error("[VideoCall 2-Min Return Timeout Error]:", timeoutErr.message);
                     }
                 }, 120000);
+
+                activeReturnTimeouts.set(hostId, returnHandle);
             }
         } catch (resumeErr) {
             console.error("[VideoCall] Live Stream 2-min return setup error:", resumeErr);

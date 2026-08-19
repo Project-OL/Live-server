@@ -17,6 +17,7 @@ import {
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
+import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
 
 let ioInstance = null;
 const autoUnmuteTimers = new Map();
@@ -120,6 +121,7 @@ export const setupLiveSockets = (io) => {
                                 }
 
                                 // 2. Check and clear 2-minute Video Call Return Grace Timer
+                                clearHostReturnTimeout(userId);
                                 const returnTimerKey1 = `host:return_timer:${streamId}:${userId}`;
                                 const returnTimerKey2 = `host:return_timer:${userId}`;
                                 const val1 = await redisClient.get(returnTimerKey1);
