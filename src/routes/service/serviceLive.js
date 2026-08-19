@@ -2358,3 +2358,224 @@ export const cleanupStaleLiveStreamRedisKeys = async () => {
         return { cleanedCount: 0, error: err.message };
     }
 };
+
+/**
+ * Helper to compute 11:30 PM (23:30) IST boundaries for today, thisWeek, and thisMonth.
+ * IST is UTC + 5:30.
+ * 23:30 IST corresponds to 18:00 UTC of the same calendar day.
+ */
+export const calculate1130DateRanges = (nowDate = new Date()) => {
+    const istOffsetMs = 5.5 * 3600 * 1000;
+    const istDate = new Date(nowDate.getTime() + istOffsetMs);
+
+    const y = istDate.getUTCFullYear();
+    const m = istDate.getUTCMonth();
+    const d = istDate.getUTCDate();
+
+    // 18:00 UTC on current calendar day corresponds to 23:30 IST on current day
+    const today2330Utc = new Date(Date.UTC(y, m, d, 18, 0, 0, 0));
+    let todayStartUtc, todayEndUtc;
+
+    if (nowDate >= today2330Utc) {
+        todayStartUtc = today2330Utc;
+        todayEndUtc = new Date(Date.UTC(y, m, d + 1, 18, 0, 0, 0));
+    } else {
+        todayStartUtc = new Date(Date.UTC(y, m, d - 1, 18, 0, 0, 0));
+        todayEndUtc = today2330Utc;
+    }
+
+    // Determine "This Week" (Sunday 23:30 IST to Sunday 23:30 IST)
+    const dayOfWeek = istDate.getUTCDay(); // 0 = Sunday, 1 = Monday ... 6 = Saturday
+    let daysSinceSunday = dayOfWeek;
+    if (dayOfWeek === 0 && nowDate < today2330Utc) {
+        daysSinceSunday = 7;
+    }
+    const sundayStartUtc = new Date(todayStartUtc.getTime() - (daysSinceSunday * 86400 * 1000));
+    const weekStartUtc = new Date(Date.UTC(sundayStartUtc.getUTCFullYear(), sundayStartUtc.getUTCMonth(), sundayStartUtc.getUTCDate(), 18, 0, 0, 0));
+    const weekEndUtc = new Date(weekStartUtc.getTime() + 7 * 86400 * 1000);
+
+    // Determine "This Month" (Calendar month start to end anchored at 18:00 UTC / 23:30 IST)
+    const monthStartUtc = new Date(Date.UTC(y, m, 1, 18, 0, 0, 0));
+    const monthEndUtc = new Date(Date.UTC(y, m + 1, 1, 18, 0, 0, 0));
+
+    return {
+        today: { start: todayStartUtc, end: todayEndUtc },
+        thisWeek: { start: weekStartUtc, end: weekEndUtc },
+        thisMonth: { start: monthStartUtc, end: monthEndUtc }
+    };
+};
+
+export const formatDurationHHMMSS = (totalSeconds = 0) => {
+    const secs = Math.max(0, parseInt(totalSeconds, 10) || 0);
+    const hours = Math.floor(secs / 3600);
+    const minutes = Math.floor((secs % 3600) / 60);
+    const remainingSecs = secs % 60;
+    return [hours, minutes, remainingSecs]
+        .map(v => String(v).padStart(2, '0'))
+        .join(':');
+};
+
+export const getHostStatsService = async ({ hostUserId, period = "today" }) => {
+    const hostUser = await prisma.user.findUnique({
+        where: { id: hostUserId },
+        select: { id: true, publicId: true, username: true }
+    });
+
+    if (!hostUser) {
+        throw new Error("Host user not found.");
+    }
+
+    const hostPublicId = hostUser.publicId ? String(hostUser.publicId) : hostUser.id;
+    const ranges = calculate1130DateRanges();
+
+    const getMetricsForRange = async (startDate, endDate) => {
+        const streams = await prisma.liveStream.findMany({
+            where: {
+                userId: hostUserId,
+                endedAt: {
+                    gte: startDate,
+                    lt: endDate
+                }
+            },
+            select: { id: true }
+        });
+
+        const streamIds = streams.map(s => s.id);
+        let liveHoursSeconds = 0;
+
+        if (streamIds.length > 0) {
+            const sumRes = await prisma.liveStream.aggregate({
+                _sum: { effectiveDurationSeconds: true },
+                where: { id: { in: streamIds } }
+            });
+            liveHoursSeconds = Number(sumRes._sum.effectiveDurationSeconds || 0);
+        }
+
+        const pointsRes = await prisma.$queryRaw`
+            SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS total_points
+            FROM point_ledger_entries ple
+            INNER JOIN wallets w ON w.id = ple.wallet_id
+            WHERE w.user_id = ${hostUserId}::uuid
+              AND w.currency_type = 'POINT'
+              AND ple.direction = 'CREDIT'
+              AND ple.created_at >= ${startDate}
+              AND ple.created_at < ${endDate}
+        `;
+        const wonPoints = pointsRes && pointsRes[0] ? String(pointsRes[0].total_points) : "0";
+
+        const newFollowers = await prisma.userFollow.count({
+            where: {
+                followingId: hostUserId,
+                createdAt: {
+                    gte: startDate,
+                    lt: endDate
+                }
+            }
+        });
+
+        return {
+            hostPublicId,
+            liveHoursSeconds,
+            liveHoursFormatted: formatDurationHHMMSS(liveHoursSeconds),
+            wonPoints,
+            newFollowers,
+            pkWon: 0
+        };
+    };
+
+    const fetchLastLiveStats = async () => {
+        let lastLive = {
+            streamId: null,
+            liveHoursSeconds: 0,
+            liveHoursFormatted: "00:00:00",
+            wonPoints: "0",
+            newFollowers: 0,
+            pkWon: 0,
+            endedAt: null
+        };
+
+        const mostRecentEndedStream = await prisma.liveStream.findFirst({
+            where: {
+                userId: hostUserId,
+                isLive: false,
+                endedAt: {
+                    gte: ranges.today.start,
+                    lt: ranges.today.end
+                }
+            },
+            orderBy: { endedAt: 'desc' }
+        });
+
+        if (mostRecentEndedStream) {
+            const streamId = mostRecentEndedStream.streamId || mostRecentEndedStream.id;
+            const streamStart = mostRecentEndedStream.startedAt || mostRecentEndedStream.createdAt;
+            const streamEnd = mostRecentEndedStream.endedAt;
+            const streamSeconds = Number(mostRecentEndedStream.effectiveDurationSeconds || mostRecentEndedStream.effective_duration_seconds || 0);
+
+            const streamPointsRes = await prisma.$queryRaw`
+                SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS total_points
+                FROM point_ledger_entries ple
+                INNER JOIN wallets w ON w.id = ple.wallet_id
+                WHERE w.user_id = ${hostUserId}::uuid
+                  AND w.currency_type = 'POINT'
+                  AND ple.direction = 'CREDIT'
+                  AND ple.created_at >= ${streamStart}
+                  AND ple.created_at <= ${streamEnd}
+            `;
+            const streamWonPoints = streamPointsRes && streamPointsRes[0] ? String(streamPointsRes[0].total_points) : "0";
+
+            const streamFollowers = await prisma.userFollow.count({
+                where: {
+                    followingId: hostUserId,
+                    createdAt: {
+                        gte: streamStart,
+                        lte: streamEnd
+                    }
+                }
+            });
+
+            lastLive = {
+                streamId,
+                liveHoursSeconds: streamSeconds,
+                liveHoursFormatted: formatDurationHHMMSS(streamSeconds),
+                wonPoints: streamWonPoints,
+                newFollowers: streamFollowers,
+                pkWon: 0,
+                endedAt: streamEnd
+            };
+        }
+        return lastLive;
+    };
+
+    const normPeriod = String(period || 'today').toLowerCase().trim();
+
+    if (normPeriod === 'week' || normPeriod === 'thisweek' || normPeriod === 'this_week') {
+        const thisWeekData = await getMetricsForRange(ranges.thisWeek.start, ranges.thisWeek.end);
+        return { thisWeekData };
+    }
+
+    if (normPeriod === 'month' || normPeriod === 'thismonth' || normPeriod === 'this_month') {
+        const thisMonthData = await getMetricsForRange(ranges.thisMonth.start, ranges.thisMonth.end);
+        return { thisMonthData };
+    }
+
+    if (normPeriod === 'all') {
+        const [todayData, thisWeekData, thisMonthData, lastLive] = await Promise.all([
+            getMetricsForRange(ranges.today.start, ranges.today.end),
+            getMetricsForRange(ranges.thisWeek.start, ranges.thisWeek.end),
+            getMetricsForRange(ranges.thisMonth.start, ranges.thisMonth.end),
+            fetchLastLiveStats()
+        ]);
+        todayData.lastLive = lastLive;
+        return { todayData, thisWeekData, thisMonthData };
+    }
+
+    // Default: 'today' period
+    const [todayData, lastLive] = await Promise.all([
+        getMetricsForRange(ranges.today.start, ranges.today.end),
+        fetchLastLiveStats()
+    ]);
+    todayData.lastLive = lastLive;
+
+    return { todayData };
+};

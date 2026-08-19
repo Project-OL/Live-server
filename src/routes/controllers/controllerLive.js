@@ -32,7 +32,8 @@ import {
     updateUserEffectSettingsService,
     getFansRankingService,
     sortRoomViewersService,
-    startLocalHlsEgressService
+    startLocalHlsEgressService,
+    getHostStatsService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
@@ -1321,6 +1322,31 @@ const sendLuckyGift = async (req, res) => {
     }
 };
 
+const getHostStats = async (req, res) => {
+    try {
+        const hostUserId = req.query.hostId || req.userId;
+        if (!hostUserId) {
+            return res.status(400).json({
+                success: false,
+                message: "hostId parameter or authentication token required."
+            });
+        }
+
+        const period = req.query.period || 'today';
+        const data = await getHostStatsService({ hostUserId, period });
+        return res.json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+router.get('/host-stats', auth, getHostStats);
 router.get('/user/effect-settings', auth, getUserEffectSettings);
 router.patch('/user/effect-settings', auth, updateUserEffectSettings);
 router.post('/follow/:targetUserId', auth, followUser);
