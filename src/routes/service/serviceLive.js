@@ -117,7 +117,7 @@ export const fastGoLiveStreamService = async ({
                 await Promise.all([
                     redisClient.del(activeStreamKey),
                     redisClient.del(`stream:info:${activeStreamId}`)
-                ]).catch(() => {});
+                ]).catch(() => { });
             }
             activeStreamId = null;
         } else {
@@ -1108,8 +1108,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     if (redisClient.isOpen) {
         await redisClient.set(receiverPointsKey, balanceAfterPoints.toString(), "EX", 3600);
         // Level XP Cache Invalidation for sender wealth level & receiver stream level
-        redisClient.del(`level:wealth:${senderId}`).catch(() => {});
-        redisClient.del(`level:stream:${receiverId}`).catch(() => {});
+        redisClient.del(`level:wealth:${senderId}`).catch(() => { });
+        redisClient.del(`level:stream:${receiverId}`).catch(() => { });
     }
 
     const socketPayload = {
@@ -2347,7 +2347,7 @@ export const cleanupStaleLiveStreamRedisKeys = async () => {
                     await Promise.all([
                         redisClient.del(key),
                         redisClient.del(`stream:info:${streamId}`)
-                    ]).catch(() => {});
+                    ]).catch(() => { });
                     cleanedCount++;
                 }
             }

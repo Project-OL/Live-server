@@ -533,7 +533,14 @@ export const acceptCall = async (sessionId, receiverId) => {
         // 1. Pause live stream & auto-mute mic seat speakers immediately if host is live streaming
         try {
             const activeStream = await prisma.liveStream.findFirst({
-                where: { userId: session.creatorId, isLive: true, endedAt: null }
+                where: {
+                    OR: [
+                        { userId: session.creatorId },
+                        { userId: session.callerId }
+                    ],
+                    isLive: true,
+                    endedAt: null
+                }
             });
             if (activeStream) {
                 const streamId = activeStream.streamId || activeStream.id;
