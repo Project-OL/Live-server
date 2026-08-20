@@ -1054,7 +1054,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     if (isStealth) {
         stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
     }
-    const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.username || "User");
+    const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
 
     if (gift.isLucky || gift.effectLuckyGift) {
         const luckyResult = await sendLuckyGiftService({
@@ -1640,7 +1640,7 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         newBalance: Number(balanceAfterCoins),
         socketPayload: {
             senderId,
-            senderName: senderUser.username || `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || "User",
+            senderName: `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || senderUser.username || "User",
             senderProfilePic: senderUser.avatarUrl || null,
             wealthLevel: userLevel?.currentLevel || 1,
             message,
@@ -2313,13 +2313,18 @@ export const getUserPrivacyService = async ({ userId }) => {
         where: { id: userId },
         select: {
             username: true,
+            firstName: true,
+            lastName: true,
             avatarUrl: true,
             privacyMysteryLive: true,
             vipSubscriptionActive: true
         }
     });
 
+    const displayName = user?.name || user?.username || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Guest";
+
     const result = {
+        name: displayName,
         username: user?.username || "Guest",
         avatarUrl: user?.avatarUrl || null,
         isStealth: Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive)
