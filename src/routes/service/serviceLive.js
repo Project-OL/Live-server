@@ -2158,6 +2158,8 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
                 id: true,
                 publicId: true,
                 username: true,
+                firstName: true,
+                lastName: true,
                 avatarUrl: true,
                 gender: true,
                 dateOfBirth: true,
@@ -2211,9 +2213,12 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
             if (age < 0) age = null;
         }
 
+        const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.username || "User";
+
         return {
             id: u.id,
             publicId: u.publicId ? u.publicId.toString() : null,
+            name,
             username: u.username,
             avatarUrl: u.avatarUrl || null,
             gender: u.gender || null,
@@ -2266,6 +2271,8 @@ export const getHostProfileService = async ({ hostUserId }) => {
                 id: true,
                 publicId: true,
                 username: true,
+                firstName: true,
+                lastName: true,
                 avatarUrl: true,
                 userLevel: {
                     select: {
@@ -2282,13 +2289,15 @@ export const getHostProfileService = async ({ hostUserId }) => {
     ]);
 
     const hostLevelMap = new Map(hostWalletLevels.map(w => [w.levelType, w.currentLevel]));
+    const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
     const host = hostUser ? {
         id: hostUser.id,
         publicId: hostUser.publicId ? hostUser.publicId.toString() : null,
+        name: hostName,
         username: hostUser.username,
         avatarUrl: hostUser.avatarUrl || null,
         wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? hostUser.userLevel?.wealthLevel ?? 0,
-        livestreamLevel: hostLevelMap.get(LevelType.LIVESTREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
+        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
     } : null;
 
     if (host && redisClient.isOpen) {
