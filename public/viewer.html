@@ -8,6 +8,7 @@
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
         .gift-pop {
             animation: giftPopUp 3s ease-out forwards;
@@ -678,7 +679,7 @@
         const SERVER_URL = isLocal ? "http://localhost:5000" : window.location.origin;
         const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
         const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
-        const LIVEKIT_URL = "wss://ofo-rjyi95u0.livekit.cloud";
+        const LIVEKIT_URL = "wss://stream.offoolive.com";
 
         let socket = null;
         let room = null;
@@ -1099,7 +1100,60 @@
                     rebuildViewerDropdown();
 
                     socket.emit("join_stream", { streamId: currentRoomUuid });
-                    await connectLiveKitViewer(data.token);
+                    if (data.mode === "HLS" && data.hlsUrl) {
+                        appendSystemAlert(`📺 BunnyCDN HLS Active! Source: ${data.hlsUrl}`);
+                        console.log("[BunnyCDN HLS] Playing HLS source:", data.hlsUrl);
+
+                        // Clear divRemoteVideo container and insert video tag
+                        E.divRemoteVideo.innerHTML = "";
+                        E.divRemoteVideo.classList.remove('hidden');
+                        const placeholder = document.getElementById('lblRemoteFeedPlaceholder');
+                        if (placeholder) placeholder.classList.add('hidden');
+
+                        const videoEl = document.createElement('video');
+                        videoEl.className = "w-full h-full object-cover shadow-inner cursor-pointer";
+                        videoEl.autoplay = true;
+                        videoEl.controls = false;
+                        videoEl.playsInline = true;
+                        videoEl.onclick = () => { videoEl.muted = false; videoEl.play(); };
+                        E.divRemoteVideo.appendChild(videoEl);
+
+                        const safePlay = () => {
+                            videoEl.play().catch(err => {
+                                console.warn("[Autoplay Policy] Unmuted play blocked, falling back to muted play:", err.message);
+                                videoEl.muted = true;
+                                videoEl.play().catch(e => console.error("Muted play error:", e));
+                            });
+                        };
+
+                        if (Hls.isSupported()) {
+                            const hls = new Hls({
+                                manifestLoadingTimeOut: 10000,
+                                manifestLoadingMaxRetry: 10,
+                                manifestLoadingRetryDelay: 1000,
+                                levelLoadingTimeOut: 10000,
+                                levelLoadingMaxRetry: 10,
+                                levelLoadingRetryDelay: 1000
+                            });
+                            hls.loadSource(data.hlsUrl);
+                            hls.attachMedia(videoEl);
+                            hls.on(Hls.Events.MANIFEST_PARSED, () => safePlay());
+                            hls.on(Hls.Events.ERROR, (event, errData) => {
+                                if (errData.fatal) {
+                                    console.warn("[HLS.js] Retrying live manifest load...", errData.type);
+                                    setTimeout(() => {
+                                        hls.loadSource(data.hlsUrl);
+                                        hls.startLoad();
+                                    }, 2000);
+                                }
+                            });
+                        } else {
+                            videoEl.src = data.hlsUrl;
+                            videoEl.play().catch(e => console.log(e));
+                        }
+                    } else {
+                        await connectLiveKitViewer(data.token);
+                    }
 
                     E.txtChatMessage.disabled = false;
                     E.btnSendChat.disabled = false;
@@ -1210,22 +1264,30 @@
                         const el = track.attach();
                         if (track.kind === 'video') {
                             el.className = "w-full h-full object-cover shadow-inner";
+                            el.autoplay = true;
+                            el.playsInline = true;
                             E.divRemoteVideo.innerHTML = "";
                             E.divRemoteVideo.appendChild(el);
 
                             if (publication.isMuted) {
                                 E.divRemoteVideo.classList.add('hidden');
-                                placeholder.innerText = "🚫 Camera is Off (Host)";
+                                if (placeholder) {
+                                    placeholder.innerText = "🚫 Camera is Off (Host)";
+                                    placeholder.classList.remove('hidden');
+                                }
                             } else {
                                 E.divRemoteVideo.classList.remove('hidden');
-                                placeholder.innerText = "🎥 Video Stream Feed";
+                                if (placeholder) placeholder.classList.add('hidden');
                             }
+                            el.play().catch(err => console.log("Autoplay video:", err));
                         } else if (track.kind === 'audio') {
                             el.id = `audio-track-${participant.identity}`;
+                            el.autoplay = true;
                             if (locallyMutedParticipants.has(participant.identity)) {
                                 el.muted = true;
                             }
                             document.body.appendChild(el);
+                            el.play().catch(err => console.log("Autoplay audio:", err));
                         }
                     }
                 });

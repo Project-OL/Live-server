@@ -129,6 +129,16 @@ const fastGoLiveStream = async (req, res) => {
             isCameraOn: req.body.isCameraOn
         });
 
+        // 🟢 Pre-warm Egress immediately on Go-Live so HLS segments are ready on disk
+        if (redisClient.isOpen) {
+            const egressKey = `stream:egress:${result.stream.streamId}`;
+            startLocalHlsEgressService(result.stream.streamId).then(async (newEgressId) => {
+                if (newEgressId) {
+                    await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                }
+            }).catch(err => console.error("Egress pre-warm error:", err.message));
+        }
+
         return res.status(201).json({
             success: true,
             data: result.stream,
@@ -229,10 +239,10 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
-        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC, Viewers 51+ get BunnyCDN HLS
-        if (finalViewerCount > 50 && req.userId !== stream.userId) {
+        // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS
+        if (finalViewerCount > 2 && req.userId !== stream.userId) {
             mode = "HLS";
-            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live.m3u8`;
+            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
 
             // Auto-start Local Egress if not already active
             if (redisClient.isOpen) {
