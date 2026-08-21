@@ -17,12 +17,19 @@ import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 
-export {
+import {
     cleanOldHlsSegmentsService,
     removeHlsStreamDirService,
     startLocalHlsEgressService,
     stopLocalHlsEgressService
 } from './serviceHlsEgress.js';
+
+export {
+    cleanOldHlsSegmentsService,
+    removeHlsStreamDirService,
+    startLocalHlsEgressService,
+    stopLocalHlsEgressService
+};
 
 dotenv.config();
 
