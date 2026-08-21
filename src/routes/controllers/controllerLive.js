@@ -239,25 +239,23 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
+        // 🟢 Pre-trigger Egress when 2nd Viewer joins so HLS segments are 100% ready for 3rd Viewer
+        if (finalViewerCount >= 2 && redisClient.isOpen) {
+            const egressKey = `stream:egress:${stream.streamId}`;
+            redisClient.get(egressKey).then(async (activeEgressId) => {
+                if (!activeEgressId) {
+                    const newEgressId = await startLocalHlsEgressService(stream.streamId);
+                    if (newEgressId) {
+                        await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                    }
+                }
+            }).catch(err => console.error("Egress pre-warm error:", err.message));
+        }
+
         // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS
         if (finalViewerCount > 2 && req.userId !== stream.userId) {
             mode = "HLS";
             hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
-
-            // Auto-start Local Egress if not already active
-            if (redisClient.isOpen) {
-                const egressKey = `stream:egress:${stream.streamId}`;
-                redisClient.get(egressKey).then(async (activeEgressId) => {
-                    if (!activeEgressId) {
-                        const newEgressId = await startLocalHlsEgressService(stream.streamId);
-                        if (newEgressId) {
-                            await redisClient.set(egressKey, newEgressId, "EX", 86400);
-                        }
-                    }
-                }).catch(err => console.error("Egress start check error:", err.message));
-            } else {
-                startLocalHlsEgressService(stream.streamId).catch(err => console.error(err.message));
-            }
         }
 
         if (isStealth) {
@@ -602,22 +600,25 @@ const toggleAdminStatus = async (req, res) => {
             return res.status(400).json({ success: false, message: "Host cannot be promoted or demoted." });
         }
 
-        const isAdmin = await promoteDemoteAdminService({ streamId: stream.streamId, targetUserId });
+        const isAdmin = await promoteDemoteAdminService({ streamId: stream.streamId, hostUserId: stream.userId, targetUserId });
 
         const hostUser = await prisma.user.findUnique({
             where: { id: req.userId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
         const targetUser = await prisma.user.findUnique({
             where: { id: targetUserId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
 
         const isHostStealth = Boolean(hostUser?.privacyMysteryLive && hostUser?.vipSubscriptionActive);
         const isTargetStealth = Boolean(targetUser?.privacyMysteryLive && targetUser?.vipSubscriptionActive);
 
-        const hostName = isHostStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Host") : (hostUser ? hostUser.username : "Host");
-        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : (targetUser ? targetUser.username : "User");
+        const hostDisplayName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
+        const targetDisplayName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
+
+        const hostName = isHostStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Host") : hostDisplayName;
+        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : targetDisplayName;
 
         const alertText = isAdmin
             ? `${targetName} is now a Room Admin.`
@@ -715,18 +716,21 @@ const kickUser = async (req, res) => {
 
         const kickerUser = await prisma.user.findUnique({
             where: { id: req.userId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
         const targetUser = await prisma.user.findUnique({
             where: { id: targetUserId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
 
         const isKickerStealth = Boolean(kickerUser?.privacyMysteryLive && kickerUser?.vipSubscriptionActive);
         const isTargetStealth = Boolean(targetUser?.privacyMysteryLive && targetUser?.vipSubscriptionActive);
 
-        const kickerName = isKickerStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Admin") : (kickerUser ? kickerUser.username : "Admin");
-        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : (targetUser ? targetUser.username : "User");
+        const kickerDisplayName = kickerUser ? (`${kickerUser.firstName || ""} ${kickerUser.lastName || ""}`.trim() || kickerUser.username || "Admin") : "Admin";
+        const targetDisplayName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
+
+        const kickerName = isKickerStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Admin") : kickerDisplayName;
+        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : targetDisplayName;
 
         const alertText = `${targetName} removed from the room.`;
 

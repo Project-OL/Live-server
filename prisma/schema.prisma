@@ -150,6 +150,8 @@ model User {
   wallets                                                      Wallet[]
   payrollAssignmentsAsAgent                                    WithdrawalPayrollAssignment[]  @relation("AgencyPayrollAssignments")
   userRestrictions                                             UserRestriction[]
+  hostAdminsCreated                                            LiveStreamAdmin[]              @relation("HostAdminHost")
+  hostAdminsReceived                                           LiveStreamAdmin[]              @relation("HostAdminUser")
 
   @@index([publicId])
   @@index([defaultPublicId])
@@ -2638,3 +2640,19 @@ model UserRestriction {
   @@index([reportId])
   @@map("user_restrictions")
 }
+
+model LiveStreamAdmin {
+  id           String   @id @default(uuid()) @db.Uuid
+  hostUserId   String   @map("host_user_id") @db.Uuid
+  adminUserId  String   @map("admin_user_id") @db.Uuid
+  createdAt    DateTime @default(now()) @map("created_at") @db.Timestamptz
+
+  hostUser  User @relation("HostAdminHost", fields: [hostUserId], references: [id], onDelete: Cascade)
+  adminUser User @relation("HostAdminUser", fields: [adminUserId], references: [id], onDelete: Cascade)
+
+  @@unique([hostUserId, adminUserId])
+  @@index([hostUserId])
+  @@index([adminUserId])
+  @@map("live_stream_admins")
+}
+

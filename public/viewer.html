@@ -1141,10 +1141,10 @@
                             hls.on(Hls.Events.ERROR, (event, errData) => {
                                 if (errData.fatal) {
                                     console.warn("[HLS.js] Retrying live manifest load...", errData.type);
-                                    setTimeout(() => {
-                                        hls.loadSource(data.hlsUrl);
-                                        hls.startLoad();
-                                    }, 2000);
+                                    //     setTimeout(() => {
+                                    //         hls.loadSource(data.hlsUrl);
+                                    //         hls.startLoad();
+                                    //     }, 2000);
                                 }
                             });
                         } else {

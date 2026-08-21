@@ -680,22 +680,92 @@ export const getLiveStreamService = async ({
     return stream;
 };
 
-export const isStreamAdminService = async ({ streamId, userId }) => {
-    return await redisClient.sIsMember(`stream:admins:${streamId}`, userId);
-};
-
-export const promoteDemoteAdminService = async ({ streamId, targetUserId }) => {
-    const isAdmin = await redisClient.sIsMember(`stream:admins:${streamId}`, targetUserId);
-    let resultStatus = false;
-    if (isAdmin) {
-        await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
-        resultStatus = false;
-    } else {
-        await redisClient.sAdd(`stream:admins:${streamId}`, targetUserId);
-        resultStatus = true;
+export const isStreamAdminService = async ({ streamId, userId, hostUserId = null }) => {
+    if (!userId) return false;
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
     }
 
     if (redisClient.isOpen) {
+        if (streamId) {
+            const isStreamAdmin = await redisClient.sIsMember(`stream:admins:${streamId}`, userId);
+            if (isStreamAdmin) return true;
+        }
+        if (finalHostUserId) {
+            const isHostAdmin = await redisClient.sIsMember(`host:admins:${finalHostUserId}`, userId);
+            if (isHostAdmin) return true;
+        }
+    }
+
+    if (finalHostUserId) {
+        try {
+            const dbAdmin = await prisma.liveStreamAdmin.findUnique({
+                where: {
+                    hostUserId_adminUserId: {
+                        hostUserId: finalHostUserId,
+                        adminUserId: userId
+                    }
+                }
+            });
+            if (dbAdmin) {
+                if (redisClient.isOpen) {
+                    await redisClient.sAdd(`host:admins:${finalHostUserId}`, userId);
+                }
+                return true;
+            }
+        } catch (dbErr) { }
+    }
+    return false;
+};
+
+export const promoteDemoteAdminService = async ({ streamId, hostUserId = null, targetUserId }) => {
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
+    }
+
+    const isCurrentlyAdmin = await isStreamAdminService({ streamId, userId: targetUserId, hostUserId: finalHostUserId });
+    let resultStatus = false;
+
+    if (isCurrentlyAdmin) {
+        if (redisClient.isOpen) {
+            if (streamId) await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
+            if (finalHostUserId) await redisClient.sRem(`host:admins:${finalHostUserId}`, targetUserId);
+        }
+        if (finalHostUserId) {
+            try {
+                await prisma.liveStreamAdmin.deleteMany({
+                    where: { hostUserId: finalHostUserId, adminUserId: targetUserId }
+                });
+            } catch (err) { }
+        }
+        resultStatus = false;
+    } else {
+        if (redisClient.isOpen) {
+            if (streamId) await redisClient.sAdd(`stream:admins:${streamId}`, targetUserId);
+            if (finalHostUserId) await redisClient.sAdd(`host:admins:${finalHostUserId}`, targetUserId);
+        }
+        if (finalHostUserId) {
+            try {
+                await prisma.liveStreamAdmin.upsert({
+                    where: {
+                        hostUserId_adminUserId: {
+                            hostUserId: finalHostUserId,
+                            adminUserId: targetUserId
+                        }
+                    },
+                    create: { hostUserId: finalHostUserId, adminUserId: targetUserId },
+                    update: {}
+                });
+            } catch (err) { }
+        }
+        resultStatus = true;
+    }
+
+    if (redisClient.isOpen && streamId) {
         try {
             const keys = await redisClient.keys(`stream:viewers_sorted:${streamId}:*`);
             if (keys && keys.length > 0) {
@@ -709,11 +779,42 @@ export const promoteDemoteAdminService = async ({ streamId, targetUserId }) => {
     return resultStatus;
 };
 
-export const getStreamAdminsService = async ({ streamId }) => {
-    return await redisClient.sMembers(`stream:admins:${streamId}`);
+export const getStreamAdminsService = async ({ streamId, hostUserId = null }) => {
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
+    }
+
+    const adminSet = new Set();
+    if (redisClient.isOpen) {
+        if (streamId) {
+            const streamAdmins = await redisClient.sMembers(`stream:admins:${streamId}`);
+            streamAdmins.forEach(id => adminSet.add(id));
+        }
+        if (finalHostUserId) {
+            const hostAdmins = await redisClient.sMembers(`host:admins:${finalHostUserId}`);
+            hostAdmins.forEach(id => adminSet.add(id));
+        }
+    }
+
+    if (finalHostUserId) {
+        try {
+            const dbAdmins = await prisma.liveStreamAdmin.findMany({
+                where: { hostUserId: finalHostUserId },
+                select: { adminUserId: true }
+            });
+            dbAdmins.forEach(a => adminSet.add(a.adminUserId));
+            if (redisClient.isOpen && dbAdmins.length > 0) {
+                await redisClient.sAdd(`host:admins:${finalHostUserId}`, dbAdmins.map(a => a.adminUserId));
+            }
+        } catch (err) { }
+    }
+
+    return Array.from(adminSet);
 };
 
-export const kickUserService = async ({ streamId, targetUserId }) => {
+export const kickUserService = async ({ streamId, targetUserId, hostUserId = null }) => {
     await redisClient.set(`stream:kicked:${streamId}:${targetUserId}`, "1", { EX: 600 });
     await redisClient.sRem(`stream:active:${streamId}`, targetUserId);
     await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);

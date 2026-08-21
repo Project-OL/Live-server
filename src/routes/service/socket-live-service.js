@@ -44,7 +44,7 @@ const checkIsHostOrAdmin = async (streamId, userId) => {
         if (!stream) return false;
         if (stream.userId === userId) return true;
 
-        const isAdmin = await isStreamAdminService({ streamId, userId });
+        const isAdmin = await isStreamAdminService({ streamId, userId, hostUserId: stream.userId });
         return !!isAdmin;
     } catch (err) {
         console.error("checkIsHostOrAdmin check failed:", err.message);
@@ -71,17 +71,21 @@ export const setupLiveSockets = (io) => {
             if (userId) {
                 try {
                     let username = "Guest";
+                    let name = "Guest";
                     let isStealth = false;
                     const user = await prisma.user.findUnique({
                         where: { id: userId },
                         select: {
                             username: true,
+                            firstName: true,
+                            lastName: true,
                             privacyMysteryLive: true,
                             vipSubscriptionActive: true
                         }
                     });
                     if (user) {
                         username = user.username;
+                        name = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest";
                         isStealth = Boolean(user.privacyMysteryLive && user.vipSubscriptionActive);
                     }
                     socket.data.isStealth = isStealth;
@@ -148,7 +152,7 @@ export const setupLiveSockets = (io) => {
                     if (isStealth) {
                         await getOrCreateSessionAlias(streamId, userId);
                         console.log(`[Socket] Stealth VIP User ${userId} joined room ${streamId} silently (No count increment, no join broadcast).`);
-                    } else {
+                    } else if (!socket.data.isHost) {
                         // Fetch active RIDE/Entry effect
                         let ride = null;
                         try {
@@ -184,6 +188,7 @@ export const setupLiveSockets = (io) => {
                         // Broadcast user_joined to notify all clients to sync
                         broadcastToStream(streamId, "user_joined", {
                             userId,
+                            name,
                             username,
                             viewerCount,
                             ride
@@ -194,9 +199,9 @@ export const setupLiveSockets = (io) => {
                                 const systemMessage = await sendMessageService({
                                     streamId,
                                     senderId: SYSTEM_SENDER_ID,
-                                    message: `${username} joined the room.`,
+                                    message: `${name} joined the room.`,
                                     replyToUserId: userId,
-                                    replyToUsername: username
+                                    replyToUsername: name
                                 });
                                 broadcastToStream(streamId, "new_message", systemMessage);
                             } catch (err) {
@@ -340,11 +345,14 @@ export const setupLiveSockets = (io) => {
 
                 const hostUser = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true }
+                    select: { username: true, firstName: true, lastName: true }
                 });
+                const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host/Admin") : "Host/Admin";
                 const hostUsername = hostUser ? hostUser.username : "Host/Admin";
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_invite_received", {
                     streamId,
+                    name: hostName,
+                    hostName,
                     hostUsername
                 });
                 console.log(`[Socket] Host/Admin ${userId} invited user ${targetUserId} to sheet in stream ${streamId}`);
@@ -358,20 +366,22 @@ export const setupLiveSockets = (io) => {
             try {
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 const stream = await prisma.liveStream.findFirst({
                     where: { streamId, endedAt: null }
                 });
                 if (stream) {
                     ioInstance.to(`user:${stream.userId}`).emit("sheet_invite_declined", {
+                        name: displayUsername,
                         username: displayUsername
                     });
                     const adminIds = await getStreamAdminsService({ streamId });
                     for (const adminId of adminIds) {
                         ioInstance.to(`user:${adminId}`).emit("sheet_invite_declined", {
+                            name: displayUsername,
                             username: displayUsername
                         });
                     }
@@ -393,13 +403,14 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 await addUserToSheetService({ streamId, userId, username: displayUsername });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : userId,
+                    name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
                     isMystery: isStealth
@@ -456,10 +467,10 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const realUsername = user ? user.username : "Guest";
+                const realUsername = user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest";
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : realUsername;
                 const stream = await prisma.liveStream.findFirst({
                     where: { streamId, endedAt: null }
@@ -473,6 +484,7 @@ export const setupLiveSockets = (io) => {
                         ioInstance.to(`user:${userId}`).emit("sheet_request_accepted", { streamId });
                         broadcastToStream(streamId, "user_joined_sheet", {
                             userId: isStealth ? null : userId,
+                            name: displayUsername,
                             username: displayUsername,
                             isMuted: false,
                             isMystery: isStealth
@@ -482,6 +494,7 @@ export const setupLiveSockets = (io) => {
                         // Permission Required Mode: Send REAL name & ID to Host and Admins for approval
                         ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
                             userId,
+                            name: realUsername,
                             username: realUsername,
                             isMystery: false
                         });
@@ -489,6 +502,7 @@ export const setupLiveSockets = (io) => {
                         for (const adminId of adminIds) {
                             ioInstance.to(`user:${adminId}`).emit("sheet_request_received", {
                                 userId,
+                                name: realUsername,
                                 username: realUsername,
                                 isMystery: false
                             });
@@ -519,14 +533,15 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: targetUserId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 await addUserToSheetService({ streamId, userId: targetUserId, username: displayUsername });
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_request_accepted", { streamId });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : targetUserId,
+                    name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
                     isMystery: isStealth
@@ -583,11 +598,11 @@ export const setupLiveSockets = (io) => {
                     setImmediate(async () => {
                         try {
                             const [operatorUser, targetUser] = await Promise.all([
-                                prisma.user.findUnique({ where: { id: userId }, select: { username: true } }),
-                                prisma.user.findUnique({ where: { id: targetUserId }, select: { username: true } })
+                                prisma.user.findUnique({ where: { id: userId }, select: { username: true, firstName: true, lastName: true } }),
+                                prisma.user.findUnique({ where: { id: targetUserId }, select: { username: true, firstName: true, lastName: true } })
                             ]);
-                            const operatorName = operatorUser?.username || "Host/Admin";
-                            const targetName = targetUser?.username || "User";
+                            const operatorName = operatorUser ? (`${operatorUser.firstName || ""} ${operatorUser.lastName || ""}`.trim() || operatorUser.username || "Host/Admin") : "Host/Admin";
+                            const targetName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
 
                             const muteMsgText = muteState
                                 ? `${targetName} has been muted by ${operatorName}.`
