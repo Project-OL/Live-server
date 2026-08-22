@@ -129,16 +129,6 @@ const fastGoLiveStream = async (req, res) => {
             isCameraOn: req.body.isCameraOn
         });
 
-        // 🟢 Pre-warm Egress immediately on Go-Live so HLS segments are ready on disk
-        if (redisClient.isOpen) {
-            const egressKey = `stream:egress:${result.stream.streamId}`;
-            startLocalHlsEgressService(result.stream.streamId).then(async (newEgressId) => {
-                if (newEgressId) {
-                    await redisClient.set(egressKey, newEgressId, "EX", 86400);
-                }
-            }).catch(err => console.error("Egress pre-warm error:", err.message));
-        }
-
         return res.status(201).json({
             success: true,
             data: result.stream,
