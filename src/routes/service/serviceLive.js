@@ -16,6 +16,7 @@ import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/a
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
+import { getOrCreateSessionAlias } from './serviceMessage.js';
 
 import {
     cleanOldHlsSegmentsService,
@@ -1925,6 +1926,21 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                     data: { suspended_until: suspendedUntil }
                 });
 
+                if (redisClient.isOpen) {
+                    const suspendedCacheKey = `user:suspended:${stream.userId}`;
+                    const banCacheKey = `user:restriction:${stream.userId}:LIVE_STREAM_START_BAN`;
+                    const ttlSeconds = Math.ceil(banDurationHours * 3600);
+
+                    await Promise.all([
+                        redisClient.set(suspendedCacheKey, "true", "EX", ttlSeconds),
+                        redisClient.set(banCacheKey, JSON.stringify({
+                            restrictionType: 'LIVE_STREAM_START_BAN',
+                            reason: 'AI Moderation Nudity Violation',
+                            restrictedUntil: suspendedUntil.toISOString()
+                        }), "EX", ttlSeconds)
+                    ]).catch(e => console.error("[Stream Moderation Cache] Redis set error:", e.message));
+                }
+
                 await prisma.hostStreamBan.create({
                     data: {
                         userId: stream.userId,
@@ -1934,6 +1950,17 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                         suspendedUntil
                     }
                 });
+
+                await prisma.userRestriction.create({
+                    data: {
+                        userId: stream.userId,
+                        type: 'LIVE_STREAM_START_BAN',
+                        reason: `AI Moderation Nudity Violation (Ban #${banNumber})`,
+                        restrictedUntil: suspendedUntil,
+                        createdByAdminId: '00000000-0000-0000-0000-000000000000'
+                    }
+                }).catch(e => console.error("[Stream Moderation DB] Restriction insert error:", e.message));
+
                 console.log(`[Stream Moderation] Successfully applied ${banDurationHours} hour ban to user ${stream.userId} (Ban #${banNumber})`);
             } catch (banErr) {
                 console.error("[Stream Moderation] Failed to calculate/apply automatic ban:", banErr);
