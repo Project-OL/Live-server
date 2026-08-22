@@ -76,7 +76,11 @@ export const sendMessageService = async ({
     replyToMessageId = null,
     replyToUserId = null,
     replyToUsername = null,
-    replyToText = null
+    replyToText = null,
+    messageType = "CHAT",
+    isLuckyGift = false,
+    giftId = null,
+    giftCount = 1
 }) => {
     let user = null;
     let filteredMessage = message;
@@ -261,7 +265,6 @@ export const sendMessageService = async ({
         streamId,
         senderId,
         message: filteredMessage,
-        message,
         replyToMessageId: replyToMessageId || null,
         replyToUserId: replyToUserId || null,
         replyToUsername: replyToUsername || null,
