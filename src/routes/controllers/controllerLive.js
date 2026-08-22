@@ -243,9 +243,8 @@ const joinLiveStream = async (req, res) => {
             }).catch(err => console.error("Egress pre-warm error:", err.message));
         }
 
-        // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS (if ready)
-        const hlsFilePath = `/var/www/hls/streams/${stream.streamId}/live`;
-        if (finalViewerCount > 2 && req.userId !== stream.userId && fs.existsSync(hlsFilePath)) {
+        // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS
+        if (finalViewerCount > 2 && req.userId !== stream.userId) {
             mode = "HLS";
             hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
         }
