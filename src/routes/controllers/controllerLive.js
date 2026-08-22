@@ -886,11 +886,13 @@ const sendStreamGift = async (req, res) => {
         }
 
         // Broadcast gallery update if it unlocked a new gallery target progress
-        if (result.galleryProgressUpdate) {
-            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_UPDATE", result.galleryProgressUpdate);
+        const progressData = result.galleryProgress || result.galleryProgressUpdate || (result.socketPayload && result.socketPayload.galleryProgress);
+        if (progressData) {
+            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_UPDATE", progressData);
+            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_PROGRESS_UPDATED", progressData);
 
             // 100% Gallery Completion Global Announcement ({host} completed the Gift Collection)
-            if (result.galleryProgressUpdate.isCompleted) {
+            if (progressData.isCompleted || progressData.currentProgress >= progressData.totalTarget) {
                 setImmediate(async () => {
                     try {
                         const streamObj = await getLiveStreamService({ id: streamDbId });
@@ -911,7 +913,7 @@ const sendStreamGift = async (req, res) => {
                                 streamId: result.socketPayload.streamId
                             }
                         });
-                        console.log(`[Global Announcement] Gallery Completed by host ${hostName} (${result.galleryProgressUpdate.hostId})`);
+                        console.log(`[Global Announcement] Gallery Completed by host ${hostName}`);
                     } catch (annError) {
                         console.error("[Gallery Completion Announcement Error]:", annError.message);
                     }

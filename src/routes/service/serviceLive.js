@@ -1330,7 +1330,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         },
         wealthLevel: 1,
         isLevelUp: false,
-        galleryProgress: galleryProgressUpdate
+        galleryProgress: galleryProgressUpdate,
+        galleryProgressUpdate: galleryProgressUpdate
     };
 
     setImmediate(async () => {
@@ -1462,7 +1463,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 
     return {
         socketPayload,
-        galleryProgressUpdate: typeof galleryProgressUpdate !== 'undefined' ? galleryProgressUpdate : null,
+        galleryProgress: galleryProgressUpdate,
+        galleryProgressUpdate: galleryProgressUpdate,
         newBalance: Number(balanceAfterCoins),
         currentLevel: 1,
         isLevelUp: false
