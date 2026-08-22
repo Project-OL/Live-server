@@ -1,5 +1,4 @@
 import express from 'express';
-import fs from 'fs';
 import auth from '../../middlewares/authMiddleware.js';
 import prisma from '../../config/prisma.js';
 import { createLiveSchema, sendMessageSchema } from '../../validations/validationLive.js';
@@ -230,30 +229,21 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
-        // 🟢 Pre-trigger Egress when 2nd Viewer joins so HLS segments start generating
+        // 🟢 Pre-trigger Egress when 2nd Viewer joins so HLS segments are 100% ready for 3rd Viewer
         if (finalViewerCount >= 2 && redisClient.isOpen) {
             const egressKey = `stream:egress:${stream.streamId}`;
-            const lockKey = `stream:egress:lock:${stream.streamId}`;
-
-            // Mutex lock prevents duplicate parallel Egress trigger calls
-            redisClient.set(lockKey, "LOCKED", { NX: true, EX: 10 }).then(async (acquired) => {
-                if (acquired) {
-                    const activeEgressId = await redisClient.get(egressKey);
-                    if (!activeEgressId) {
-                        const newEgressId = await startLocalHlsEgressService(stream.streamId);
-                        if (newEgressId) {
-                            await redisClient.set(egressKey, newEgressId, { EX: 86400 });
-                        }
+            redisClient.get(egressKey).then(async (activeEgressId) => {
+                if (!activeEgressId) {
+                    const newEgressId = await startLocalHlsEgressService(stream.streamId);
+                    if (newEgressId) {
+                        await redisClient.set(egressKey, newEgressId, "EX", 86400);
                     }
                 }
             }).catch(err => console.error("Egress pre-warm error:", err.message));
         }
 
-        // 🟢 HLS Disk Readiness Check: HLS mode is ONLY assigned when live playlist file exists on VPS disk
-        const hlsFilePath = `/var/www/hls/streams/${stream.streamId}/live`;
-        const isHlsReady = fs.existsSync(hlsFilePath);
-
-        if (finalViewerCount > 2 && req.userId !== stream.userId && isHlsReady) {
+        // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS
+        if (finalViewerCount > 2 && req.userId !== stream.userId) {
             mode = "HLS";
             hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
         }
@@ -266,7 +256,7 @@ const joinLiveStream = async (req, res) => {
         return res.json({
             success: true,
             mode,
-            token, // ⚡ Always return valid WebRTC token so client can fallback if HLS fails
+            token: mode === "HLS" ? null : token,
             hlsUrl,
             stream,
             viewerCount: finalViewerCount,
