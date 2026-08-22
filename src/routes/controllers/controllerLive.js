@@ -331,7 +331,7 @@ const getLiveStreams = async (req, res) => {
         let country = req.query.country || null;
         const type = req.query.type || null;
         const followingOnly = type === 'following' || req.query.following === 'true';
-        const nearbyOnly = type === 'nearby' || req.query.nearby === 'true';
+        const nearbyOnly = type === 'nearby' || req.query.nearby === 'true' || Boolean((req.query.lat || req.query.latitude) && (req.query.lng || req.query.longitude));
         const userLat = req.query.lat || req.query.latitude || null;
         const userLng = req.query.lng || req.query.longitude || null;
         const minKm = parseFloat(req.query.minKm) || 9;
@@ -875,20 +875,6 @@ const sendStreamGift = async (req, res) => {
         if (result.luckyWin) {
             broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
         }
-
-        setImmediate(async () => {
-            try {
-                const giftMsgText = `${result.socketPayload.senderName} sent ${result.socketPayload.receiverName} ${result.socketPayload.gift.name} ×${result.socketPayload.count || 1}.`;
-                const systemMessage = await sendMessageService({
-                    streamId: result.socketPayload.streamId,
-                    senderId: SYSTEM_SENDER_ID,
-                    message: giftMsgText
-                });
-                broadcastToStream(result.socketPayload.streamId, "new_message", systemMessage);
-            } catch (msgErr) {
-                console.error("[Gift Send Chat Message Error]:", msgErr.message);
-            }
-        });
 
         // Targeted Socket Notification to Receiver User Device
         if (result.socketPayload.receiverId) {

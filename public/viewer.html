@@ -6,7 +6,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>offoo Viewer Console</title>
     <script src="https://cdn.tailwindcss.com"></script>
-    <script src="/socket.io/socket.io.js"></script>
+    <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
@@ -369,17 +369,39 @@
                             </div>
 
                             <!-- Stream Filter Bar -->
-                            <div
-                                class="flex items-center space-x-2 bg-gray-900/80 p-2 rounded-lg border border-gray-800 text-xs">
-                                <span
-                                    class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Filter:</span>
-                                <select id="selStreamCountryFilter"
-                                    class="bg-gray-950 border border-gray-800 text-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500 flex-1">
-                                    <option value="all">🌐 All Countries (Global)</option>
-                                    <option value="India">🇮🇳 India</option>
-                                    <option value="Nepal">🇳🇵 Nepal</option>
-                                    <option value="my_country">👤 My Country Only</option>
-                                </select>
+                            <div class="space-y-2 bg-gray-900/80 p-2.5 rounded-lg border border-gray-800 text-xs">
+                                <div class="flex items-center space-x-2">
+                                    <span
+                                        class="text-[10px] text-gray-400 font-bold uppercase tracking-wider">Filter:</span>
+                                    <select id="selStreamCountryFilter"
+                                        class="bg-gray-950 border border-gray-800 text-gray-200 rounded px-2 py-1 text-xs focus:outline-none focus:border-purple-500 flex-1">
+                                        <option value="all">🌐 All Countries (Global)</option>
+                                        <option value="India">🇮🇳 India</option>
+                                        <option value="Nepal">🇳🇵 Nepal</option>
+                                        <option value="my_country">👤 My Country Only</option>
+                                        <option value="nearby">📍 Nearby Streams (9km - 40km)</option>
+                                    </select>
+                                    <button id="btnApplyFilter" title="Apply Filter"
+                                        class="bg-pink-600 hover:bg-pink-500 text-white px-2.5 py-1 rounded text-[10px] font-bold transition border border-pink-500 flex items-center space-x-1 flex-shrink-0">
+                                        <span>🔍</span><span>Filter</span>
+                                    </button>
+                                    <button id="btnClearFilter" title="Clear Filters"
+                                        class="bg-gray-800 hover:bg-gray-700 text-gray-300 hover:text-white px-2 py-1 rounded text-[10px] font-semibold transition border border-gray-700 flex items-center space-x-1 flex-shrink-0">
+                                        <span>🧹</span><span>Clear</span>
+                                    </button>
+                                </div>
+                                <div class="grid grid-cols-2 gap-2 pt-1">
+                                    <div>
+                                        <label class="block text-[9px] text-gray-400 font-mono uppercase mb-0.5">Latitude (Lat)</label>
+                                        <input id="txtFilterLat" type="number" step="any" placeholder="e.g. 28.6139"
+                                            class="w-full bg-gray-950 p-1.5 rounded border border-gray-800 text-xs font-mono text-gray-200 outline-none focus:border-pink-500">
+                                    </div>
+                                    <div>
+                                        <label class="block text-[9px] text-gray-400 font-mono uppercase mb-0.5">Longitude (Lng)</label>
+                                        <input id="txtFilterLng" type="number" step="any" placeholder="e.g. 77.2090"
+                                            class="w-full bg-gray-950 p-1.5 rounded border border-gray-800 text-xs font-mono text-gray-200 outline-none focus:border-pink-500">
+                                    </div>
+                                </div>
                             </div>
 
                             <div id="divActiveStreams"
@@ -675,8 +697,7 @@
             document.body.appendChild(errDiv);
         };
 
-        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1";
-        const SERVER_URL = isLocal ? "http://localhost:5000" : window.location.origin;
+        const SERVER_URL = "https://live.offoolive.com";
         const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
         const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
         const LIVEKIT_URL = "wss://stream.offoolive.com";
@@ -706,6 +727,10 @@
             txtViewerId: document.getElementById('txtViewerId'),
             btnRefreshList: document.getElementById('btnRefreshList'),
             selStreamCountryFilter: document.getElementById('selStreamCountryFilter'),
+            btnApplyFilter: document.getElementById('btnApplyFilter'),
+            btnClearFilter: document.getElementById('btnClearFilter'),
+            txtFilterLat: document.getElementById('txtFilterLat'),
+            txtFilterLng: document.getElementById('txtFilterLng'),
             divActiveStreams: document.getElementById('divActiveStreams'),
             btnViewerJoin: document.getElementById('btnViewerJoin'),
             btnViewerLeave: document.getElementById('btnViewerLeave'),
@@ -1001,8 +1026,15 @@
             if (!token) return;
 
             const selectedFilter = (E.selStreamCountryFilter ? E.selStreamCountryFilter.value : 'all') || 'all';
+            const latVal = (E.txtFilterLat && E.txtFilterLat.value.trim() !== '') ? parseFloat(E.txtFilterLat.value) : null;
+            const lngVal = (E.txtFilterLng && E.txtFilterLng.value.trim() !== '') ? parseFloat(E.txtFilterLng.value) : null;
+
             let listUrl = `${STREAM_API_BASE}/list?country=${encodeURIComponent(selectedFilter)}`;
-            if (selectedFilter === 'my_country') {
+            if (selectedFilter === 'nearby' || (latVal !== null && lngVal !== null && !isNaN(latVal) && !isNaN(lngVal))) {
+                listUrl = `${STREAM_API_BASE}/list?type=nearby&minKm=9&maxKm=40`;
+                if (latVal !== null && !isNaN(latVal)) listUrl += `&lat=${latVal}`;
+                if (lngVal !== null && !isNaN(lngVal)) listUrl += `&lng=${lngVal}`;
+            } else if (selectedFilter === 'my_country') {
                 listUrl = `${STREAM_API_BASE}/list`;
             }
 
@@ -1027,6 +1059,7 @@
                             <div class="flex-grow min-w-0">
                                 <div class="flex items-center space-x-1.5 mb-1 flex-wrap gap-y-0.5">
                                     <span class="bg-pink-600/10 border border-pink-500/30 text-pink-400 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">${stream.heading || 'Chatting'}</span>
+                                    ${stream.distanceKm !== undefined ? `<span class="bg-blue-600/20 border border-blue-500/40 text-blue-300 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">📍 ${stream.distanceKm} km</span>` : ''}
                                     ${stream.isPasswordProtected ? `<span class="bg-yellow-500/10 border border-yellow-500/30 text-yellow-400 text-[8px] px-1.5 py-0.5 rounded font-black uppercase tracking-wider">🔒 Private</span>` : ''}
                                 </div>
                                 <h4 class="font-bold text-gray-250 truncate text-[11px] leading-tight">${stream.title}</h4>
@@ -1359,6 +1392,23 @@
 
         if (E.selStreamCountryFilter) {
             E.selStreamCountryFilter.onchange = refreshActiveStreamsList;
+        }
+        if (E.txtFilterLat) {
+            E.txtFilterLat.oninput = refreshActiveStreamsList;
+        }
+        if (E.txtFilterLng) {
+            E.txtFilterLng.oninput = refreshActiveStreamsList;
+        }
+        if (E.btnApplyFilter) {
+            E.btnApplyFilter.onclick = refreshActiveStreamsList;
+        }
+        if (E.btnClearFilter) {
+            E.btnClearFilter.onclick = () => {
+                if (E.selStreamCountryFilter) E.selStreamCountryFilter.value = 'all';
+                if (E.txtFilterLat) E.txtFilterLat.value = '';
+                if (E.txtFilterLng) E.txtFilterLng.value = '';
+                refreshActiveStreamsList();
+            };
         }
 
         E.btnSendChat.onclick = sendChatMessage;

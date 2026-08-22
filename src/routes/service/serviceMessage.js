@@ -8,24 +8,56 @@ import { isUserRestrictedFast } from './serviceAdmin.js';
 
 export const SYSTEM_SENDER_ID = "00000000-0000-0000-0000-000000000000";
 
-const STEALTH_PREFIXES = ['Shadow', 'Mystic', 'Phantom', 'Cipher', 'Vortex', 'Falcon', 'Spectre', 'Stealth', 'Cobalt', 'Mirage'];
+const generateFakeName = () => {
+    const chars = 'abcdefghijklmnopqrstuvwxyz';
+    const nums = '0123456789';
+    let str = '';
+    for (let i = 0; i < 3; i++) {
+        str += chars.charAt(Math.floor(Math.random() * chars.length));
+    }
+    for (let i = 0; i < 2; i++) {
+        str += nums.charAt(Math.floor(Math.random() * nums.length));
+    }
+    return `**${str}`; // e.g. "**sdg52"
+};
 
-export const getOrCreateSessionAlias = async (streamId, userId) => {
-    if (!streamId || !userId) return null;
+const generateFakePublicId = () => {
+    return String(Math.floor(100000000 + Math.random() * 900000000));
+};
+
+export const getOrCreateSessionAliasObj = async (streamId, userId) => {
+    if (!streamId || !userId) return { alias: generateFakeName(), fakePublicId: generateFakePublicId() };
     const redisKey = `stream:alias:${streamId}:${userId}`;
     try {
-        let alias = await redisClient.get(redisKey);
-        if (!alias) {
-            const prefix = STEALTH_PREFIXES[Math.floor(Math.random() * STEALTH_PREFIXES.length)];
-            const randomNum = Math.floor(1000 + Math.random() * 9000);
-            alias = `${prefix}${randomNum}`;
-            await redisClient.set(redisKey, alias, 'EX', 86400); // 24 Hours TTL
+        let rawData = await redisClient.get(redisKey);
+        if (!rawData) {
+            const alias = generateFakeName();
+            const fakePublicId = generateFakePublicId();
+            const dataObj = { alias, fakePublicId };
+            await redisClient.set(redisKey, JSON.stringify(dataObj), 'EX', 86400); // 24 Hours TTL
+            return dataObj;
         }
-        return alias;
+        try {
+            const parsed = JSON.parse(rawData);
+            if (typeof parsed === 'object' && parsed.alias) {
+                return parsed;
+            }
+            const dataObj = { alias: rawData, fakePublicId: generateFakePublicId() };
+            await redisClient.set(redisKey, JSON.stringify(dataObj), 'EX', 86400);
+            return dataObj;
+        } catch (e) {
+            const dataObj = { alias: rawData, fakePublicId: generateFakePublicId() };
+            return dataObj;
+        }
     } catch (err) {
         console.error("[StealthAlias] Failed to get or create session alias:", err.message);
-        return "Mystery User";
+        return { alias: generateFakeName(), fakePublicId: generateFakePublicId() };
     }
+};
+
+export const getOrCreateSessionAlias = async (streamId, userId) => {
+    const obj = await getOrCreateSessionAliasObj(streamId, userId);
+    return obj ? obj.alias : generateFakeName();
 };
 
 export const removeSessionAlias = async (streamId, userId) => {
@@ -229,12 +261,15 @@ export const sendMessageService = async ({
         streamId,
         senderId,
         message: filteredMessage,
-        createdAt: new Date().toISOString(),
+        message,
         replyToMessageId: replyToMessageId || null,
         replyToUserId: replyToUserId || null,
         replyToUsername: replyToUsername || null,
-        replyToText: replyToText || null,
-        chatBubble: chatBubble || null
+        messageType,
+        isLuckyGift,
+        giftId,
+        giftCount,
+        createdAt: new Date().toISOString()
     };
 
     const listKey = `stream:chats:${streamId}`;
@@ -242,9 +277,9 @@ export const sendMessageService = async ({
     await redisClient.lTrim(listKey, -200, -1);
 
     const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-    let stealthAlias = null;
+    let stealthAliasObj = null;
     if (isStealth) {
-        stealthAlias = await getOrCreateSessionAlias(streamId, senderId);
+        stealthAliasObj = await getOrCreateSessionAliasObj(streamId, senderId);
     }
 
     return {
@@ -261,8 +296,9 @@ export const sendMessageService = async ({
             } : { id: SYSTEM_SENDER_ID, username: 'System', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
             : (user ? {
                 id: isStealth ? null : user.id,
-                publicId: isStealth ? null : (user.publicId ? user.publicId.toString() : null),
-                username: isStealth ? (stealthAlias || 'Mystery User') : user.username,
+                publicId: isStealth ? stealthAliasObj?.fakePublicId : (user.publicId ? user.publicId.toString() : null),
+                username: isStealth ? (stealthAliasObj?.alias || 'sdg52') : user.username,
+                name: isStealth ? (stealthAliasObj?.alias || 'sdg52') : (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username),
                 avatarUrl: isStealth ? null : (user.avatarUrl || null),
                 wealthLevel: senderWealthLevel,
                 livestreamLevel: senderLivestreamLevel,
@@ -339,7 +375,11 @@ export const getMessagesService = async ({
                 id: true,
                 publicId: true,
                 username: true,
+                firstName: true,
+                lastName: true,
                 avatarUrl: true,
+                privacyMysteryLive: true,
+                vipSubscriptionActive: true,
                 userLevel: {
                     select: {
                         wealthLevel: true,
@@ -363,7 +403,7 @@ export const getMessagesService = async ({
     const userMap = new Map(users.map(u => [u.id, u]));
     const levelMap = new Map(walletLevels.map(w => [`${w.userId}_${w.levelType}`, w.currentLevel]));
 
-    return messages.map(m => {
+    return Promise.all(messages.map(async m => {
         const targetId = (m.senderId === SYSTEM_SENDER_ID && m.replyToUserId) ? m.replyToUserId : m.senderId;
         const userObj = userMap.get(targetId);
         const wealthLevel = levelMap.get(`${targetId}_${LevelType.WEALTH}`) ?? userObj?.userLevel?.wealthLevel ?? 0;
@@ -386,13 +426,17 @@ export const getMessagesService = async ({
                 livestreamLevel: 0
             };
         } else {
+            const isStealth = Boolean(userObj?.privacyMysteryLive && userObj?.vipSubscriptionActive);
+            const aliasObj = isStealth ? await getOrCreateSessionAliasObj(streamId, userObj.id) : null;
             senderObj = userObj ? {
-                id: userObj.id,
-                publicId: userObj.publicId ? userObj.publicId.toString() : null,
-                username: userObj.username,
-                avatarUrl: userObj.avatarUrl || null,
+                id: isStealth ? null : userObj.id,
+                publicId: isStealth ? aliasObj?.fakePublicId : (userObj.publicId ? userObj.publicId.toString() : null),
+                username: isStealth ? (aliasObj?.alias || 'sdg52') : userObj.username,
+                name: isStealth ? (aliasObj?.alias || 'sdg52') : (`${userObj.firstName || ""} ${userObj.lastName || ""}`.trim() || userObj.username),
+                avatarUrl: isStealth ? null : (userObj.avatarUrl || null),
                 wealthLevel,
-                livestreamLevel
+                livestreamLevel,
+                isMystery: isStealth
             } : {
                 username: 'Unknown User',
                 avatarUrl: null,
@@ -405,7 +449,7 @@ export const getMessagesService = async ({
             ...m,
             sender: senderObj
         };
-    });
+    }));
 };
 
 export const joinStreamService = async ({
