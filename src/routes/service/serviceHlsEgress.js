@@ -96,7 +96,9 @@ export const stopLocalHlsEgressService = async (egressId, roomName) => {
         await egressClient.stopEgress(egressId);
         console.log(`[LiveKit Egress] Stopped local HLS egress ${egressId}`);
     } catch (err) {
-        console.error(`[LiveKit Egress Error] Failed to stop egress ${egressId}:`, err.message);
+        if (!err.message?.includes('cannot be stopped')) {
+            console.error(`[LiveKit Egress Error] Failed to stop egress ${egressId}:`, err.message);
+        }
     } finally {
         if (roomName) removeHlsStreamDirService(roomName);
     }
