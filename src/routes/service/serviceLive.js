@@ -998,18 +998,18 @@ export const handleCameraStateChangeService = async ({ streamId, isCameraOn }) =
 };
 
 const ensureActiveGalleryCached = async (year, month) => {
-    const galleryLoadedKey = `gift_gallery:gift_ids:loaded:${year}:${month}`;
-    const giftIdsKey = `gift_gallery:gift_ids:${year}:${month}`;
+    const galleryLoadedKey = `gift_gallery:loaded:${year}:${month}`;
     const galleryCacheKey = `gift_gallery:active:${year}:${month}`;
+    const giftIdsKey = `gift_gallery:gift_ids:${year}:${month}`;
 
     const isLoaded = await redisClient.exists(galleryLoadedKey);
-    if (!isLoaded) {
-        const gallery = await prisma.giftGallery.findUnique({
+    const hasGiftIds = await redisClient.exists(giftIdsKey);
+
+    if (!isLoaded || !hasGiftIds) {
+        const gallery = await prisma.giftGallery.findFirst({
             where: {
-                year_month: {
-                    year: year,
-                    month: month
-                }
+                year: year,
+                month: month
             },
             include: {
                 sections: {
@@ -1044,6 +1044,7 @@ const ensureActiveGalleryCached = async (year, month) => {
 
         if (galleryItems.length > 0) {
             const giftIds = galleryItems.map(item => item.giftId);
+            await redisClient.del(giftIdsKey);
             await redisClient.sAdd(giftIdsKey, giftIds);
             await redisClient.expire(giftIdsKey, 86400); // 1 day
             await redisClient.set(galleryCacheKey, JSON.stringify(galleryItems), 'EX', 86400);
@@ -1225,6 +1226,31 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         redisClient.del(`level:stream:${receiverId}`).catch(() => { });
     }
 
+    // Synchronous Gift Gallery Progress check for Receiver (Host)
+    let galleryProgressUpdate = null;
+    try {
+        const currentDate = new Date();
+        const currentYear = currentDate.getFullYear();
+        const currentMonth = currentDate.getMonth() + 1;
+
+        await ensureActiveGalleryCached(currentYear, currentMonth);
+        await ensureHostProgressCached(receiverId, currentYear, currentMonth);
+
+        if (redisClient.isOpen) {
+            const giftIdsKey = `gift_gallery:gift_ids:${currentYear}:${currentMonth}`;
+            const progressCacheKey = `host_gallery_progress:${receiverId}:${currentYear}:${currentMonth}`;
+
+            const isGalleryGift = await redisClient.sIsMember(giftIdsKey, gift.id);
+            if (isGalleryGift) {
+                await redisClient.sAdd(progressCacheKey, gift.id);
+                await redisClient.expire(progressCacheKey, 604800);
+            }
+            galleryProgressUpdate = await getGiftGalleryTargetsService(receiverId);
+        }
+    } catch (gErr) {
+        console.error("[GiftGallery] Error computing gallery progress:", gErr.message);
+    }
+
     const socketPayload = {
         success: true,
         streamId: stream.streamId,
@@ -1249,7 +1275,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             coinCost: Number(gift.coinCost)
         },
         wealthLevel: 1,
-        isLevelUp: false
+        isLevelUp: false,
+        galleryProgress: galleryProgressUpdate
     };
 
     setImmediate(async () => {
@@ -1287,40 +1314,32 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             socketPayload.wealthLevel = finalLevel;
             socketPayload.isLevelUp = isLevelUp;
 
-            let galleryProgressUpdate = null;
-            const currentDate = new Date();
-            const currentYear = currentDate.getFullYear();
-            const currentMonth = currentDate.getMonth() + 1;
+            if (galleryProgressUpdate) {
+                const currentDate = new Date();
+                const activeGallery = await prisma.giftGallery.findFirst({
+                    where: {
+                        year: currentDate.getFullYear(),
+                        month: currentDate.getMonth() + 1
+                    },
+                    select: { id: true }
+                });
 
-            await ensureActiveGalleryCached(currentYear, currentMonth);
-            await ensureHostProgressCached(receiverId, currentYear, currentMonth);
-
-            if (redisClient.isOpen) {
-                const giftIdsKey = `gift_gallery:gift_ids:${currentYear}:${currentMonth}`;
-                const galleryCacheKey = `gift_gallery:active:${currentYear}:${currentMonth}`;
-                const progressCacheKey = `host_gallery_progress:${receiverId}:${currentYear}:${currentMonth}`;
-
-                const isGalleryGift = await redisClient.sIsMember(giftIdsKey, gift.id);
-                if (isGalleryGift) {
-                    const alreadyCollected = await redisClient.sIsMember(progressCacheKey, gift.id);
-                    if (!alreadyCollected) {
-                        await redisClient.sAdd(progressCacheKey, gift.id);
-                        await redisClient.expire(progressCacheKey, 604800);
-
-                        const galleryItemsStr = await redisClient.get(galleryCacheKey);
-                        const galleryItems = galleryItemsStr ? JSON.parse(galleryItemsStr) : [];
-                        const totalTarget = galleryItems.length;
-
-                        const currentProgressCount = await redisClient.sCard(progressCacheKey);
-
-                        galleryProgressUpdate = {
-                            hostId: receiverId,
-                            giftId: gift.id,
-                            currentProgress: currentProgressCount,
-                            totalTarget,
-                            isCompleted: Boolean(totalTarget > 0 && currentProgressCount >= totalTarget)
-                        };
-                    }
+                if (activeGallery) {
+                    await prisma.giftGalleryProgress.upsert({
+                        where: {
+                            hostUserId_galleryId_giftId: {
+                                hostUserId: receiverId,
+                                galleryId: activeGallery.id,
+                                giftId: gift.id
+                            }
+                        },
+                        create: {
+                            hostUserId: receiverId,
+                            galleryId: activeGallery.id,
+                            giftId: gift.id
+                        },
+                        update: {}
+                    }).catch(e => console.error("[GiftGallery] DB Upsert error:", e.message));
                 }
             }
 

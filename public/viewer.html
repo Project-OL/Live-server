@@ -7,6 +7,7 @@
     <title>offoo Viewer Console</title>
     <script src="https://cdn.tailwindcss.com"></script>
     <script src="https://cdn.socket.io/4.7.5/socket.io.min.js"></script>
+    <script src="/socket.io/socket.io.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/livekit-client/dist/livekit-client.umd.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/hls.js@latest"></script>
     <style>
@@ -823,7 +824,13 @@
 
         async function connectSocket(userId) {
             if (socket) socket.disconnect();
-            socket = io(SERVER_URL, { auth: { userId } });
+            const ioFunc = (typeof io !== 'undefined' ? io : (window.io || null));
+            if (!ioFunc) {
+                console.error("Socket.io client library is not loaded.");
+                alert("Socket.io library loading... Please try joining again.");
+                return;
+            }
+            socket = ioFunc(SERVER_URL, { auth: { userId } });
 
             socket.on("connect", () => {
                 E.lblConnectionStatus.innerText = "Online";

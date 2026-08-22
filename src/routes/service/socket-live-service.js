@@ -833,6 +833,11 @@ export const setupLiveSockets = (io) => {
                 // Standard Gift Animation broadcast
                 broadcastToStream(streamId, "GIFT_SENT", result.socketPayload);
 
+                if (result.socketPayload && result.socketPayload.galleryProgress) {
+                    broadcastToStream(streamId, "GIFT_GALLERY_PROGRESS_UPDATED", result.socketPayload.galleryProgress);
+                    console.log(`[Socket Gift Gallery] Broadcast GIFT_GALLERY_PROGRESS_UPDATED in stream ${streamId}`);
+                }
+
                 // If Lucky Gift Winner -> Broadcast Lucky Win event
                 if (result.luckyWin) {
                     broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
