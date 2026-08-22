@@ -236,13 +236,13 @@ const joinLiveStream = async (req, res) => {
             const lockKey = `stream:egress:lock:${stream.streamId}`;
 
             // Mutex lock prevents duplicate parallel Egress trigger calls
-            redisClient.set(lockKey, "LOCKED", "NX", "EX", 10).then(async (acquired) => {
+            redisClient.set(lockKey, "LOCKED", { NX: true, EX: 10 }).then(async (acquired) => {
                 if (acquired) {
                     const activeEgressId = await redisClient.get(egressKey);
                     if (!activeEgressId) {
                         const newEgressId = await startLocalHlsEgressService(stream.streamId);
                         if (newEgressId) {
-                            await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                            await redisClient.set(egressKey, newEgressId, { EX: 86400 });
                         }
                     }
                 }
