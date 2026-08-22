@@ -230,8 +230,8 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
-        // 🟢 Pre-trigger Egress when 2nd Viewer joins so HLS segments are 100% ready for 3rd Viewer
-        if (finalViewerCount >= 2 && redisClient.isOpen) {
+        // 🟢 Pre-trigger Egress when 1st Viewer joins so HLS segments are 100% ready for 3rd Viewer
+        if (finalViewerCount >= 1 && redisClient.isOpen) {
             const egressKey = `stream:egress:${stream.streamId}`;
             redisClient.get(egressKey).then(async (activeEgressId) => {
                 if (!activeEgressId) {
