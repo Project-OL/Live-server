@@ -8,6 +8,16 @@ import { isUserRestrictedFast } from './serviceAdmin.js';
 
 export const SYSTEM_SENDER_ID = "00000000-0000-0000-0000-000000000000";
 
+export const buildDisplayName = (userObj) => {
+    if (!userObj) return '';
+    const first = (userObj.firstName || '').trim();
+    const last = (userObj.lastName || '').trim();
+    if (first && last) return `${first} ${last}`;
+    if (first) return first;
+    if (last) return last;
+    return userObj.username || '';
+};
+
 const generateFakeName = () => {
     const chars = 'abcdefghijklmnopqrstuvwxyz';
     const nums = '0123456789';
@@ -235,6 +245,8 @@ export const sendMessageService = async ({
                         id: true,
                         publicId: true,
                         username: true,
+                        firstName: true,
+                        lastName: true,
                         avatarUrl: true,
                         userLevel: {
                             select: {
@@ -293,20 +305,21 @@ export const sendMessageService = async ({
                 id: targetUserObj.id,
                 publicId: targetUserObj.publicId ? targetUserObj.publicId.toString() : null,
                 username: targetUserObj.username,
+                name: buildDisplayName(targetUserObj),
                 avatarUrl: targetUserObj.avatarUrl || null,
                 wealthLevel: targetWealthLevel,
                 livestreamLevel: targetLivestreamLevel
-            } : { id: SYSTEM_SENDER_ID, username: 'System', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
+            } : { id: SYSTEM_SENDER_ID, username: 'System', name: 'System', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
             : (user ? {
                 id: isStealth ? null : user.id,
                 publicId: isStealth ? stealthAliasObj?.fakePublicId : (user.publicId ? user.publicId.toString() : null),
                 username: isStealth ? (stealthAliasObj?.alias || 'sdg52') : user.username,
-                name: isStealth ? (stealthAliasObj?.alias || 'sdg52') : (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username),
+                name: isStealth ? (stealthAliasObj?.alias || 'sdg52') : buildDisplayName(user),
                 avatarUrl: isStealth ? null : (user.avatarUrl || null),
                 wealthLevel: senderWealthLevel,
                 livestreamLevel: senderLivestreamLevel,
                 isMystery: isStealth
-            } : { username: 'Unknown User', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
+            } : { username: 'Unknown User', name: 'Unknown User', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
     };
 };
 
@@ -418,12 +431,14 @@ export const getMessagesService = async ({
                 id: userObj.id,
                 publicId: userObj.publicId ? userObj.publicId.toString() : null,
                 username: userObj.username,
+                name: buildDisplayName(userObj),
                 avatarUrl: userObj.avatarUrl || null,
                 wealthLevel,
                 livestreamLevel
             } : {
                 id: SYSTEM_SENDER_ID,
                 username: 'System',
+                name: 'System',
                 avatarUrl: null,
                 wealthLevel: 0,
                 livestreamLevel: 0
@@ -435,13 +450,14 @@ export const getMessagesService = async ({
                 id: isStealth ? null : userObj.id,
                 publicId: isStealth ? aliasObj?.fakePublicId : (userObj.publicId ? userObj.publicId.toString() : null),
                 username: isStealth ? (aliasObj?.alias || 'sdg52') : userObj.username,
-                name: isStealth ? (aliasObj?.alias || 'sdg52') : (`${userObj.firstName || ""} ${userObj.lastName || ""}`.trim() || userObj.username),
+                name: isStealth ? (aliasObj?.alias || 'sdg52') : buildDisplayName(userObj),
                 avatarUrl: isStealth ? null : (userObj.avatarUrl || null),
                 wealthLevel,
                 livestreamLevel,
                 isMystery: isStealth
             } : {
                 username: 'Unknown User',
+                name: 'Unknown User',
                 avatarUrl: null,
                 wealthLevel: 0,
                 livestreamLevel: 0
