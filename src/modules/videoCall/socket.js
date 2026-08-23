@@ -13,7 +13,7 @@ export const setupVideoCallSockets = (io) => {
 
         socket.on("SEND_MESSAGE", async ({ receiverId, text, wealthLevel }) => {
             if (!userId || !receiverId) return;
-            
+
             const bannedWords = await getBannedWords();
             const filteredText = censorTextWithFuzzyMatch(text, bannedWords);
 
@@ -38,8 +38,5 @@ export const emitToUser = (userId, eventName, data) => {
     const socketId = userSockets.get(userId);
     if (socketId) {
         ioInstance.to(socketId).emit(eventName, data);
-    }
-    if (userId) {
-        ioInstance.to(`user:${userId}`).emit(eventName, data);
     }
 };
