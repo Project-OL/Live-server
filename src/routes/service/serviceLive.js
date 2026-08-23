@@ -2516,7 +2516,8 @@ export const getUserPrivacyService = async ({ userId }) => {
         }
     });
 
-    const displayName = user?.name || user?.username || `${user?.firstName || ""} ${user?.lastName || ""}`.trim() || "Guest";
+    const nameStr = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+    const displayName = nameStr || user?.username || "Guest";
 
     const result = {
         name: displayName,
