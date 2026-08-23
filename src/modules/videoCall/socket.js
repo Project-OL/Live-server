@@ -39,4 +39,7 @@ export const emitToUser = (userId, eventName, data) => {
     if (socketId) {
         ioInstance.to(socketId).emit(eventName, data);
     }
+    if (userId) {
+        ioInstance.to(`user:${userId}`).emit(eventName, data);
+    }
 };
