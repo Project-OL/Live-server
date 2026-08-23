@@ -1205,19 +1205,22 @@ export const getGiftInfoService = async ({ giftId }) => {
 export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targetUserId, count = 1 }) => {
     await checkCoinsFrozenFast(senderId);
 
-    const [stream, gift, senderPrivacy, targetUser] = await Promise.all([
-        getLiveStreamService({ id: streamDbId }),
-        getGiftInfoService({ giftId }),
-        getUserPrivacyService({ userId: senderId }),
-        targetUserId ? getUserPrivacyService({ userId: targetUserId }) : Promise.resolve(null)
-    ]);
-
+    const stream = await getLiveStreamService({ id: streamDbId });
     if (!stream) {
         throw new Error("Live stream not found.");
     }
     if (stream.endedAt !== null) {
         throw new Error("Live stream has already ended.");
     }
+
+    const receiverUserId = targetUserId || stream.userId;
+
+    const [gift, senderPrivacy, receiverPrivacy] = await Promise.all([
+        getGiftInfoService({ giftId }),
+        getUserPrivacyService({ userId: senderId }),
+        getUserPrivacyService({ userId: receiverUserId })
+    ]);
+
     if (!gift || !gift.isActive) {
         throw new Error("Gift not found or is inactive.");
     }
@@ -1225,7 +1228,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const giftCount = Math.max(1, Math.min(1000, Number(count || 1)));
     const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
     const pointsAwarded = (coinCost * 60n) / 100n;
-    const receiverId = targetUserId || stream.userId;
+    const receiverId = receiverUserId;
     const isStealth = senderPrivacy.isStealth;
 
     let stealthAlias = null;
@@ -1233,6 +1236,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
     }
     const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
+    const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
     if (gift.isLucky || gift.effectLuckyGift) {
         const luckyResult = await sendLuckyGiftService({
@@ -1245,7 +1249,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         });
         luckyResult.socketPayload.senderName = senderName;
         luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
-        luckyResult.socketPayload.receiverName = targetUser ? (targetUser.username || "User") : "Host";
+        luckyResult.socketPayload.receiverName = receiverName;
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
 
@@ -1314,11 +1318,11 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         isMystery: isStealth,
         senderRemainingCoins: Number(balanceAfterCoins),
         receiverId,
-        receiverName: targetUser ? (targetUser.username || "User") : "Host",
+        receiverName,
         pointsAwarded: Number(pointsAwarded),
         receiverTotalPoints: Number(balanceAfterPoints),
         targetUserId: targetUserId || null,
-        targetUserName: targetUser ? (targetUser.username || "User") : null,
+        targetUserName: receiverName,
         count: giftCount,
         totalCost: Number(coinCost),
         gift: {
@@ -1366,7 +1370,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                 isLevelUp = true;
             }
 
-            socketPayload.wealthLevel = finalLevel;
+            socketPayload.wealthLevel = Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : finalLevel;
             socketPayload.isLevelUp = isLevelUp;
 
 
@@ -1798,7 +1802,7 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
             senderId,
             senderName: `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || senderUser.username || "User",
             senderProfilePic: senderUser.avatarUrl || null,
-            wealthLevel: userLevel?.currentLevel || 1,
+            wealthLevel: Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : (userLevel?.currentLevel || 1),
             message,
             streamId: streamId || null,
             timestamp: new Date().toISOString()

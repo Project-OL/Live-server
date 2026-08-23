@@ -861,19 +861,25 @@ const sendStreamGift = async (req, res) => {
         const giftCount = count
         const result = await sendStreamGiftService({ streamDbId, senderId: req.userId, giftId, targetUserId, count: giftCount });
 
+        // Broadcast GIFT_SENT to stream UUID, stream DB ID, receiver personal channel, and sender personal channel
         broadcastToStream(result.socketPayload.streamId, "GIFT_SENT", result.socketPayload);
-
-        if (result.luckyWin) {
-            broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+        if (streamDbId && streamDbId !== result.socketPayload.streamId) {
+            broadcastToStream(streamDbId, "GIFT_SENT", result.socketPayload);
         }
-
-        // Targeted Socket Notification to Receiver User Device
         if (result.socketPayload.receiverId) {
+            broadcastToStream(`user:${result.socketPayload.receiverId}`, "GIFT_SENT", result.socketPayload);
             broadcastToStream(`user:${result.socketPayload.receiverId}`, "wallet_updated", {
                 currency: "POINT",
                 pointsAwarded: result.socketPayload.pointsAwarded,
                 newTotalPoints: result.socketPayload.receiverTotalPoints
             });
+        }
+        if (req.userId) {
+            broadcastToStream(`user:${req.userId}`, "GIFT_SENT", result.socketPayload);
+        }
+
+        if (result.luckyWin) {
+            broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
         }
 
         // Broadcast gallery update if it unlocked a new gallery target progress

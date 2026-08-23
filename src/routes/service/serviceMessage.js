@@ -248,6 +248,8 @@ export const sendMessageService = async ({
                         firstName: true,
                         lastName: true,
                         avatarUrl: true,
+                        privacyMysteryLive: true,
+                        vipSubscriptionActive: true,
                         userLevel: {
                             select: {
                                 wealthLevel: true,
@@ -297,18 +299,25 @@ export const sendMessageService = async ({
         stealthAliasObj = await getOrCreateSessionAliasObj(streamId, senderId);
     }
 
+    const isTargetStealth = Boolean(targetUserObj?.privacyMysteryLive && targetUserObj?.vipSubscriptionActive);
+    let targetStealthAliasObj = null;
+    if (isTargetStealth) {
+        targetStealthAliasObj = await getOrCreateSessionAliasObj(streamId, targetUserObj.id);
+    }
+
     return {
         ...messageData,
         createdAt: new Date(messageData.createdAt),
         sender: senderId === SYSTEM_SENDER_ID
             ? (targetUserObj ? {
-                id: targetUserObj.id,
-                publicId: targetUserObj.publicId ? targetUserObj.publicId.toString() : null,
-                username: targetUserObj.username,
-                name: buildDisplayName(targetUserObj),
-                avatarUrl: targetUserObj.avatarUrl || null,
-                wealthLevel: targetWealthLevel,
-                livestreamLevel: targetLivestreamLevel
+                id: isTargetStealth ? null : targetUserObj.id,
+                publicId: isTargetStealth ? targetStealthAliasObj?.fakePublicId : (targetUserObj.publicId ? targetUserObj.publicId.toString() : null),
+                username: isTargetStealth ? (targetStealthAliasObj?.alias || 'sdg52') : targetUserObj.username,
+                name: isTargetStealth ? (targetStealthAliasObj?.alias || 'sdg52') : buildDisplayName(targetUserObj),
+                avatarUrl: isTargetStealth ? null : (targetUserObj.avatarUrl || null),
+                wealthLevel: isTargetStealth ? 0 : targetWealthLevel,
+                livestreamLevel: isTargetStealth ? 0 : targetLivestreamLevel,
+                isMystery: isTargetStealth
             } : { id: SYSTEM_SENDER_ID, username: 'System', name: 'System', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
             : (user ? {
                 id: isStealth ? null : user.id,
@@ -316,8 +325,8 @@ export const sendMessageService = async ({
                 username: isStealth ? (stealthAliasObj?.alias || 'sdg52') : user.username,
                 name: isStealth ? (stealthAliasObj?.alias || 'sdg52') : buildDisplayName(user),
                 avatarUrl: isStealth ? null : (user.avatarUrl || null),
-                wealthLevel: senderWealthLevel,
-                livestreamLevel: senderLivestreamLevel,
+                wealthLevel: isStealth ? 0 : senderWealthLevel,
+                livestreamLevel: isStealth ? 0 : senderLivestreamLevel,
                 isMystery: isStealth
             } : { username: 'Unknown User', name: 'Unknown User', avatarUrl: null, wealthLevel: 0, livestreamLevel: 0 })
     };
