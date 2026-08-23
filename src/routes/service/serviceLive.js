@@ -1370,7 +1370,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                 isLevelUp = true;
             }
 
-            socketPayload.wealthLevel = Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : finalLevel;
+            socketPayload.wealthLevel = isStealth ? 0 : finalLevel;
             socketPayload.isLevelUp = isLevelUp;
 
 
