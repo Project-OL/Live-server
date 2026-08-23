@@ -230,8 +230,8 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
-        // 🟢 Pre-trigger Egress when 1st Viewer joins so HLS segments are 100% ready for 3rd Viewer
-        if (finalViewerCount >= 1 && redisClient.isOpen) {
+        // 🟢 Pre-trigger Egress when 47th Viewer joins so HLS segments are 100% pre-generated for 51st Viewer
+        if (finalViewerCount >= 47 && redisClient.isOpen) {
             const egressKey = `stream:egress:${stream.streamId}`;
             redisClient.get(egressKey).then(async (activeEgressId) => {
                 if (!activeEgressId) {
@@ -243,8 +243,8 @@ const joinLiveStream = async (req, res) => {
             }).catch(err => console.error("Egress pre-warm error:", err.message));
         }
 
-        // 🟢 3rd Viewer Threshold: Viewers 1-2 get WebRTC (0.2s ultra low latency), Viewers 3+ get BunnyCDN HLS
-        if (finalViewerCount > 2 && req.userId !== stream.userId) {
+        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC (0.2s ultra low latency), Viewers 51+ get BunnyCDN HLS
+        if (finalViewerCount > 50 && req.userId !== stream.userId) {
             mode = "HLS";
             hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
         }
@@ -327,6 +327,9 @@ const getLiveStreams = async (req, res) => {
         const userLng = req.query.lng || req.query.longitude || null;
         const minKm = parseFloat(req.query.minKm) || 9;
         const maxKm = parseFloat(req.query.maxKm) || 40;
+
+        console.log("checked:query:: ", req.query);
+        console.log("checked:country:: ", country);
 
         // Default to logged-in user's own country if no explicit country, following, or nearby filter is provided
         if (!country && !followingOnly && !nearbyOnly && req.userId) {
