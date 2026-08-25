@@ -1,9 +1,5 @@
 # Staging deploy (ol-stag)
 
-Same as `production.yml`: pack artifact, SCP to `/tmp`, `ssh 'bash -s' < ec2-unpack-live-server.sh`.
+Uses the same GitHub → S3 → SSM path as ol-node `production.yml` (no SSH port 22).
 
-Staging only differs in paths: `APP_USER=ec2-user` `APP_DIR=/home/ec2-user/live-server`.
-
-Secrets on Environment `staging`: `STAGING_EC2_HOST`, `STAGING_EC2_USER`, `STAGING_EC2_SSH_PRIVATE_KEY`.
-
-_Redeploy: 2026-08-25T11:42+05:30_
+Instance `i-04b31dbda6ed0edc4` must have an IAM instance profile with SSM + S3 read on `ol-production-deploy-artifacts-465457334877`. See ol-node `.github/STAGING.md`.

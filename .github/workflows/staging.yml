@@ -1,7 +1,6 @@
 name: Staging build and deploy
 
-# Mirrors production.yml: pack artifact, scp to /tmp, ssh 'bash -s' < unpack.sh
-# Staging paths: APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server
+# Same transport as ol-node production.yml: OIDC → S3 → SSM (no SSH :22).
 
 on:
   push:
@@ -11,6 +10,16 @@ on:
 concurrency:
   group: staging-ec2-live-server
   cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+env:
+  AWS_REGION: ap-south-1
+  AWS_ROLE_ARN: arn:aws:iam::465457334877:role/ol-prod-github-deploy-role
+  DEPLOY_BUCKET: ol-production-deploy-artifacts-465457334877
+  EC2_INSTANCE_ID: i-04b31dbda6ed0edc4
 
 jobs:
   build:
@@ -60,42 +69,105 @@ jobs:
         with:
           name: live-server-${{ github.sha }}
 
-      - name: Check staging EC2 secrets
-        env:
-          KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
-          HOST: ${{ secrets.STAGING_EC2_HOST }}
-          USER: ${{ secrets.STAGING_EC2_USER }}
-        run: |
-          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
-            echo "Set Environment staging secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY"
-            exit 1
-          fi
+      - name: Configure AWS credentials
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ env.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
 
-      - name: Deploy to EC2
-        env:
-          SSH_PRIVATE_KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
-          EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
-          EC2_USER: ${{ secrets.STAGING_EC2_USER }}
+      - name: Verify AWS identity
+        run: aws sts get-caller-identity
+
+      - name: Upload deployment artifact to S3
         run: |
-          mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || true
-          scp -i ~/.ssh/id_deploy \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=accept-new \
-            -o ConnectTimeout=20 \
-            live-server-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/live-server-artifact.tgz"
-          ssh -i ~/.ssh/id_deploy \
-            -o IdentitiesOnly=yes \
-            -o StrictHostKeyChecking=accept-new \
-            -o ConnectTimeout=20 \
-            -o ServerAliveInterval=15 \
-            -o ServerAliveCountMax=120 \
-            -o TCPKeepAlive=yes \
-            "$EC2_USER@$EC2_HOST" \
-            'APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz bash -s' \
-            < .github/deploy/ec2-unpack-live-server.sh
-# Same as production.yml (scp + bash -s < unpack). Staging layout:
-#   APP_DIR=/home/ec2-user/live-server
-# Secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY
+          aws s3 cp live-server-artifact.tgz \
+            "s3://${DEPLOY_BUCKET}/live-server/staging-live-server-${GITHUB_SHA}.tgz"
+
+      - name: Upload deployment script to S3
+        run: |
+          aws s3 cp .github/deploy/ec2-unpack-live-server.sh \
+            "s3://${DEPLOY_BUCKET}/live-server/staging-ec2-unpack-live-server-${GITHUB_SHA}.sh"
+
+      - name: Send deployment command to EC2
+        env:
+          ARTIFACT_KEY: live-server/staging-live-server-${{ github.sha }}.tgz
+          DEPLOY_SCRIPT_KEY: live-server/staging-ec2-unpack-live-server-${{ github.sha }}.sh
+        run: |
+          COMMAND_ID=$(
+            aws ssm send-command \
+              --region "$AWS_REGION" \
+              --instance-ids "$EC2_INSTANCE_ID" \
+              --document-name "AWS-RunShellScript" \
+              --timeout-seconds 1800 \
+              --comment "Live-server staging deployment ${GITHUB_SHA}" \
+              --parameters commands="[
+                \"set -e\",
+                \"export PATH=/usr/bin:/usr/local/bin:\$PATH\",
+                \"rm -f /tmp/live-server-artifact.tgz /tmp/ec2-unpack-live-server.sh\",
+                \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/live-server-artifact.tgz\",
+                \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-live-server.sh\",
+                \"chmod 700 /tmp/ec2-unpack-live-server.sh\",
+                \"APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz bash /tmp/ec2-unpack-live-server.sh\"
+              ]" \
+              --query 'Command.CommandId' \
+              --output text
+          )
+          echo "SSM Command ID: $COMMAND_ID"
+          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
+
+      - name: Wait for deployment
+        run: |
+          echo "Waiting for SSM deployment..."
+          for i in {1..120}; do
+            STATUS=$(
+              aws ssm get-command-invocation \
+                --region "$AWS_REGION" \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query 'Status' \
+                --output text
+            )
+            echo "Attempt $i: SSM status = $STATUS"
+            case "$STATUS" in
+              Success)
+                echo "Deployment completed successfully."
+                break
+                ;;
+              Failed|Cancelled|TimedOut|Cancelling)
+                echo "Deployment failed with status: $STATUS"
+                aws ssm get-command-invocation \
+                  --region "$AWS_REGION" \
+                  --command-id "$COMMAND_ID" \
+                  --instance-id "$EC2_INSTANCE_ID" \
+                  --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                  --output yaml
+                exit 1
+                ;;
+              Pending|InProgress|Delayed)
+                sleep 5
+                ;;
+              *)
+                echo "Unknown SSM status: $STATUS"
+                sleep 5
+                ;;
+            esac
+            if [ "$i" -eq 120 ]; then
+              echo "Deployment timed out waiting for SSM."
+              aws ssm get-command-invocation \
+                --region "$AWS_REGION" \
+                --command-id "$COMMAND_ID" \
+                --instance-id "$EC2_INSTANCE_ID" \
+                --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+                --output yaml
+              exit 1
+            fi
+          done
+
+      - name: Show deployment output
+        run: |
+          aws ssm get-command-invocation \
+            --region "$AWS_REGION" \
+            --command-id "$COMMAND_ID" \
+            --instance-id "$EC2_INSTANCE_ID" \
+            --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
+            --output yaml
