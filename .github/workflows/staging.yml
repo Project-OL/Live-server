@@ -1,0 +1,108 @@
+name: Staging build and deploy
+
+on:
+  push:
+    branches: [staging]
+  workflow_dispatch:
+
+concurrency:
+  group: staging-ec2-live-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      - name: Install dependencies (validate lockfile + Prisma)
+        run: npm ci
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+
+      - name: Pack artifact
+        run: |
+          tar -czf live-server-artifact.tgz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=.env \
+            --exclude=scratch \
+            --exclude=exp.js \
+            --exclude=test-creds.txt \
+            --exclude=google-credentials.json \
+            server.js package.json package-lock.json prisma prisma.config.ts src public
+          ls -lh live-server-artifact.tgz
+
+      - name: Upload GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-server-staging-${{ github.sha }}
+          path: live-server-artifact.tgz
+          retention-days: 14
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: staging
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: live-server-staging-${{ github.sha }}
+
+      - name: Check staging EC2 secrets
+        env:
+          KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.STAGING_EC2_HOST }}
+          USER: ${{ secrets.STAGING_EC2_USER }}
+        run: |
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Set GitHub Environment (staging) or repo secrets:"
+            echo "  STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY"
+            exit 1
+          fi
+
+      - name: Deploy artifact to ol-stag
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
+          EC2_USER: ${{ secrets.STAGING_EC2_USER }}
+        run: |
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
+          scp -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            live-server-artifact.tgz \
+            .github/deploy/ec2-unpack-live-server.sh \
+            "$EC2_USER@$EC2_HOST:/tmp/"
+          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+            "$EC2_USER@$EC2_HOST" bash -lc '
+              set -euo pipefail
+              export NVM_DIR="$HOME/.nvm"
+              if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
+              chmod 700 /tmp/ec2-unpack-live-server.sh
+              export APP_USER=ec2-user
+              export APP_DIR=/home/ec2-user/live-server
+              export ARTIFACT=/tmp/live-server-artifact.tgz
+              bash /tmp/ec2-unpack-live-server.sh
+            '
+
+      - name: Smoke live root
+        run: |
+          curl -fsS --max-time 20 https://live-staging.offoolive.com/
+          echo
+# Required GitHub secrets (Environment "staging" or repo):
+#   STAGING_EC2_HOST              3.110.118.179
+#   STAGING_EC2_USER              ec2-user
+#   STAGING_EC2_SSH_PRIVATE_KEY   PEM for ssh ol-stag
