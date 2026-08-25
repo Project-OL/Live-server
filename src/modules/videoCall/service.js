@@ -1,3 +1,4 @@
+import crypto from "crypto";
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { emitToUser } from "./socket.js";
@@ -63,7 +64,7 @@ export const getPointBalance = async (walletId, tx = prisma) => {
     return (credits._sum.amount ?? 0n) - (debits._sum.amount ?? 0n);
 };
 
-export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedgerEntryId) => {
+export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedgerEntryId, opts = {}) => {
     const hostUser = await tx.user.findUnique({
         where: { id: hostId },
         select: { currentAgencyId: true, username: true, firstName: true }
@@ -138,6 +139,21 @@ export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedger
         const agentPoints = await getFastPointBalance(agentWallet.id, tx);
         const balanceAfter = agentPoints + commissionPoints;
 
+        const businessRefId = opts.businessRefId || hostLedgerEntryId;
+        const hostTxType = opts.hostTxType || null;
+        const giftName = opts.gift?.name;
+        const metadata = (hostTxType || opts.gift)
+            ? {
+                category: "MATCH_CHAT",
+                ...(hostTxType ? { hostTxType } : {}),
+                hostLedgerEntryId,
+                ...(opts.gift?.id ? { giftId: opts.gift.id } : {}),
+                ...(giftName ? { giftName } : {}),
+                ...(opts.context ? { context: opts.context } : {}),
+                ...(opts.quantity != null ? { quantity: opts.quantity } : {}),
+                ...(opts.unitCoinCost != null ? { unitCoinCost: opts.unitCoinCost } : {})
+            }
+            : undefined;
         agentLedgerEntry = await tx.pointLedgerEntry.create({
             data: {
                 walletId: agentWallet.id,
@@ -146,9 +162,12 @@ export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedger
                 amount: commissionPoints,
                 balanceAfter,
                 idempotencyKey: `agency-commission-${hostLedgerEntryId}`,
-                refId: hostLedgerEntryId,
+                refId: businessRefId,
                 counterpartyId: hostId,
-                description: `Commission earned from host ${hostName} in video call`
+                description: giftName
+                    ? `Agency commission: ${giftName}`
+                    : `Commission earned from host ${hostName} in video call`,
+                ...(metadata ? { metadata } : {})
             }
         });
     }
@@ -1220,6 +1239,7 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
             console.log(`Video Call Gift Background DB Sync session: ${sessionId}`);
             const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
 
+            const giftTransactionId = crypto.randomUUID();
             await prisma.$transaction(async (tx) => {
                 // Lock the sender's wallet row to prevent concurrent double-spends
                 await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
@@ -1237,13 +1257,22 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
                             amount: pointsAwarded,
                             balanceAfter: balanceAfterPoints,
                             idempotencyKey: `gift-${sessionId}-${Date.now()}-points`,
-                            refId: gift.id,
+                            refId: giftTransactionId,
                             counterpartyId: senderId,
-                            description: `Received gift ${gift.name} x${giftCount} in video call`
+                            description: `Received gift ${gift.name} x${giftCount} in video call`,
+                            metadata: {
+                                giftId: gift.id,
+                                giftName: gift.name,
+                                context: "video_call",
+                                quantity: giftCount,
+                                unitCoinCost: Number(gift.coinCost),
+                                giftTransactionId
+                            }
                         }
                     }),
                     tx.giftTransaction.create({
                         data: {
+                            id: giftTransactionId,
                             senderUserId: senderId,
                             receiverUserId: receiverId,
                             giftId: gift.id,
@@ -1261,9 +1290,15 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
                             amount: coinCost,
                             balanceAfter: balanceAfterCoins,
                             idempotencyKey: `gift-${sessionId}-${Date.now()}-coins`,
-                            refId: gift.id,
+                            refId: giftTransactionId,
                             counterpartyId: receiverId,
-                            description: `Sent gift ${gift.name} x${giftCount} in video call`
+                            description: `Sent gift ${gift.name} x${giftCount} in video call`,
+                            metadata: {
+                                giftId: gift.id,
+                                giftTransactionId,
+                                context: "video_call",
+                                quantity: giftCount
+                            }
                         }
                     }),
                     tx.walletUserLevel.upsert({
@@ -1288,7 +1323,14 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
 
                 // Update Host Livestream Level & Process Agency Commission
                 await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
-                const commRes = await processAgencyCommission(tx, receiverId, pointsAwarded, hostLedger.id);
+                const commRes = await processAgencyCommission(tx, receiverId, pointsAwarded, hostLedger.id, {
+                    businessRefId: giftTransactionId,
+                    hostTxType: PointTxType.GIFT_RECEIVE,
+                    gift,
+                    context: "video_call",
+                    quantity: giftCount,
+                    unitCoinCost: Number(gift.coinCost)
+                });
                 if (commRes && commRes.agencyUserId) {
                     redisClient.del(`agency:me:${commRes.agencyUserId}`).catch(() => { });
                 }

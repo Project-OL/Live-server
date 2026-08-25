@@ -6,6 +6,7 @@
  */
 
 import prisma from '../../config/prisma.js';
+import crypto from 'crypto';
 import { client as redisClient } from '../../config/redis.js';
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType } from '@prisma/client';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
@@ -106,6 +107,8 @@ export const sendLuckyGiftService = async ({
         await redisClient.set(walletKey, finalBalanceCoins.toString(), "EX", 3600);
     }
 
+    const giftTransactionId = crypto.randomUUID();
+    const luckyContext = isCombo ? "LUCKY_COMBO" : "LUCKY_SINGLE";
     const txRecord = await prisma.$transaction(async (tx) => {
         const effectiveReceiverId = receiverId || senderId;
         const hostWallet = await getOrCreateWallet(effectiveReceiverId, WalletCurrencyType.POINT, tx);
@@ -123,7 +126,15 @@ export const sendLuckyGiftService = async ({
                 txType: CoinTxType.GIFT_SEND,
                 balanceAfter: coinsAfterDebit,
                 idempotencyKey: `${txKeyBase}-debit`,
-                description: `Lucky Gift Sent: ${gift.name} x${count}`
+                refId: giftTransactionId,
+                counterpartyId: effectiveReceiverId,
+                description: `Lucky Gift Sent: ${gift.name} x${count}`,
+                metadata: {
+                    giftId: gift.id,
+                    giftTransactionId,
+                    context: luckyContext,
+                    quantity: count
+                }
             }
         });
 
@@ -137,16 +148,18 @@ export const sendLuckyGiftService = async ({
                     txType: CoinTxType.GIFT_REFUND,
                     balanceAfter: coinsAfterCredit,
                     idempotencyKey: `${txKeyBase}-reward`,
+                    refId: giftTransactionId,
                     description: `Lucky Gift Reward Won: ${gift.name} (${luckyResult.category})`
                 }
             });
         }
 
+        let hostLedgerId = null;
         if (hostPoints > 0n && hostWallet) {
             const currentHostPoints = await getFastPointBalance(hostWallet.id, tx);
             const pointsAfterHost = currentHostPoints + hostPoints;
 
-            await tx.pointLedgerEntry.create({
+            const hostLedger = await tx.pointLedgerEntry.create({
                 data: {
                     walletId: hostWallet.id,
                     amount: hostPoints,
@@ -154,31 +167,58 @@ export const sendLuckyGiftService = async ({
                     txType: PointTxType.LIVESTREAM_GIFT,
                     balanceAfter: pointsAfterHost,
                     idempotencyKey: `${txKeyBase}-host-cut`,
-                    description: `Host 4% Cut from Lucky Gift: ${gift.name}`
+                    refId: giftTransactionId,
+                    counterpartyId: senderId,
+                    description: `Host 4% Cut from Lucky Gift: ${gift.name}`,
+                    metadata: {
+                        giftId: gift.id,
+                        giftName: gift.name,
+                        context: luckyContext,
+                        quantity: count,
+                        unitCoinCost: Number(gift.coinCost),
+                        giftTransactionId
+                    }
                 }
             });
+            hostLedgerId = hostLedger.id;
         }
 
         const log = await tx.giftTransaction.create({
             data: {
+                id: giftTransactionId,
                 senderUserId: senderId,
                 receiverUserId: effectiveReceiverId,
                 giftId: gift.id,
                 coinCost: Number(totalCost),
+                quantity: count,
                 pointsAwarded: Number(hostPoints),
-                context: isCombo ? "LUCKY_COMBO" : "LUCKY_SINGLE"
+                context: luckyContext
             }
         });
 
-        return log;
+        return { log, hostLedgerId };
     }, { timeout: 15000, maxWait: 10000 });
 
     // Non-blocking background worker for Agency Commission, Reserve Pool & Level Cache invalidating
     setImmediate(async () => {
         try {
-            if (isCombo && hostPoints > 0n) {
+            if (isCombo && hostPoints > 0n && txRecord.hostLedgerId) {
                 const effectiveReceiverId = receiverId || senderId;
-                const commRes = await processLiveStreamAgencyCommission(prisma, effectiveReceiverId, hostPoints, txRecord.id);
+                const commRes = await processLiveStreamAgencyCommission(
+                    prisma,
+                    effectiveReceiverId,
+                    hostPoints,
+                    txRecord.hostLedgerId,
+                    null,
+                    {
+                        businessRefId: giftTransactionId,
+                        hostTxType: PointTxType.LIVESTREAM_GIFT,
+                        gift,
+                        context: luckyContext,
+                        quantity: count,
+                        unitCoinCost: Number(gift.coinCost)
+                    }
+                );
                 if (commRes?.agencyUserId) {
                     await bustAgencyCommissionCaches(commRes.agencyUserId);
                 }
@@ -195,7 +235,7 @@ export const sendLuckyGiftService = async ({
 
     const resultPayload = {
         success: true,
-        transactionId: txRecord.id,
+        transactionId: txRecord.log.id,
         isLucky: true,
         streamId,
         senderId,

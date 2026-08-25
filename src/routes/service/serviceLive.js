@@ -1379,6 +1379,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
 
             let txAgencyUserId = null;
+            const giftTransactionId = crypto.randomUUID();
             await prisma.$transaction(async (tx) => {
                 await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
 
@@ -1394,17 +1395,27 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                             amount: pointsAwarded,
                             balanceAfter: balanceAfterPointsCalculated,
                             idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-points`,
-                            refId: gift.id,
+                            refId: giftTransactionId,
                             counterpartyId: senderId,
-                            description: `Received gift ${gift.name} in live stream`
+                            description: `Received gift ${gift.name} in live stream`,
+                            metadata: {
+                                giftId: gift.id,
+                                giftName: gift.name,
+                                context: "live_stream",
+                                quantity: giftCount,
+                                unitCoinCost: Number(gift.coinCost),
+                                giftTransactionId
+                            }
                         }
                     }),
                     tx.giftTransaction.create({
                         data: {
+                            id: giftTransactionId,
                             senderUserId: senderId,
                             receiverUserId: receiverId,
                             giftId: gift.id,
                             coinCost: gift.coinCost,
+                            quantity: giftCount,
                             pointsAwarded: Number(pointsAwarded),
                             context: "live_stream"
                         }
@@ -1417,9 +1428,15 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                             amount: coinCost,
                             balanceAfter: balanceAfterCoins,
                             idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-coins`,
-                            refId: gift.id,
+                            refId: giftTransactionId,
                             counterpartyId: receiverId,
-                            description: `Sent gift ${gift.name} in live stream`
+                            description: `Sent gift ${gift.name} in live stream`,
+                            metadata: {
+                                giftId: gift.id,
+                                giftTransactionId,
+                                context: "live_stream",
+                                quantity: giftCount
+                            }
                         }
                     }),
                     tx.walletUserLevel.upsert({
@@ -1444,7 +1461,21 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 
                 await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
 
-                const commRes = await processLiveStreamAgencyCommission(tx, receiverId, pointsAwarded, hostLedger.id);
+                const commRes = await processLiveStreamAgencyCommission(
+                    tx,
+                    receiverId,
+                    pointsAwarded,
+                    hostLedger.id,
+                    null,
+                    {
+                        businessRefId: giftTransactionId,
+                        hostTxType: PointTxType.GIFT_RECEIVE,
+                        gift,
+                        context: "live_stream",
+                        quantity: giftCount,
+                        unitCoinCost: Number(gift.coinCost)
+                    }
+                );
                 if (commRes && commRes.agencyUserId) {
                     txAgencyUserId = commRes.agencyUserId;
                 }
@@ -1576,7 +1607,7 @@ export const invalidateAgencyCommissionRatesCache = async () => {
     }
 };
 
-export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoints, hostLedgerEntryId, cachedReceiverUser = null) => {
+export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoints, hostLedgerEntryId, cachedReceiverUser = null, opts = {}) => {
     let agencyUserId = cachedReceiverUser?.currentAgencyId;
     let hostName = cachedReceiverUser?.username || cachedReceiverUser?.firstName || null;
 
@@ -1658,6 +1689,9 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
         const agentPoints = await getFastPointBalance(agentWallet.id, tx);
         const balanceAfter = agentPoints + commissionPoints;
 
+        const businessRefId = opts.businessRefId || hostLedgerEntryId;
+        const hostTxType = opts.hostTxType || PointTxType.GIFT_RECEIVE;
+        const giftName = opts.gift?.name;
         agentLedgerEntry = await tx.pointLedgerEntry.create({
             data: {
                 walletId: agentWallet.id,
@@ -1666,9 +1700,21 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
                 amount: commissionPoints,
                 balanceAfter,
                 idempotencyKey: `agency-commission-${hostLedgerEntryId}`,
-                refId: hostLedgerEntryId,
+                refId: businessRefId,
                 counterpartyId: receiverId,
-                description: `Commission earned from host ${hostName} in live stream`
+                description: giftName
+                    ? `Agency commission: ${giftName}`
+                    : `Commission earned from host ${hostName} in live stream`,
+                metadata: {
+                    category: "LIVE",
+                    hostTxType,
+                    hostLedgerEntryId,
+                    ...(opts.gift?.id ? { giftId: opts.gift.id } : {}),
+                    ...(giftName ? { giftName } : {}),
+                    ...(opts.context ? { context: opts.context } : {}),
+                    ...(opts.quantity != null ? { quantity: opts.quantity } : {}),
+                    ...(opts.unitCoinCost != null ? { unitCoinCost: opts.unitCoinCost } : {})
+                }
             }
         });
 
