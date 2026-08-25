@@ -91,6 +91,9 @@ jobs:
             -o StrictHostKeyChecking=accept-new
             -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
             -o ConnectTimeout=20
+            -o ServerAliveInterval=15
+            -o ServerAliveCountMax=120
+            -o TCPKeepAlive=yes
             -o BatchMode=yes
             -o LogLevel=ERROR
           )
@@ -106,9 +109,27 @@ jobs:
           scp "${SSH_OPTS[@]}" \
             live-server-artifact.tgz \
             .github/deploy/ec2-unpack-live-server.sh \
+            .github/deploy/gha-wrap-unpack.sh \
             "${EC2_USER}@${EC2_HOST}:/tmp/"
           ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" \
-            'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; chmod 700 /tmp/ec2-unpack-live-server.sh; APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz bash /tmp/ec2-unpack-live-server.sh'
+            'chmod 700 /tmp/gha-wrap-unpack.sh /tmp/ec2-unpack-live-server.sh
+             pkill -f gha-wrap-unpack.sh || true
+             rm -f /tmp/gha-unpack.exit
+             nohup env PATH=/usr/bin:/usr/local/bin:$PATH APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz UNPACK_SCRIPT=/tmp/ec2-unpack-live-server.sh bash /tmp/gha-wrap-unpack.sh > /tmp/gha-unpack.log 2>&1 < /dev/null &
+             echo started'
+          for i in $(seq 1 90); do
+            echo "===== remote unpack poll $i ====="
+            ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" 'tail -n 40 /tmp/gha-unpack.log; test -f /tmp/gha-unpack.exit && echo GHA_UNPACK_EXIT=$(cat /tmp/gha-unpack.exit)' || true
+            if ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" 'test -f /tmp/gha-unpack.exit'; then
+              code=$(ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" 'cat /tmp/gha-unpack.exit')
+              echo "remote unpack finished with $code"
+              exit "$code"
+            fi
+            sleep 10
+          done
+          echo "::error::remote unpack timed out after 15m"
+          ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" 'tail -n 80 /tmp/gha-unpack.log' || true
+          exit 1
 
       - name: Smoke live root
         run: |
