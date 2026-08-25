@@ -172,6 +172,8 @@ export const sendMessageService = async ({
                     publicId: true,
                     username: true,
                     avatarUrl: true,
+                    firstName: true,
+                    lastName: true,
                     privacyMysteryLive: true,
                     vipSubscriptionActive: true,
                     userLevel: {
