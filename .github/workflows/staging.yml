@@ -78,25 +78,37 @@ jobs:
           EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
           EC2_USER: ${{ secrets.STAGING_EC2_USER }}
         run: |
+          set -euo pipefail
+          EC2_HOST="$(printf '%s' "$EC2_HOST" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
+          EC2_USER="$(printf '%s' "$EC2_USER" | tr -d '\r' | sed 's/^[[:space:]]*//;s/[[:space:]]*$//')"
           mkdir -p ~/.ssh
-          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
-          chmod 600 ~/.ssh/id_deploy
-          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts
-          scp -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
+          python3 -c 'import os; from pathlib import Path; k=os.environ["SSH_PRIVATE_KEY"].replace("\r\n","\n").replace("\r","\n"); k=k.replace("\\n","\n") if k.count("\n")<2 else k; k=k.strip()+"\n"; assert "BEGIN" in k and "PRIVATE KEY" in k, "STAGING_EC2_SSH_PRIVATE_KEY does not look like a PEM private key"; p=Path.home()/".ssh"/"id_deploy"; p.write_text(k, encoding="utf-8"); p.chmod(0o600)'
+          ssh-keygen -y -f ~/.ssh/id_deploy >/dev/null
+          echo "SSH key ok, fingerprint=$(ssh-keygen -lf ~/.ssh/id_deploy | awk '{print $2}')"
+          SSH_OPTS=(
+            -i "$HOME/.ssh/id_deploy"
+            -o IdentitiesOnly=yes
+            -o StrictHostKeyChecking=accept-new
+            -o UserKnownHostsFile="$HOME/.ssh/known_hosts"
+            -o ConnectTimeout=20
+            -o BatchMode=yes
+            -o LogLevel=ERROR
+          )
+          echo "Testing SSH ${EC2_USER}@${EC2_HOST} ..."
+          if ! ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" "echo ssh-ok"; then
+            echo "::error::SSH to ol-stag failed. Common causes:"
+            echo "  1) EC2 security group does not allow inbound TCP 22 from GitHub-hosted runners (allow 0.0.0.0/0:22 on ol-stag, or GitHub Actions CIDRs)."
+            echo "  2) STAGING_EC2_HOST is wrong (must be 3.110.118.179)."
+            echo "  3) STAGING_EC2_SSH_PRIVATE_KEY is not the ol-stag PEM, or was pasted as one line without real newlines."
+            ssh "${SSH_OPTS[@]}" -o LogLevel=DEBUG3 -o ConnectTimeout=15 "${EC2_USER}@${EC2_HOST}" true || true
+            exit 1
+          fi
+          scp "${SSH_OPTS[@]}" \
             live-server-artifact.tgz \
             .github/deploy/ec2-unpack-live-server.sh \
-            "$EC2_USER@$EC2_HOST:/tmp/"
-          ssh -i ~/.ssh/id_deploy -o IdentitiesOnly=yes -o StrictHostKeyChecking=yes \
-            "$EC2_USER@$EC2_HOST" bash -lc '
-              set -euo pipefail
-              export NVM_DIR="$HOME/.nvm"
-              if [ -s "$NVM_DIR/nvm.sh" ]; then . "$NVM_DIR/nvm.sh"; fi
-              chmod 700 /tmp/ec2-unpack-live-server.sh
-              export APP_USER=ec2-user
-              export APP_DIR=/home/ec2-user/live-server
-              export ARTIFACT=/tmp/live-server-artifact.tgz
-              bash /tmp/ec2-unpack-live-server.sh
-            '
+            "${EC2_USER}@${EC2_HOST}:/tmp/"
+          ssh "${SSH_OPTS[@]}" "${EC2_USER}@${EC2_HOST}" \
+            'export NVM_DIR="$HOME/.nvm"; [ -s "$NVM_DIR/nvm.sh" ] && . "$NVM_DIR/nvm.sh"; chmod 700 /tmp/ec2-unpack-live-server.sh; APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz bash /tmp/ec2-unpack-live-server.sh'
 
       - name: Smoke live root
         run: |
