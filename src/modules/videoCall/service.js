@@ -9,6 +9,7 @@ import { v2 } from "@google-cloud/translate";
 import { checkCoinsFrozenFast } from "../../utils/coinRestriction.js";
 import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
+import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
 
 export const heartbeatCache = new Map();
 
@@ -604,8 +605,11 @@ export const acceptCall = async (sessionId, receiverId) => {
             await updateUserLevel(prisma, session.callerId, LevelType.WEALTH, coinRate);
             await updateUserLevel(prisma, session.creatorId, LevelType.LIVESTREAM, pointRate);
 
-            // 4. Cache Invalidation
+            // 4. Cache Invalidation + tier recompute (ol-node afterCommissionCreditCommit)
             await invalidateCaches(session.callerId, session.creatorId, agencyUserId);
+            if (agencyUserId) {
+                await afterCommissionCreditCommit(agencyUserId);
+            }
 
             console.log(`[VideoCall] Background tasks completed for session ${sessionId}`);
         } catch (e) {
@@ -953,6 +957,9 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                             }, { timeout: 15000 });
 
                             await invalidateCaches(session.callerId, session.creatorId, txAgencyUserId);
+                            if (txAgencyUserId) {
+                                await afterCommissionCreditCommit(txAgencyUserId);
+                            }
 
                             if (!scheduledDisconnects.has(session.id)) {
                                 const wAfter = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
@@ -1241,6 +1248,7 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
             const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
 
             const giftTransactionId = crypto.randomUUID();
+            let giftAgencyUserId = null;
             await prisma.$transaction(async (tx) => {
                 // Lock the sender's wallet row to prevent concurrent double-spends
                 await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
@@ -1332,10 +1340,14 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1) => {
                     quantity: giftCount,
                     unitCoinCost: Number(gift.coinCost)
                 });
-                if (commRes && commRes.agencyUserId) {
-                    redisClient.del(`agency:me:${commRes.agencyUserId}`).catch(() => { });
+                if (commRes?.agencyUserId) {
+                    giftAgencyUserId = commRes.agencyUserId;
                 }
             }, { timeout: 15000 });
+
+            if (giftAgencyUserId) {
+                await afterCommissionCreditCommit(giftAgencyUserId);
+            }
 
             // Clean other cached keys
             redisClient.del(`level:wealth:${senderId}`).catch(err => console.error(err));

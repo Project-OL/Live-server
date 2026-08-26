@@ -53,3 +53,20 @@ test('processAgencyCommission default opts keep minute refId on hostLedgerEntryI
   assert.match(src, /const businessRefId = opts\.businessRefId \|\| hostLedgerEntryId/)
   assert.match(src, /const metadata = \(hostTxType \|\| opts\.gift\)/)
 })
+
+test('live gift commission does not write currentLevel inline; post-commit recompute is used', () => {
+  const live = read('src/routes/service/serviceLive.js')
+  assert.doesNotMatch(
+    live,
+    /currentWindowTotalPoints:\s*\{\s*increment:\s*commissionPoints/,
+  )
+  assert.doesNotMatch(live, /\[Agency Level Up\]/)
+  assert.match(live, /afterCommissionCreditCommit\(txAgencyUserId\)/)
+})
+
+test('video-call gift path calls afterCommissionCreditCommit after sync', () => {
+  const src = read('src/modules/videoCall/service.js')
+  assert.match(src, /afterCommissionCreditCommit\(giftAgencyUserId\)/)
+  assert.match(src, /afterCommissionCreditCommit\(agencyUserId\)/)
+  assert.match(src, /afterCommissionCreditCommit\(txAgencyUserId\)/)
+})
