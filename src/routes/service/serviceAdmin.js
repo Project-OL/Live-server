@@ -20,8 +20,11 @@ export async function isUserRestrictedFast(userId, type) {
       const cached = await redisClient.get(redisKey);
       if (cached) {
         const parsed = JSON.parse(cached);
-        if (new Date(parsed.restrictedUntil) > new Date()) {
+        if (!parsed.clearedAt && new Date(parsed.restrictedUntil) > new Date()) {
           return parsed;
+        } else {
+          // Cache is cleared or expired, delete stale cache key immediately
+          redisClient.del(redisKey).catch(() => {});
         }
       }
     }
@@ -245,6 +248,17 @@ export async function clearRestrictionByIdService(userId, restrictionId, adminId
     if (restriction.type === 'LIVE_AUDIO_MUTE') {
       await autoUnmuteSheetUserIfRestricted(userId);
     }
+    setImmediate(async () => {
+      try {
+        const { ioInstance } = await import('../../socket/index.js');
+        if (ioInstance) {
+          ioInstance.to(`user:${userId}`).emit("user_restriction_cleared", {
+            userId,
+            type: restriction.type
+          });
+        }
+      } catch (err) {}
+    });
   }
 
   return result.count > 0;
@@ -274,6 +288,17 @@ export async function clearRestrictionsByTypeService(userId, type, adminId) {
     if (type === 'LIVE_AUDIO_MUTE') {
       await autoUnmuteSheetUserIfRestricted(userId);
     }
+    setImmediate(async () => {
+      try {
+        const { ioInstance } = await import('../../socket/index.js');
+        if (ioInstance) {
+          ioInstance.to(`user:${userId}`).emit("user_restriction_cleared", {
+            userId,
+            type
+          });
+        }
+      } catch (err) {}
+    });
   }
 
   return result.count;

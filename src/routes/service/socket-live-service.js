@@ -17,6 +17,7 @@ import {
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
+import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
 
 let ioInstance = null;
 const autoUnmuteTimers = new Map();
@@ -43,7 +44,7 @@ const checkIsHostOrAdmin = async (streamId, userId) => {
         if (!stream) return false;
         if (stream.userId === userId) return true;
 
-        const isAdmin = await isStreamAdminService({ streamId, userId });
+        const isAdmin = await isStreamAdminService({ streamId, userId, hostUserId: stream.userId });
         return !!isAdmin;
     } catch (err) {
         console.error("checkIsHostOrAdmin check failed:", err.message);
@@ -70,17 +71,21 @@ export const setupLiveSockets = (io) => {
             if (userId) {
                 try {
                     let username = "Guest";
+                    let name = "Guest";
                     let isStealth = false;
                     const user = await prisma.user.findUnique({
                         where: { id: userId },
                         select: {
                             username: true,
+                            firstName: true,
+                            lastName: true,
                             privacyMysteryLive: true,
                             vipSubscriptionActive: true
                         }
                     });
                     if (user) {
                         username = user.username;
+                        name = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest";
                         isStealth = Boolean(user.privacyMysteryLive && user.vipSubscriptionActive);
                     }
                     socket.data.isStealth = isStealth;
@@ -120,11 +125,17 @@ export const setupLiveSockets = (io) => {
                                 }
 
                                 // 2. Check and clear 2-minute Video Call Return Grace Timer
-                                const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
-                                const pendingReturn = await redisClient.get(returnTimerKey);
-                                if (pendingReturn) {
+                                clearHostReturnTimeout(userId);
+                                const returnTimerKey1 = `host:return_timer:${streamId}:${userId}`;
+                                const returnTimerKey2 = `host:return_timer:${userId}`;
+                                const val1 = await redisClient.get(returnTimerKey1);
+                                const val2 = await redisClient.get(returnTimerKey2);
+                                if (val1 === "pending" || val2 === "pending") {
                                     console.log(`[Socket Host Rejoin] Host ${userId} returned to stream ${streamId} within 2-minute window. Resuming live stream! ✅`);
-                                    await redisClient.del(returnTimerKey).catch(() => { });
+                                    await Promise.all([
+                                        redisClient.del(returnTimerKey1),
+                                        redisClient.del(returnTimerKey2)
+                                    ]).catch(() => { });
 
                                     // Broadcast HOST_LIVE_RESUMED to room
                                     broadcastToStream(streamId, "HOST_LIVE_RESUMED", {
@@ -141,7 +152,7 @@ export const setupLiveSockets = (io) => {
                     if (isStealth) {
                         await getOrCreateSessionAlias(streamId, userId);
                         console.log(`[Socket] Stealth VIP User ${userId} joined room ${streamId} silently (No count increment, no join broadcast).`);
-                    } else {
+                    } else if (!socket.data.isHost) {
                         // Fetch active RIDE/Entry effect
                         let ride = null;
                         try {
@@ -177,6 +188,7 @@ export const setupLiveSockets = (io) => {
                         // Broadcast user_joined to notify all clients to sync
                         broadcastToStream(streamId, "user_joined", {
                             userId,
+                            name,
                             username,
                             viewerCount,
                             ride
@@ -187,9 +199,9 @@ export const setupLiveSockets = (io) => {
                                 const systemMessage = await sendMessageService({
                                     streamId,
                                     senderId: SYSTEM_SENDER_ID,
-                                    message: `${username} joined the room.`,
+                                    message: `${name} joined the room.`,
                                     replyToUserId: userId,
-                                    replyToUsername: username
+                                    replyToUsername: name
                                 });
                                 broadcastToStream(streamId, "new_message", systemMessage);
                             } catch (err) {
@@ -270,9 +282,9 @@ export const setupLiveSockets = (io) => {
                                     // Check 2: Is host in 2-minute Video Call Return Grace Period?
                                     let isReturnGraceActive = false;
                                     if (redisClient.isOpen) {
-                                        const returnTimerKey = `host:return_timer:${streamId}:${userId}`;
-                                        const returnVal = await redisClient.get(returnTimerKey);
-                                        isReturnGraceActive = (returnVal === "pending");
+                                        const val1 = await redisClient.get(`host:return_timer:${streamId}:${userId}`);
+                                        const val2 = await redisClient.get(`host:return_timer:${userId}`);
+                                        isReturnGraceActive = (val1 === "pending" || val2 === "pending");
                                     }
 
                                     if (activeCall || isReturnGraceActive) {
@@ -333,11 +345,14 @@ export const setupLiveSockets = (io) => {
 
                 const hostUser = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true }
+                    select: { username: true, firstName: true, lastName: true }
                 });
+                const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host/Admin") : "Host/Admin";
                 const hostUsername = hostUser ? hostUser.username : "Host/Admin";
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_invite_received", {
                     streamId,
+                    name: hostName,
+                    hostName,
                     hostUsername
                 });
                 console.log(`[Socket] Host/Admin ${userId} invited user ${targetUserId} to sheet in stream ${streamId}`);
@@ -351,20 +366,22 @@ export const setupLiveSockets = (io) => {
             try {
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 const stream = await prisma.liveStream.findFirst({
                     where: { streamId, endedAt: null }
                 });
                 if (stream) {
                     ioInstance.to(`user:${stream.userId}`).emit("sheet_invite_declined", {
+                        name: displayUsername,
                         username: displayUsername
                     });
                     const adminIds = await getStreamAdminsService({ streamId });
                     for (const adminId of adminIds) {
                         ioInstance.to(`user:${adminId}`).emit("sheet_invite_declined", {
+                            name: displayUsername,
                             username: displayUsername
                         });
                     }
@@ -386,13 +403,14 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 await addUserToSheetService({ streamId, userId, username: displayUsername });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : userId,
+                    name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
                     isMystery: isStealth
@@ -449,10 +467,10 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const realUsername = user ? user.username : "Guest";
+                const realUsername = user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest";
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : realUsername;
                 const stream = await prisma.liveStream.findFirst({
                     where: { streamId, endedAt: null }
@@ -466,27 +484,48 @@ export const setupLiveSockets = (io) => {
                         ioInstance.to(`user:${userId}`).emit("sheet_request_accepted", { streamId });
                         broadcastToStream(streamId, "user_joined_sheet", {
                             userId: isStealth ? null : userId,
+                            name: displayUsername,
                             username: displayUsername,
                             isMuted: false,
                             isMystery: isStealth
                         });
                         console.log(`[Socket] Direct Mic Join: User ${userId} (${displayUsername}) joined sheet automatically in stream ${streamId}`);
                     } else {
-                        // Permission Required Mode: Send REAL name & ID to Host and Admins for approval
-                        ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
-                            userId,
-                            username: realUsername,
-                            isMystery: false
-                        });
-                        const adminIds = await getStreamAdminsService({ streamId });
-                        for (const adminId of adminIds) {
-                            ioInstance.to(`user:${adminId}`).emit("sheet_request_received", {
+                        const isRequesterAdmin = await isStreamAdminService({ streamId, userId, hostUserId: stream.userId });
+
+                        if (isRequesterAdmin) {
+                            // Admin requesting mic seat -> Send notification ONLY to Host
+                            ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
                                 userId,
+                                name: realUsername,
                                 username: realUsername,
+                                isAdminRequest: true,
                                 isMystery: false
                             });
+                            console.log(`[Socket] Room Admin ${userId} (${realUsername}) requested mic seat. Host notified.`);
+                        } else {
+                            // Normal viewer requesting mic seat -> Send to Host and all Admins
+                            ioInstance.to(`user:${stream.userId}`).emit("sheet_request_received", {
+                                userId,
+                                name: realUsername,
+                                username: realUsername,
+                                isAdminRequest: false,
+                                isMystery: false
+                            });
+                            const adminIds = await getStreamAdminsService({ streamId, hostUserId: stream.userId });
+                            for (const adminId of adminIds) {
+                                if (adminId !== userId) {
+                                    ioInstance.to(`user:${adminId}`).emit("sheet_request_received", {
+                                        userId,
+                                        name: realUsername,
+                                        username: realUsername,
+                                        isAdminRequest: false,
+                                        isMystery: false
+                                    });
+                                }
+                            }
+                            console.log(`[Socket] Viewer ${userId} (${realUsername}) requested mic seat. Host and admins notified.`);
                         }
-                        console.log(`[Socket] User ${userId} (${realUsername}) requested to join sheet. Host and admins notified with real name.`);
                     }
                 }
             } catch (err) {
@@ -503,6 +542,20 @@ export const setupLiveSockets = (io) => {
                     return;
                 }
 
+                const stream = await prisma.liveStream.findFirst({
+                    where: { streamId, endedAt: null }
+                });
+                if (!stream) return;
+
+                const isTargetAdmin = await isStreamAdminService({ streamId, userId: targetUserId, hostUserId: stream.userId });
+                const isHost = userId === stream.userId;
+
+                if (isTargetAdmin && !isHost) {
+                    console.log(`[Socket] Blocked Admin ${userId} from accepting mic request of target Admin ${targetUserId}`);
+                    socket.emit("error", { message: "Only the Host can approve a Room Admin's mic request." });
+                    return;
+                }
+
                 const isTargetAudioRestricted = await checkUserRestriction(targetUserId, 'LIVE_AUDIO_MUTE');
                 if (isTargetAudioRestricted) {
                     console.log(`[Socket] Blocked Host from accepting sheet request for user ${targetUserId} due to active LIVE_AUDIO_MUTE restriction`);
@@ -512,14 +565,15 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: targetUserId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? user.username : "Guest");
+                const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 await addUserToSheetService({ streamId, userId: targetUserId, username: displayUsername });
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_request_accepted", { streamId });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : targetUserId,
+                    name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
                     isMystery: isStealth
@@ -576,11 +630,11 @@ export const setupLiveSockets = (io) => {
                     setImmediate(async () => {
                         try {
                             const [operatorUser, targetUser] = await Promise.all([
-                                prisma.user.findUnique({ where: { id: userId }, select: { username: true } }),
-                                prisma.user.findUnique({ where: { id: targetUserId }, select: { username: true } })
+                                prisma.user.findUnique({ where: { id: userId }, select: { username: true, firstName: true, lastName: true } }),
+                                prisma.user.findUnique({ where: { id: targetUserId }, select: { username: true, firstName: true, lastName: true } })
                             ]);
-                            const operatorName = operatorUser?.username || "Host/Admin";
-                            const targetName = targetUser?.username || "User";
+                            const operatorName = operatorUser ? (`${operatorUser.firstName || ""} ${operatorUser.lastName || ""}`.trim() || operatorUser.username || "Host/Admin") : "Host/Admin";
+                            const targetName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
 
                             const muteMsgText = muteState
                                 ? `${targetName} has been muted by ${operatorName}.`
@@ -701,7 +755,7 @@ export const setupLiveSockets = (io) => {
         // Host toggles their camera ON/OFF state
         socket.on("toggle_camera_state", async ({ streamId, isCameraOn }) => {
             try {
-                await handleCameraStateChangeService({ streamId, isCameraOn });
+                await handleCameraStateChangeService({ streamId, isCameraOn, userId });
                 broadcastToStream(streamId, "camera_state_changed", {
                     userId,
                     isCameraOn: Boolean(isCameraOn)
@@ -777,14 +831,19 @@ export const setupLiveSockets = (io) => {
                 });
 
                 // Standard Gift Animation broadcast
-                broadcastToStream(streamId, "gift_sent", result.socketPayload);
                 broadcastToStream(streamId, "GIFT_SENT", result.socketPayload);
+
+                const progressData = (result.socketPayload && result.socketPayload.galleryProgress) || result.galleryProgress || result.galleryProgressUpdate;
+                if (progressData) {
+                    broadcastToStream(streamId, "GIFT_GALLERY_UPDATE", progressData);
+                    broadcastToStream(streamId, "GIFT_GALLERY_PROGRESS_UPDATED", progressData);
+                    console.log(`[Socket Gift Gallery] Broadcast GIFT_GALLERY_UPDATE & GIFT_GALLERY_PROGRESS_UPDATED in stream ${streamId}`);
+                }
 
                 // If Lucky Gift Winner -> Broadcast Lucky Win event
                 if (result.luckyWin) {
-                    broadcastToStream(streamId, "lucky_gift_win", result.luckyWin);
                     broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
-                    console.log(`[Socket Lucky Gift Win] Broadcast lucky_gift_win in stream ${streamId} for winner ${result.luckyWin.senderId}: ${result.luckyWin.rewardCoins} coins`);
+                    console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${result.luckyWin.senderId}: ${result.luckyWin.rewardCoins} coins`);
                 }
             } catch (err) {
                 console.error("[Socket] send_gift failed:", err.message);

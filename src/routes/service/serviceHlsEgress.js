@@ -51,10 +51,9 @@ export const startLocalHlsEgressService = async (roomName) => {
             protocol: 4, // HLS_PROTOCOL
             filenamePrefix: `/var/www/hls/streams/${roomName}/segment`,
             playlistName: "live.m3u8",
-            livePlaylistName: "live.m3u8",
             segmentDuration: 1 // 1-second ultra LL-HLS chunks
         };
-        const egressInfo = await egressClient.startRoomCompositeEgress(roomName, { segments: output });
+        const egressInfo = await egressClient.startRoomCompositeEgress(roomName, output);
         console.log(`[LiveKit LL-HLS Egress] Started local LL-HLS egress ${egressInfo.egressId} for room ${roomName}`);
 
         // 🟢 Auto-cleaner: Runs every 10s to remove .m4s files older than 20 seconds
