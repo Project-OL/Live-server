@@ -1450,6 +1450,12 @@ model Agency {
   currentLevel               String                   @default("D") @map("current_level") @db.VarChar(8)
   currentWindowTotalPoints   BigInt                   @default(0) @map("current_window_total_points")
   lastLevelRecomputedAt      DateTime?                @map("last_level_recomputed_at")
+  /// Admin-assigned base tier; recomputes cannot drop below this until `tierLockUntil`.
+  tierLockLevel              String?                  @map("tier_lock_level") @db.VarChar(8)
+  /// End of admin tier lock (assignment time + rolling-window duration snapshotted at set).
+  tierLockUntil              DateTime?                @map("tier_lock_until")
+  /// Signed bonus: minWindowPoints(lockLevel) − actual window total at assignment.
+  tierLockBonusPoints        BigInt?                  @map("tier_lock_bonus_points")
   lastPayrollAssignedAt      DateTime?                @map("last_payroll_assigned_at")
   createdAt                  DateTime                 @default(now()) @map("created_at")
   updatedAt                  DateTime                 @updatedAt @map("updated_at")
@@ -1558,6 +1564,18 @@ model AgencyCommissionLevel {
   updatedAt       DateTime @updatedAt @map("updated_at")
 
   @@map("agency_commission_levels")
+}
+
+/// Singleton: agency tier/level rolling window (days + hours + minutes).
+model AgencyCommissionConfig {
+  id               Int      @id @default(1)
+  windowDays       Int      @default(30) @map("window_days")
+  windowHours      Int      @default(0) @map("window_hours")
+  windowMinutes    Int      @default(0) @map("window_minutes")
+  updatedAt        DateTime @updatedAt @map("updated_at")
+  updatedByAdminId String?  @map("updated_by_admin_id")
+
+  @@map("agency_commission_config")
 }
 
 model AgencyDailyEarning {

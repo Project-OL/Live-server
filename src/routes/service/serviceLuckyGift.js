@@ -10,8 +10,9 @@ import crypto from 'crypto';
 import { client as redisClient } from '../../config/redis.js';
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType } from '@prisma/client';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
-import { getOrCreateWallet, getFastCoinBalance, getFastPointBalance, bustAgencyCommissionCaches } from '../../modules/videoCall/service.js';
+import { getOrCreateWallet, getFastCoinBalance, getFastPointBalance } from '../../modules/videoCall/service.js';
 import { processLiveStreamAgencyCommission } from './serviceLive.js';
+import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 
@@ -220,7 +221,7 @@ export const sendLuckyGiftService = async ({
                     }
                 );
                 if (commRes?.agencyUserId) {
-                    await bustAgencyCommissionCaches(commRes.agencyUserId);
+                    await afterCommissionCreditCommit(commRes.agencyUserId);
                 }
             }
             await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });

@@ -10,8 +10,8 @@ import {
     getFastCoinBalance,
     getFastPointBalance,
     updateUserLevel,
-    bustAgencyCommissionCaches,
 } from '../../modules/videoCall/service.js';
+import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
@@ -1474,10 +1474,10 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                 }
             }, { maxWait: 10000, timeout: 15000 });
 
+            if (txAgencyUserId) {
+                await afterCommissionCreditCommit(txAgencyUserId);
+            }
             if (redisClient.isOpen) {
-                if (txAgencyUserId) {
-                    await bustAgencyCommissionCaches(txAgencyUserId);
-                }
                 const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
                 if (keys && keys.length > 0) {
                     await redisClient.del(keys);
@@ -1718,33 +1718,9 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
             }
         });
 
-        // Update agency points accumulation and evaluate level progression
-        const updatedAgency = await tx.agency.update({
-            where: { userId: agencyUserId },
-            data: {
-                currentWindowTotalPoints: { increment: commissionPoints },
-                lifetimeHostEarningsPoints: { increment: commissionPoints }
-            }
-        });
-
-        const commissionLevels = await tx.agencyCommissionLevel.findMany({
-            orderBy: { minWindowPoints: 'asc' }
-        });
-
-        let targetLevel = "D";
-        for (const cl of commissionLevels) {
-            if (updatedAgency.currentWindowTotalPoints >= cl.minWindowPoints) {
-                targetLevel = cl.level;
-            }
-        }
-
-        if (updatedAgency.currentLevel !== targetLevel) {
-            await tx.agency.update({
-                where: { userId: agencyUserId },
-                data: { currentLevel: targetLevel }
-            });
-            console.log(`[Agency Level Up] Agency ${agencyUserId} level updated to ${targetLevel}`);
-        }
+        // Tier / window total: do NOT mutate currentLevel here (ol-node parity).
+        // After the gift tx commits, callers run afterCommissionCreditCommit which
+        // recomputes from host earnings + admin tier lock floor.
     }
 
     return { agencyUserId, commissionPoints, agentLedgerEntry };
