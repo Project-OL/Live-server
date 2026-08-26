@@ -16,13 +16,21 @@ import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/a
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
+import { getOrCreateSessionAlias } from './serviceMessage.js';
+
+import {
+    cleanOldHlsSegmentsService,
+    removeHlsStreamDirService,
+    startLocalHlsEgressService,
+    stopLocalHlsEgressService
+} from './serviceHlsEgress.js';
 
 export {
     cleanOldHlsSegmentsService,
     removeHlsStreamDirService,
     startLocalHlsEgressService,
     stopLocalHlsEgressService
-} from './serviceHlsEgress.js';
+};
 
 dotenv.config();
 
@@ -74,7 +82,8 @@ export const closeLivekitRoom = async (roomName) => {
 export const fastGoLiveStreamService = async ({
     userId,
     title,
-    heading
+    heading,
+    isCameraOn = true
 }) => {
     const activeStreamKey = `user:active_stream:${userId}`;
     const suspendedCacheKey = `user:suspended:${userId}`;
@@ -117,7 +126,7 @@ export const fastGoLiveStreamService = async ({
                 await Promise.all([
                     redisClient.del(activeStreamKey),
                     redisClient.del(`stream:info:${activeStreamId}`)
-                ]).catch(() => {});
+                ]).catch(() => { });
             }
             activeStreamId = null;
         } else {
@@ -186,6 +195,10 @@ export const fastGoLiveStreamService = async ({
             redisClient.set(`stream:info:${streamId}`, JSON.stringify(createdStream), "EX", 86400),
             redisClient.set(activeStreamKey, streamId, "EX", 86400)
         ]);
+    }
+
+    if (isCameraOn === false || isCameraOn === "false") {
+        await handleCameraStateChangeService({ streamId, isCameraOn: false, userId });
     }
 
     const token = await generateStreamHostToken(streamId, userId);
@@ -668,22 +681,92 @@ export const getLiveStreamService = async ({
     return stream;
 };
 
-export const isStreamAdminService = async ({ streamId, userId }) => {
-    return await redisClient.sIsMember(`stream:admins:${streamId}`, userId);
-};
-
-export const promoteDemoteAdminService = async ({ streamId, targetUserId }) => {
-    const isAdmin = await redisClient.sIsMember(`stream:admins:${streamId}`, targetUserId);
-    let resultStatus = false;
-    if (isAdmin) {
-        await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
-        resultStatus = false;
-    } else {
-        await redisClient.sAdd(`stream:admins:${streamId}`, targetUserId);
-        resultStatus = true;
+export const isStreamAdminService = async ({ streamId, userId, hostUserId = null }) => {
+    if (!userId) return false;
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
     }
 
     if (redisClient.isOpen) {
+        if (streamId) {
+            const isStreamAdmin = await redisClient.sIsMember(`stream:admins:${streamId}`, userId);
+            if (isStreamAdmin) return true;
+        }
+        if (finalHostUserId) {
+            const isHostAdmin = await redisClient.sIsMember(`host:admins:${finalHostUserId}`, userId);
+            if (isHostAdmin) return true;
+        }
+    }
+
+    if (finalHostUserId) {
+        try {
+            const dbAdmin = await prisma.liveStreamAdmin.findUnique({
+                where: {
+                    hostUserId_adminUserId: {
+                        hostUserId: finalHostUserId,
+                        adminUserId: userId
+                    }
+                }
+            });
+            if (dbAdmin) {
+                if (redisClient.isOpen) {
+                    await redisClient.sAdd(`host:admins:${finalHostUserId}`, userId);
+                }
+                return true;
+            }
+        } catch (dbErr) { }
+    }
+    return false;
+};
+
+export const promoteDemoteAdminService = async ({ streamId, hostUserId = null, targetUserId }) => {
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
+    }
+
+    const isCurrentlyAdmin = await isStreamAdminService({ streamId, userId: targetUserId, hostUserId: finalHostUserId });
+    let resultStatus = false;
+
+    if (isCurrentlyAdmin) {
+        if (redisClient.isOpen) {
+            if (streamId) await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
+            if (finalHostUserId) await redisClient.sRem(`host:admins:${finalHostUserId}`, targetUserId);
+        }
+        if (finalHostUserId) {
+            try {
+                await prisma.liveStreamAdmin.deleteMany({
+                    where: { hostUserId: finalHostUserId, adminUserId: targetUserId }
+                });
+            } catch (err) { }
+        }
+        resultStatus = false;
+    } else {
+        if (redisClient.isOpen) {
+            if (streamId) await redisClient.sAdd(`stream:admins:${streamId}`, targetUserId);
+            if (finalHostUserId) await redisClient.sAdd(`host:admins:${finalHostUserId}`, targetUserId);
+        }
+        if (finalHostUserId) {
+            try {
+                await prisma.liveStreamAdmin.upsert({
+                    where: {
+                        hostUserId_adminUserId: {
+                            hostUserId: finalHostUserId,
+                            adminUserId: targetUserId
+                        }
+                    },
+                    create: { hostUserId: finalHostUserId, adminUserId: targetUserId },
+                    update: {}
+                });
+            } catch (err) { }
+        }
+        resultStatus = true;
+    }
+
+    if (redisClient.isOpen && streamId) {
         try {
             const keys = await redisClient.keys(`stream:viewers_sorted:${streamId}:*`);
             if (keys && keys.length > 0) {
@@ -697,11 +780,42 @@ export const promoteDemoteAdminService = async ({ streamId, targetUserId }) => {
     return resultStatus;
 };
 
-export const getStreamAdminsService = async ({ streamId }) => {
-    return await redisClient.sMembers(`stream:admins:${streamId}`);
+export const getStreamAdminsService = async ({ streamId, hostUserId = null }) => {
+    let finalHostUserId = hostUserId;
+    if (!finalHostUserId && streamId) {
+        const stream = await getLiveStreamService({ id: streamId });
+        if (stream) finalHostUserId = stream.userId;
+    }
+
+    const adminSet = new Set();
+    if (redisClient.isOpen) {
+        if (streamId) {
+            const streamAdmins = await redisClient.sMembers(`stream:admins:${streamId}`);
+            streamAdmins.forEach(id => adminSet.add(id));
+        }
+        if (finalHostUserId) {
+            const hostAdmins = await redisClient.sMembers(`host:admins:${finalHostUserId}`);
+            hostAdmins.forEach(id => adminSet.add(id));
+        }
+    }
+
+    if (finalHostUserId) {
+        try {
+            const dbAdmins = await prisma.liveStreamAdmin.findMany({
+                where: { hostUserId: finalHostUserId },
+                select: { adminUserId: true }
+            });
+            dbAdmins.forEach(a => adminSet.add(a.adminUserId));
+            if (redisClient.isOpen && dbAdmins.length > 0) {
+                await redisClient.sAdd(`host:admins:${finalHostUserId}`, dbAdmins.map(a => a.adminUserId));
+            }
+        } catch (err) { }
+    }
+
+    return Array.from(adminSet);
 };
 
-export const kickUserService = async ({ streamId, targetUserId }) => {
+export const kickUserService = async ({ streamId, targetUserId, hostUserId = null }) => {
     await redisClient.set(`stream:kicked:${streamId}:${targetUserId}`, "1", { EX: 600 });
     await redisClient.sRem(`stream:active:${streamId}`, targetUserId);
     await redisClient.sRem(`stream:admins:${streamId}`, targetUserId);
@@ -878,18 +992,18 @@ export const handleCameraStateChangeService = async ({ streamId, isCameraOn }) =
 };
 
 const ensureActiveGalleryCached = async (year, month) => {
-    const galleryLoadedKey = `gift_gallery:gift_ids:loaded:${year}:${month}`;
-    const giftIdsKey = `gift_gallery:gift_ids:${year}:${month}`;
+    const galleryLoadedKey = `gift_gallery:loaded:${year}:${month}`;
     const galleryCacheKey = `gift_gallery:active:${year}:${month}`;
+    const giftIdsKey = `gift_gallery:gift_ids:${year}:${month}`;
 
     const isLoaded = await redisClient.exists(galleryLoadedKey);
-    if (!isLoaded) {
-        const gallery = await prisma.giftGallery.findUnique({
+    const hasGiftIds = await redisClient.exists(giftIdsKey);
+
+    if (!isLoaded || !hasGiftIds) {
+        const gallery = await prisma.giftGallery.findFirst({
             where: {
-                year_month: {
-                    year: year,
-                    month: month
-                }
+                year: year,
+                month: month
             },
             include: {
                 sections: {
@@ -924,6 +1038,7 @@ const ensureActiveGalleryCached = async (year, month) => {
 
         if (galleryItems.length > 0) {
             const giftIds = galleryItems.map(item => item.giftId);
+            await redisClient.del(giftIdsKey);
             await redisClient.sAdd(giftIdsKey, giftIds);
             await redisClient.expire(giftIdsKey, 86400); // 1 day
             await redisClient.set(galleryCacheKey, JSON.stringify(galleryItems), 'EX', 86400);
@@ -960,6 +1075,74 @@ const ensureHostProgressCached = async (hostId, year, month) => {
         }
         await redisClient.set(progressLoadedKey, "1", 'EX', 604800);
     }
+};
+
+const processGiftGalleryProgress = async (giftId, receiverId, senderId) => {
+    try {
+        const currentDate = new Date();
+        const currentYear = currentDate.getFullYear();
+        const currentMonth = currentDate.getMonth() + 1;
+
+        await ensureActiveGalleryCached(currentYear, currentMonth);
+        await ensureHostProgressCached(receiverId, currentYear, currentMonth);
+
+        if (redisClient.isOpen) {
+            const giftIdsKey = `gift_gallery:gift_ids:${currentYear}:${currentMonth}`;
+            const progressCacheKey = `host_gallery_progress:${receiverId}:${currentYear}:${currentMonth}`;
+
+            const isGalleryGift = await redisClient.sIsMember(giftIdsKey, giftId);
+            if (isGalleryGift) {
+                await redisClient.sAdd(progressCacheKey, giftId);
+                await redisClient.expire(progressCacheKey, 604800);
+
+                // DB Persistence for GiftGalleryProgress
+                try {
+                    const gallery = await prisma.giftGallery.findFirst({
+                        where: { year: currentYear, month: currentMonth },
+                        include: {
+                            sections: {
+                                where: { is_active: true },
+                                include: {
+                                    gifts: {
+                                        where: { giftId: giftId }
+                                    }
+                                }
+                            }
+                        }
+                    });
+
+                    if (gallery) {
+                        for (const sec of gallery.sections) {
+                            for (const item of sec.gifts) {
+                                await prisma.giftGalleryProgress.upsert({
+                                    where: {
+                                        hostUserId_giftGallerySectionItemId: {
+                                            hostUserId: receiverId,
+                                            giftGallerySectionItemId: item.id
+                                        }
+                                    },
+                                    create: {
+                                        galleryId: gallery.id,
+                                        hostUserId: receiverId,
+                                        giftId: giftId,
+                                        giftGallerySectionItemId: item.id,
+                                        firstGifterId: senderId
+                                    },
+                                    update: {}
+                                }).catch(() => { });
+                            }
+                        }
+                    }
+                } catch (dbErr) {
+                    console.error("[GiftGallery DB] Error upserting progress:", dbErr.message);
+                }
+            }
+            return await getGiftGalleryTargetsService(receiverId);
+        }
+    } catch (gErr) {
+        console.error("[GiftGallery] Error computing gallery progress:", gErr.message);
+    }
+    return null;
 };
 
 export const getGiftGalleryTargetsService = async (hostId) => {
@@ -1015,19 +1198,22 @@ export const getGiftInfoService = async ({ giftId }) => {
 export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targetUserId, count = 1 }) => {
     await checkCoinsFrozenFast(senderId);
 
-    const [stream, gift, senderPrivacy, targetUser] = await Promise.all([
-        getLiveStreamService({ id: streamDbId }),
-        getGiftInfoService({ giftId }),
-        getUserPrivacyService({ userId: senderId }),
-        targetUserId ? getUserPrivacyService({ userId: targetUserId }) : Promise.resolve(null)
-    ]);
-
+    const stream = await getLiveStreamService({ id: streamDbId });
     if (!stream) {
         throw new Error("Live stream not found.");
     }
     if (stream.endedAt !== null) {
         throw new Error("Live stream has already ended.");
     }
+
+    const receiverUserId = targetUserId || stream.userId;
+
+    const [gift, senderPrivacy, receiverPrivacy] = await Promise.all([
+        getGiftInfoService({ giftId }),
+        getUserPrivacyService({ userId: senderId }),
+        getUserPrivacyService({ userId: receiverUserId })
+    ]);
+
     if (!gift || !gift.isActive) {
         throw new Error("Gift not found or is inactive.");
     }
@@ -1035,14 +1221,15 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const giftCount = Math.max(1, Math.min(1000, Number(count || 1)));
     const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
     const pointsAwarded = (coinCost * 60n) / 100n;
-    const receiverId = targetUserId || stream.userId;
+    const receiverId = receiverUserId;
     const isStealth = senderPrivacy.isStealth;
 
     let stealthAlias = null;
     if (isStealth) {
         stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
     }
-    const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.username || "User");
+    const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
+    const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
     if (gift.isLucky || gift.effectLuckyGift) {
         const luckyResult = await sendLuckyGiftService({
@@ -1055,9 +1242,16 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         });
         luckyResult.socketPayload.senderName = senderName;
         luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
-        luckyResult.socketPayload.receiverName = targetUser ? (targetUser.username || "User") : "Host";
+        luckyResult.socketPayload.receiverName = receiverName;
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
+
+        const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
+        if (galleryProgressUpdate) {
+            luckyResult.galleryProgress = galleryProgressUpdate;
+            luckyResult.socketPayload.galleryProgress = galleryProgressUpdate;
+        }
+
         return luckyResult;
     }
 
@@ -1101,9 +1295,12 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     if (redisClient.isOpen) {
         await redisClient.set(receiverPointsKey, balanceAfterPoints.toString(), "EX", 3600);
         // Level XP Cache Invalidation for sender wealth level & receiver stream level
-        redisClient.del(`level:wealth:${senderId}`).catch(() => {});
-        redisClient.del(`level:stream:${receiverId}`).catch(() => {});
+        redisClient.del(`level:wealth:${senderId}`).catch(() => { });
+        redisClient.del(`level:stream:${receiverId}`).catch(() => { });
     }
+
+    // Synchronous Gift Gallery Progress check for Receiver (Host)
+    const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
 
     const socketPayload = {
         success: true,
@@ -1114,11 +1311,11 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         isMystery: isStealth,
         senderRemainingCoins: Number(balanceAfterCoins),
         receiverId,
-        receiverName: targetUser ? (targetUser.username || "User") : "Host",
+        receiverName,
         pointsAwarded: Number(pointsAwarded),
         receiverTotalPoints: Number(balanceAfterPoints),
         targetUserId: targetUserId || null,
-        targetUserName: targetUser ? (targetUser.username || "User") : null,
+        targetUserName: receiverName,
         count: giftCount,
         totalCost: Number(coinCost),
         gift: {
@@ -1129,7 +1326,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             coinCost: Number(gift.coinCost)
         },
         wealthLevel: 1,
-        isLevelUp: false
+        isLevelUp: false,
+        galleryProgress: galleryProgressUpdate,
+        galleryProgressUpdate: galleryProgressUpdate
     };
 
     setImmediate(async () => {
@@ -1164,45 +1363,10 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
                 isLevelUp = true;
             }
 
-            socketPayload.wealthLevel = finalLevel;
+            socketPayload.wealthLevel = isStealth ? 0 : finalLevel;
             socketPayload.isLevelUp = isLevelUp;
 
-            let galleryProgressUpdate = null;
-            const currentDate = new Date();
-            const currentYear = currentDate.getFullYear();
-            const currentMonth = currentDate.getMonth() + 1;
 
-            await ensureActiveGalleryCached(currentYear, currentMonth);
-            await ensureHostProgressCached(receiverId, currentYear, currentMonth);
-
-            if (redisClient.isOpen) {
-                const giftIdsKey = `gift_gallery:gift_ids:${currentYear}:${currentMonth}`;
-                const galleryCacheKey = `gift_gallery:active:${currentYear}:${currentMonth}`;
-                const progressCacheKey = `host_gallery_progress:${receiverId}:${currentYear}:${currentMonth}`;
-
-                const isGalleryGift = await redisClient.sIsMember(giftIdsKey, gift.id);
-                if (isGalleryGift) {
-                    const alreadyCollected = await redisClient.sIsMember(progressCacheKey, gift.id);
-                    if (!alreadyCollected) {
-                        await redisClient.sAdd(progressCacheKey, gift.id);
-                        await redisClient.expire(progressCacheKey, 604800);
-
-                        const galleryItemsStr = await redisClient.get(galleryCacheKey);
-                        const galleryItems = galleryItemsStr ? JSON.parse(galleryItemsStr) : [];
-                        const totalTarget = galleryItems.length;
-
-                        const currentProgressCount = await redisClient.sCard(progressCacheKey);
-
-                        galleryProgressUpdate = {
-                            hostId: receiverId,
-                            giftId: gift.id,
-                            currentProgress: currentProgressCount,
-                            totalTarget,
-                            isCompleted: Boolean(totalTarget > 0 && currentProgressCount >= totalTarget)
-                        };
-                    }
-                }
-            }
 
             const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
             const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
@@ -1327,7 +1491,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 
     return {
         socketPayload,
-        galleryProgressUpdate: typeof galleryProgressUpdate !== 'undefined' ? galleryProgressUpdate : null,
+        galleryProgress: galleryProgressUpdate,
+        galleryProgressUpdate: galleryProgressUpdate,
         newBalance: Number(balanceAfterCoins),
         currentLevel: 1,
         isLevelUp: false
@@ -1674,9 +1839,9 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         newBalance: Number(balanceAfterCoins),
         socketPayload: {
             senderId,
-            senderName: senderUser.username || `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || "User",
+            senderName: `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || senderUser.username || "User",
             senderProfilePic: senderUser.avatarUrl || null,
-            wealthLevel: userLevel?.currentLevel || 1,
+            wealthLevel: Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : (userLevel?.currentLevel || 1),
             message,
             streamId: streamId || null,
             timestamp: new Date().toISOString()
@@ -1846,6 +2011,21 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                     data: { suspended_until: suspendedUntil }
                 });
 
+                if (redisClient.isOpen) {
+                    const suspendedCacheKey = `user:suspended:${stream.userId}`;
+                    const banCacheKey = `user:restriction:${stream.userId}:LIVE_STREAM_START_BAN`;
+                    const ttlSeconds = Math.ceil(banDurationHours * 3600);
+
+                    await Promise.all([
+                        redisClient.set(suspendedCacheKey, "true", "EX", ttlSeconds),
+                        redisClient.set(banCacheKey, JSON.stringify({
+                            restrictionType: 'LIVE_STREAM_START_BAN',
+                            reason: 'AI Moderation Nudity Violation',
+                            restrictedUntil: suspendedUntil.toISOString()
+                        }), "EX", ttlSeconds)
+                    ]).catch(e => console.error("[Stream Moderation Cache] Redis set error:", e.message));
+                }
+
                 await prisma.hostStreamBan.create({
                     data: {
                         userId: stream.userId,
@@ -1855,6 +2035,17 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                         suspendedUntil
                     }
                 });
+
+                await prisma.userRestriction.create({
+                    data: {
+                        userId: stream.userId,
+                        type: 'LIVE_STREAM_START_BAN',
+                        reason: `AI Moderation Nudity Violation (Ban #${banNumber})`,
+                        restrictedUntil: suspendedUntil,
+                        createdByAdminId: '00000000-0000-0000-0000-000000000000'
+                    }
+                }).catch(e => console.error("[Stream Moderation DB] Restriction insert error:", e.message));
+
                 console.log(`[Stream Moderation] Successfully applied ${banDurationHours} hour ban to user ${stream.userId} (Ban #${banNumber})`);
             } catch (banErr) {
                 console.error("[Stream Moderation] Failed to calculate/apply automatic ban:", banErr);
@@ -2206,6 +2397,8 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
                 id: true,
                 publicId: true,
                 username: true,
+                firstName: true,
+                lastName: true,
                 avatarUrl: true,
                 gender: true,
                 dateOfBirth: true,
@@ -2259,9 +2452,12 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
             if (age < 0) age = null;
         }
 
+        const name = `${u.firstName || ""} ${u.lastName || ""}`.trim() || u.username || "User";
+
         return {
             id: u.id,
             publicId: u.publicId ? u.publicId.toString() : null,
+            name,
             username: u.username,
             avatarUrl: u.avatarUrl || null,
             gender: u.gender || null,
@@ -2314,6 +2510,8 @@ export const getHostProfileService = async ({ hostUserId }) => {
                 id: true,
                 publicId: true,
                 username: true,
+                firstName: true,
+                lastName: true,
                 avatarUrl: true,
                 userLevel: {
                     select: {
@@ -2330,13 +2528,15 @@ export const getHostProfileService = async ({ hostUserId }) => {
     ]);
 
     const hostLevelMap = new Map(hostWalletLevels.map(w => [w.levelType, w.currentLevel]));
+    const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
     const host = hostUser ? {
         id: hostUser.id,
         publicId: hostUser.publicId ? hostUser.publicId.toString() : null,
+        name: hostName,
         username: hostUser.username,
         avatarUrl: hostUser.avatarUrl || null,
         wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? hostUser.userLevel?.wealthLevel ?? 0,
-        livestreamLevel: hostLevelMap.get(LevelType.LIVESTREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
+        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
     } : null;
 
     if (host && redisClient.isOpen) {
@@ -2361,13 +2561,19 @@ export const getUserPrivacyService = async ({ userId }) => {
         where: { id: userId },
         select: {
             username: true,
+            firstName: true,
+            lastName: true,
             avatarUrl: true,
             privacyMysteryLive: true,
             vipSubscriptionActive: true
         }
     });
 
+    const nameStr = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+    const displayName = nameStr || user?.username || "Guest";
+
     const result = {
+        name: displayName,
         username: user?.username || "Guest",
         avatarUrl: user?.avatarUrl || null,
         isStealth: Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive)
@@ -2400,7 +2606,7 @@ export const cleanupStaleLiveStreamRedisKeys = async () => {
                     await Promise.all([
                         redisClient.del(key),
                         redisClient.del(`stream:info:${streamId}`)
-                    ]).catch(() => {});
+                    ]).catch(() => { });
                     cleanedCount++;
                 }
             }
@@ -2410,4 +2616,235 @@ export const cleanupStaleLiveStreamRedisKeys = async () => {
         console.error("[Stale Key Cleaner Error]:", err.message);
         return { cleanedCount: 0, error: err.message };
     }
+};
+
+/**
+ * Helper to compute 11:30 PM (23:30) IST boundaries for today, thisWeek, and thisMonth.
+ * IST is UTC + 5:30.
+ * 23:30 IST corresponds to 18:00 UTC of the same calendar day.
+ */
+export const calculate1130DateRanges = (nowDate = new Date()) => {
+    const istOffsetMs = 5.5 * 3600 * 1000;
+    const istDate = new Date(nowDate.getTime() + istOffsetMs);
+
+    const y = istDate.getUTCFullYear();
+    const m = istDate.getUTCMonth();
+    const d = istDate.getUTCDate();
+
+    // 18:00 UTC on current calendar day corresponds to 23:30 IST on current day
+    const today2330Utc = new Date(Date.UTC(y, m, d, 18, 0, 0, 0));
+    let todayStartUtc, todayEndUtc;
+
+    if (nowDate >= today2330Utc) {
+        todayStartUtc = today2330Utc;
+        todayEndUtc = new Date(Date.UTC(y, m, d + 1, 18, 0, 0, 0));
+    } else {
+        todayStartUtc = new Date(Date.UTC(y, m, d - 1, 18, 0, 0, 0));
+        todayEndUtc = today2330Utc;
+    }
+
+    // Determine "This Week" (Sunday 23:30 IST to Sunday 23:30 IST)
+    const dayOfWeek = istDate.getUTCDay(); // 0 = Sunday, 1 = Monday ... 6 = Saturday
+    let daysSinceSunday = dayOfWeek;
+    if (dayOfWeek === 0 && nowDate < today2330Utc) {
+        daysSinceSunday = 7;
+    }
+    const sundayStartUtc = new Date(todayStartUtc.getTime() - (daysSinceSunday * 86400 * 1000));
+    const weekStartUtc = new Date(Date.UTC(sundayStartUtc.getUTCFullYear(), sundayStartUtc.getUTCMonth(), sundayStartUtc.getUTCDate(), 18, 0, 0, 0));
+    const weekEndUtc = new Date(weekStartUtc.getTime() + 7 * 86400 * 1000);
+
+    // Determine "This Month" (Calendar month start to end anchored at 18:00 UTC / 23:30 IST)
+    const monthStartUtc = new Date(Date.UTC(y, m, 1, 18, 0, 0, 0));
+    const monthEndUtc = new Date(Date.UTC(y, m + 1, 1, 18, 0, 0, 0));
+
+    return {
+        today: { start: todayStartUtc, end: todayEndUtc },
+        thisWeek: { start: weekStartUtc, end: weekEndUtc },
+        thisMonth: { start: monthStartUtc, end: monthEndUtc }
+    };
+};
+
+export const formatDurationHHMMSS = (totalSeconds = 0) => {
+    const secs = Math.max(0, parseInt(totalSeconds, 10) || 0);
+    const hours = Math.floor(secs / 3600);
+    const minutes = Math.floor((secs % 3600) / 60);
+    const remainingSecs = secs % 60;
+    return [hours, minutes, remainingSecs]
+        .map(v => String(v).padStart(2, '0'))
+        .join(':');
+};
+
+export const getHostStatsService = async ({ hostUserId, period = "today" }) => {
+    const hostUser = await prisma.user.findUnique({
+        where: { id: hostUserId },
+        select: { id: true, publicId: true, username: true }
+    });
+
+    if (!hostUser) {
+        throw new Error("Host user not found.");
+    }
+
+    const hostPublicId = hostUser.publicId ? String(hostUser.publicId) : hostUser.id;
+    const ranges = calculate1130DateRanges();
+
+    const getMetricsForRange = async (startDate, endDate) => {
+        const streams = await prisma.liveStream.findMany({
+            where: {
+                userId: hostUserId,
+                endedAt: {
+                    gte: startDate,
+                    lt: endDate
+                }
+            },
+            select: { id: true }
+        });
+
+        const streamIds = streams.map(s => s.id);
+        let liveHoursSeconds = 0;
+
+        if (streamIds.length > 0) {
+            // Prefer effective_duration_seconds; fall back to wall-clock when still 0
+            // (legacy rows / failed write left the column at default).
+            const sumRes = await prisma.$queryRaw`
+                SELECT COALESCE(SUM(
+                  CASE
+                    WHEN effective_duration_seconds > 0 THEN effective_duration_seconds
+                    WHEN started_at IS NOT NULL AND ended_at IS NOT NULL
+                      THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (ended_at - started_at)))::int)
+                    ELSE 0
+                  END
+                ), 0)::BIGINT AS total
+                FROM live_streams
+                WHERE id = ANY(${streamIds}::uuid[])
+            `;
+            liveHoursSeconds = Number(sumRes?.[0]?.total || 0);
+        }
+
+        const pointsRes = await prisma.$queryRaw`
+            SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS total_points
+            FROM point_ledger_entries ple
+            INNER JOIN wallets w ON w.id = ple.wallet_id
+            WHERE w.user_id = ${hostUserId}::uuid
+              AND w.currency_type = 'POINT'
+              AND ple.direction = 'CREDIT'
+              AND ple.created_at >= ${startDate}
+              AND ple.created_at < ${endDate}
+        `;
+        const wonPoints = pointsRes && pointsRes[0] ? String(pointsRes[0].total_points) : "0";
+
+        const newFollowers = await prisma.userFollow.count({
+            where: {
+                followingId: hostUserId,
+                createdAt: {
+                    gte: startDate,
+                    lt: endDate
+                }
+            }
+        });
+
+        return {
+            hostPublicId,
+            liveHoursSeconds,
+            liveHoursFormatted: formatDurationHHMMSS(liveHoursSeconds),
+            wonPoints,
+            newFollowers,
+            pkWon: 0
+        };
+    };
+
+    const fetchLastLiveStats = async () => {
+        let lastLive = {
+            streamId: null,
+            liveHoursSeconds: 0,
+            liveHoursFormatted: "00:00:00",
+            wonPoints: "0",
+            newFollowers: 0,
+            pkWon: 0,
+            endedAt: null
+        };
+
+        const mostRecentEndedStream = await prisma.liveStream.findFirst({
+            where: {
+                userId: hostUserId,
+                isLive: false,
+                endedAt: {
+                    gte: ranges.today.start,
+                    lt: ranges.today.end
+                }
+            },
+            orderBy: { endedAt: 'desc' }
+        });
+
+        if (mostRecentEndedStream) {
+            const streamId = mostRecentEndedStream.streamId || mostRecentEndedStream.id;
+            const streamStart = mostRecentEndedStream.startedAt || mostRecentEndedStream.createdAt;
+            const streamEnd = mostRecentEndedStream.endedAt;
+            const streamSeconds = Number(mostRecentEndedStream.effectiveDurationSeconds || mostRecentEndedStream.effective_duration_seconds || 0);
+
+            const streamPointsRes = await prisma.$queryRaw`
+                SELECT COALESCE(SUM(ple.amount), 0)::BIGINT AS total_points
+                FROM point_ledger_entries ple
+                INNER JOIN wallets w ON w.id = ple.wallet_id
+                WHERE w.user_id = ${hostUserId}::uuid
+                  AND w.currency_type = 'POINT'
+                  AND ple.direction = 'CREDIT'
+                  AND ple.created_at >= ${streamStart}
+                  AND ple.created_at <= ${streamEnd}
+            `;
+            const streamWonPoints = streamPointsRes && streamPointsRes[0] ? String(streamPointsRes[0].total_points) : "0";
+
+            const streamFollowers = await prisma.userFollow.count({
+                where: {
+                    followingId: hostUserId,
+                    createdAt: {
+                        gte: streamStart,
+                        lte: streamEnd
+                    }
+                }
+            });
+
+            lastLive = {
+                streamId,
+                liveHoursSeconds: streamSeconds,
+                liveHoursFormatted: formatDurationHHMMSS(streamSeconds),
+                wonPoints: streamWonPoints,
+                newFollowers: streamFollowers,
+                pkWon: 0,
+                endedAt: streamEnd
+            };
+        }
+        return lastLive;
+    };
+
+    const normPeriod = String(period || 'today').toLowerCase().trim();
+
+    if (normPeriod === 'week' || normPeriod === 'thisweek' || normPeriod === 'this_week') {
+        const thisWeekData = await getMetricsForRange(ranges.thisWeek.start, ranges.thisWeek.end);
+        return { thisWeekData };
+    }
+
+    if (normPeriod === 'month' || normPeriod === 'thismonth' || normPeriod === 'this_month') {
+        const thisMonthData = await getMetricsForRange(ranges.thisMonth.start, ranges.thisMonth.end);
+        return { thisMonthData };
+    }
+
+    if (normPeriod === 'all') {
+        const [todayData, thisWeekData, thisMonthData, lastLive] = await Promise.all([
+            getMetricsForRange(ranges.today.start, ranges.today.end),
+            getMetricsForRange(ranges.thisWeek.start, ranges.thisWeek.end),
+            getMetricsForRange(ranges.thisMonth.start, ranges.thisMonth.end),
+            fetchLastLiveStats()
+        ]);
+        todayData.lastLive = lastLive;
+        return { todayData, thisWeekData, thisMonthData };
+    }
+
+    // Default: 'today' period
+    const [todayData, lastLive] = await Promise.all([
+        getMetricsForRange(ranges.today.start, ranges.today.end),
+        fetchLastLiveStats()
+    ]);
+    todayData.lastLive = lastLive;
+
+    return { todayData };
 };

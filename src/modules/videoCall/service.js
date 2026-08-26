@@ -14,6 +14,16 @@ export const heartbeatCache = new Map();
 
 export const scheduledDisconnects = new Map();
 
+export const activeReturnTimeouts = new Map();
+
+export const clearHostReturnTimeout = (hostId) => {
+    if (activeReturnTimeouts.has(hostId)) {
+        console.log(`[Return Grace Timer] Clearing stale background return timeout for host ${hostId}`);
+        clearTimeout(activeReturnTimeouts.get(hostId));
+        activeReturnTimeouts.delete(hostId);
+    }
+};
+
 export const getOrCreateWallet = async (userId, currencyType, tx = prisma) => {
     let wallet = await tx.wallet.findUnique({
         where: { userId_currencyType: { userId, currencyType } }
@@ -552,7 +562,14 @@ export const acceptCall = async (sessionId, receiverId) => {
         // 1. Pause live stream & auto-mute mic seat speakers immediately if host is live streaming
         try {
             const activeStream = await prisma.liveStream.findFirst({
-                where: { userId: session.creatorId, isLive: true, endedAt: null }
+                where: {
+                    OR: [
+                        { userId: session.creatorId },
+                        { userId: session.callerId }
+                    ],
+                    isLive: true,
+                    endedAt: null
+                }
             });
             if (activeStream) {
                 const streamId = activeStream.streamId || activeStream.id;
@@ -670,30 +687,54 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
         try {
             const streamId = await redisClient.get(`video_call:stream_pause:${sessionId}`);
             if (streamId) {
-                const hostId = session.creatorId;
-                const returnTimerKey = `host:return_timer:${streamId}:${hostId}`;
+                let hostId = session.creatorId;
+                const activeStreamByCreator = await prisma.liveStream.findFirst({
+                    where: { userId: session.creatorId, isLive: true }
+                });
+                if (!activeStreamByCreator && session.callerId) {
+                    const activeStreamByCaller = await prisma.liveStream.findFirst({
+                        where: { userId: session.callerId, isLive: true }
+                    });
+                    if (activeStreamByCaller) {
+                        hostId = session.callerId;
+                    }
+                }
+
+                const returnTimerKey1 = `host:return_timer:${streamId}:${hostId}`;
+                const returnTimerKey2 = `host:return_timer:${hostId}`;
                 
                 // Set 120-second (2 minute) return grace timer in Redis
                 if (redisClient.isOpen) {
-                    await redisClient.set(returnTimerKey, "pending", "EX", 120).catch(() => {});
+                    await Promise.all([
+                        redisClient.set(returnTimerKey1, "pending", "EX", 120),
+                        redisClient.set(returnTimerKey2, "pending", "EX", 120)
+                    ]).catch(() => {});
                 }
 
                 console.log(`[VideoCall End] Host ${hostId} has 2 minutes (120s) to return to live stream ${streamId} from Home screen.`);
 
+                // Clear any previous stale 2-minute return timeout for this host
+                clearHostReturnTimeout(hostId);
+
                 // 2-minute (120,000 ms) background worker
-                setTimeout(async () => {
+                const returnHandle = setTimeout(async () => {
+                    activeReturnTimeouts.delete(hostId);
                     try {
                         let isStillPending = true;
                         if (redisClient.isOpen) {
-                            const val = await redisClient.get(returnTimerKey);
-                            isStillPending = (val === "pending");
+                            const val1 = await redisClient.get(returnTimerKey1);
+                            const val2 = await redisClient.get(returnTimerKey2);
+                            isStillPending = (val1 === "pending" || val2 === "pending");
                         }
 
                         if (isStillPending) {
                             console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} did NOT return to live stream ${streamId} within 2 minutes. Auto-ending live stream...`);
                             if (redisClient.isOpen) {
-                                await redisClient.del(returnTimerKey).catch(() => {});
-                                await redisClient.del(`video_call:stream_pause:${sessionId}`).catch(() => {});
+                                await Promise.all([
+                                    redisClient.del(returnTimerKey1),
+                                    redisClient.del(returnTimerKey2),
+                                    redisClient.del(`video_call:stream_pause:${sessionId}`)
+                                ]).catch(() => {});
                             }
 
                             const activeStream = await prisma.liveStream.findFirst({
@@ -719,6 +760,8 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                         console.error("[VideoCall 2-Min Return Timeout Error]:", timeoutErr.message);
                     }
                 }, 120000);
+
+                activeReturnTimeouts.set(hostId, returnHandle);
             }
         } catch (resumeErr) {
             console.error("[VideoCall] Live Stream 2-min return setup error:", resumeErr);

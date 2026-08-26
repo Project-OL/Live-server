@@ -614,7 +614,7 @@
         const SERVER_URL = isLocal ? "http://localhost:5000" : window.location.origin;
         const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
         const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
-        const LIVEKIT_URL = "wss://ofo-rjyi95u0.livekit.cloud";
+        const LIVEKIT_URL = "wss://stream.offoolive.com";
 
         let socket = null;
         let room = null;
@@ -1142,6 +1142,8 @@
                 if (videoTracks.length > 0 && videoTracks[0].track) {
                     E.vidLocal.classList.remove('hidden');
                     videoTracks[0].track.attach(E.vidLocal);
+                    E.vidLocal.muted = true;
+                    E.vidLocal.play().catch(e => console.log(e));
                 }
                 appendSystemAlert("🔌 Camera Feed Published.");
             } catch (err) {

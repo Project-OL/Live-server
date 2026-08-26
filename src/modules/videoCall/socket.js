@@ -13,7 +13,7 @@ export const setupVideoCallSockets = (io) => {
 
         socket.on("SEND_MESSAGE", async ({ receiverId, text, wealthLevel }) => {
             if (!userId || !receiverId) return;
-            
+
             const bannedWords = await getBannedWords();
             const filteredText = censorTextWithFuzzyMatch(text, bannedWords);
 

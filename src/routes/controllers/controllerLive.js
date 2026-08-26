@@ -1,4 +1,5 @@
 import express from 'express';
+import fs from 'fs';
 import auth from '../../middlewares/authMiddleware.js';
 import prisma from '../../config/prisma.js';
 import { createLiveSchema, sendMessageSchema } from '../../validations/validationLive.js';
@@ -32,7 +33,8 @@ import {
     updateUserEffectSettingsService,
     getFansRankingService,
     sortRoomViewersService,
-    startLocalHlsEgressService
+    startLocalHlsEgressService,
+    getHostStatsService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
@@ -124,7 +126,8 @@ const fastGoLiveStream = async (req, res) => {
         const result = await fastGoLiveStreamService({
             userId: req.userId,
             title: value.title,
-            heading: value.heading
+            heading: value.heading,
+            isCameraOn: req.body.isCameraOn
         });
 
         return res.status(201).json({
@@ -227,25 +230,23 @@ const joinLiveStream = async (req, res) => {
         let mode = "WEBRTC";
         let hlsUrl = null;
 
-        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC, Viewers 51+ get BunnyCDN HLS
+        // 🟢 Pre-trigger Egress when 47th Viewer joins so HLS segments are 100% pre-generated for 51st Viewer
+        if (finalViewerCount >= 47 && redisClient.isOpen) {
+            const egressKey = `stream:egress:${stream.streamId}`;
+            redisClient.get(egressKey).then(async (activeEgressId) => {
+                if (!activeEgressId) {
+                    const newEgressId = await startLocalHlsEgressService(stream.streamId);
+                    if (newEgressId) {
+                        await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                    }
+                }
+            }).catch(err => console.error("Egress pre-warm error:", err.message));
+        }
+
+        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC (0.2s ultra low latency), Viewers 51+ get BunnyCDN HLS
         if (finalViewerCount > 50 && req.userId !== stream.userId) {
             mode = "HLS";
-            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live.m3u8`;
-
-            // Auto-start Local Egress if not already active
-            if (redisClient.isOpen) {
-                const egressKey = `stream:egress:${stream.streamId}`;
-                redisClient.get(egressKey).then(async (activeEgressId) => {
-                    if (!activeEgressId) {
-                        const newEgressId = await startLocalHlsEgressService(stream.streamId);
-                        if (newEgressId) {
-                            await redisClient.set(egressKey, newEgressId, "EX", 86400);
-                        }
-                    }
-                }).catch(err => console.error("Egress start check error:", err.message));
-            } else {
-                startLocalHlsEgressService(stream.streamId).catch(err => console.error(err.message));
-            }
+            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
         }
 
         if (isStealth) {
@@ -256,7 +257,7 @@ const joinLiveStream = async (req, res) => {
         return res.json({
             success: true,
             mode,
-            token: mode === "HLS" ? null : token,
+            token,
             hlsUrl,
             stream,
             viewerCount: finalViewerCount,
@@ -321,11 +322,14 @@ const getLiveStreams = async (req, res) => {
         let country = req.query.country || null;
         const type = req.query.type || null;
         const followingOnly = type === 'following' || req.query.following === 'true';
-        const nearbyOnly = type === 'nearby' || req.query.nearby === 'true';
+        const nearbyOnly = type === 'nearby' || req.query.nearby === 'true' || Boolean((req.query.lat || req.query.latitude) && (req.query.lng || req.query.longitude));
         const userLat = req.query.lat || req.query.latitude || null;
         const userLng = req.query.lng || req.query.longitude || null;
         const minKm = parseFloat(req.query.minKm) || 9;
         const maxKm = parseFloat(req.query.maxKm) || 40;
+
+        console.log("checked:query:: ", req.query);
+        console.log("checked:country:: ", country);
 
         // Default to logged-in user's own country if no explicit country, following, or nearby filter is provided
         if (!country && !followingOnly && !nearbyOnly && req.userId) {
@@ -590,22 +594,25 @@ const toggleAdminStatus = async (req, res) => {
             return res.status(400).json({ success: false, message: "Host cannot be promoted or demoted." });
         }
 
-        const isAdmin = await promoteDemoteAdminService({ streamId: stream.streamId, targetUserId });
+        const isAdmin = await promoteDemoteAdminService({ streamId: stream.streamId, hostUserId: stream.userId, targetUserId });
 
         const hostUser = await prisma.user.findUnique({
             where: { id: req.userId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
         const targetUser = await prisma.user.findUnique({
             where: { id: targetUserId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
 
         const isHostStealth = Boolean(hostUser?.privacyMysteryLive && hostUser?.vipSubscriptionActive);
         const isTargetStealth = Boolean(targetUser?.privacyMysteryLive && targetUser?.vipSubscriptionActive);
 
-        const hostName = isHostStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Host") : (hostUser ? hostUser.username : "Host");
-        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : (targetUser ? targetUser.username : "User");
+        const hostDisplayName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
+        const targetDisplayName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
+
+        const hostName = isHostStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Host") : hostDisplayName;
+        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : targetDisplayName;
 
         const alertText = isAdmin
             ? `${targetName} is now a Room Admin.`
@@ -703,18 +710,21 @@ const kickUser = async (req, res) => {
 
         const kickerUser = await prisma.user.findUnique({
             where: { id: req.userId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
         const targetUser = await prisma.user.findUnique({
             where: { id: targetUserId },
-            select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+            select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
         });
 
         const isKickerStealth = Boolean(kickerUser?.privacyMysteryLive && kickerUser?.vipSubscriptionActive);
         const isTargetStealth = Boolean(targetUser?.privacyMysteryLive && targetUser?.vipSubscriptionActive);
 
-        const kickerName = isKickerStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Admin") : (kickerUser ? kickerUser.username : "Admin");
-        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : (targetUser ? targetUser.username : "User");
+        const kickerDisplayName = kickerUser ? (`${kickerUser.firstName || ""} ${kickerUser.lastName || ""}`.trim() || kickerUser.username || "Admin") : "Admin";
+        const targetDisplayName = targetUser ? (`${targetUser.firstName || ""} ${targetUser.lastName || ""}`.trim() || targetUser.username || "User") : "User";
+
+        const kickerName = isKickerStealth ? (await getOrCreateSessionAlias(stream.streamId, req.userId) || "Admin") : kickerDisplayName;
+        const targetName = isTargetStealth ? (await getOrCreateSessionAlias(stream.streamId, targetUserId) || "User") : targetDisplayName;
 
         const alertText = `${targetName} removed from the room.`;
 
@@ -854,41 +864,35 @@ const sendStreamGift = async (req, res) => {
         const giftCount = count
         const result = await sendStreamGiftService({ streamDbId, senderId: req.userId, giftId, targetUserId, count: giftCount });
 
+        // Broadcast GIFT_SENT to stream UUID, stream DB ID, receiver personal channel, and sender personal channel
         broadcastToStream(result.socketPayload.streamId, "GIFT_SENT", result.socketPayload);
-
-        if (result.luckyWin) {
-            broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+        if (streamDbId && streamDbId !== result.socketPayload.streamId) {
+            broadcastToStream(streamDbId, "GIFT_SENT", result.socketPayload);
         }
-
-        setImmediate(async () => {
-            try {
-                const giftMsgText = `${result.socketPayload.senderName} sent ${result.socketPayload.receiverName} ${result.socketPayload.gift.name} ×${result.socketPayload.count || 1}.`;
-                const systemMessage = await sendMessageService({
-                    streamId: result.socketPayload.streamId,
-                    senderId: SYSTEM_SENDER_ID,
-                    message: giftMsgText
-                });
-                broadcastToStream(result.socketPayload.streamId, "new_message", systemMessage);
-            } catch (msgErr) {
-                console.error("[Gift Send Chat Message Error]:", msgErr.message);
-            }
-        });
-
-        // Targeted Socket Notification to Receiver User Device
         if (result.socketPayload.receiverId) {
+            broadcastToStream(`user:${result.socketPayload.receiverId}`, "GIFT_SENT", result.socketPayload);
             broadcastToStream(`user:${result.socketPayload.receiverId}`, "wallet_updated", {
                 currency: "POINT",
                 pointsAwarded: result.socketPayload.pointsAwarded,
                 newTotalPoints: result.socketPayload.receiverTotalPoints
             });
         }
+        if (req.userId) {
+            broadcastToStream(`user:${req.userId}`, "GIFT_SENT", result.socketPayload);
+        }
+
+        if (result.luckyWin) {
+            broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+        }
 
         // Broadcast gallery update if it unlocked a new gallery target progress
-        if (result.galleryProgressUpdate) {
-            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_UPDATE", result.galleryProgressUpdate);
+        const progressData = result.galleryProgress || result.galleryProgressUpdate || (result.socketPayload && result.socketPayload.galleryProgress);
+        if (progressData) {
+            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_UPDATE", progressData);
+            broadcastToStream(result.socketPayload.streamId, "GIFT_GALLERY_PROGRESS_UPDATED", progressData);
 
             // 100% Gallery Completion Global Announcement ({host} completed the Gift Collection)
-            if (result.galleryProgressUpdate.isCompleted) {
+            if (progressData.isCompleted || progressData.currentProgress >= progressData.totalTarget) {
                 setImmediate(async () => {
                     try {
                         const streamObj = await getLiveStreamService({ id: streamDbId });
@@ -909,7 +913,7 @@ const sendStreamGift = async (req, res) => {
                                 streamId: result.socketPayload.streamId
                             }
                         });
-                        console.log(`[Global Announcement] Gallery Completed by host ${hostName} (${result.galleryProgressUpdate.hostId})`);
+                        console.log(`[Global Announcement] Gallery Completed by host ${hostName}`);
                     } catch (annError) {
                         console.error("[Gallery Completion Announcement Error]:", annError.message);
                     }
@@ -1321,6 +1325,31 @@ const sendLuckyGift = async (req, res) => {
     }
 };
 
+const getHostStats = async (req, res) => {
+    try {
+        const hostUserId = req.query.hostId || req.userId;
+        if (!hostUserId) {
+            return res.status(400).json({
+                success: false,
+                message: "hostId parameter or authentication token required."
+            });
+        }
+
+        const period = req.query.period || 'today';
+        const data = await getHostStatsService({ hostUserId, period });
+        return res.json({
+            success: true,
+            data
+        });
+    } catch (error) {
+        return res.status(400).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
+router.get('/host-stats', auth, getHostStats);
 router.get('/user/effect-settings', auth, getUserEffectSettings);
 router.patch('/user/effect-settings', auth, updateUserEffectSettings);
 router.post('/follow/:targetUserId', auth, followUser);
