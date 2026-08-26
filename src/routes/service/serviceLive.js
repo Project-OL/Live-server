@@ -298,23 +298,16 @@ export const endLiveStreamService = async ({
 
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
 
+    // Persist billable duration on the same Prisma update (do not rely on a separate
+    // $executeRawUnsafe — that path was leaving effective_duration_seconds at 0 in prod).
     const updatedStream = await prisma.liveStream.update({
         where: { id },
         data: {
             isLive: false,
-            endedAt
+            endedAt,
+            effectiveDurationSeconds,
         }
     });
-
-    try {
-        await prisma.$executeRawUnsafe(`
-            UPDATE live_streams 
-            SET effective_duration_seconds = $1 
-            WHERE id = $2
-        `, effectiveDurationSeconds, id);
-    } catch (dbErr) {
-        console.error("[End Stream] Failed to update effective_duration_seconds:", dbErr.message);
-    }
 
     if (redisClient.isOpen) {
         await Promise.all([
@@ -1909,12 +1902,26 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
             // End the stream immediately
             console.log(`[Stream Moderation] Blocking stream ${id} due to explicit content violation.`);
 
-            // 3. Mark stream as not live in DB
+            // 3. Mark stream as not live in DB (include billable duration)
+            const endedAt = new Date();
+            const startedAt = stream.startedAt || stream.createdAt || endedAt;
+            const grossDurationSeconds = Math.max(
+                0,
+                Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
+            );
+            let uncountedSec = 0;
+            if (redisClient.isOpen) {
+                const uncountedStr = await redisClient.get(`stream:uncounted_seconds:${stream.streamId}`);
+                if (uncountedStr) uncountedSec = parseInt(uncountedStr, 10) || 0;
+            }
+            const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
+
             const updatedStream = await prisma.liveStream.update({
                 where: { id },
                 data: {
                     isLive: false,
-                    endedAt: new Date()
+                    endedAt,
+                    effectiveDurationSeconds,
                 }
             });
 
@@ -2696,11 +2703,21 @@ export const getHostStatsService = async ({ hostUserId, period = "today" }) => {
         let liveHoursSeconds = 0;
 
         if (streamIds.length > 0) {
-            const sumRes = await prisma.liveStream.aggregate({
-                _sum: { effectiveDurationSeconds: true },
-                where: { id: { in: streamIds } }
-            });
-            liveHoursSeconds = Number(sumRes._sum.effectiveDurationSeconds || 0);
+            // Prefer effective_duration_seconds; fall back to wall-clock when still 0
+            // (legacy rows / failed write left the column at default).
+            const sumRes = await prisma.$queryRaw`
+                SELECT COALESCE(SUM(
+                  CASE
+                    WHEN effective_duration_seconds > 0 THEN effective_duration_seconds
+                    WHEN started_at IS NOT NULL AND ended_at IS NOT NULL
+                      THEN GREATEST(0, FLOOR(EXTRACT(EPOCH FROM (ended_at - started_at)))::int)
+                    ELSE 0
+                  END
+                ), 0)::BIGINT AS total
+                FROM live_streams
+                WHERE id = ANY(${streamIds}::uuid[])
+            `;
+            liveHoursSeconds = Number(sumRes?.[0]?.total || 0);
         }
 
         const pointsRes = await prisma.$queryRaw`
