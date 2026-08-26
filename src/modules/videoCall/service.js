@@ -67,12 +67,13 @@ export const getPointBalance = async (walletId, tx = prisma) => {
 export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedgerEntryId, opts = {}) => {
     const hostUser = await tx.user.findUnique({
         where: { id: hostId },
-        select: { currentAgencyId: true, username: true, firstName: true }
+        select: { currentAgencyId: true, username: true, firstName: true, lastName: true }
     });
 
     if (!hostUser) return null;
 
-    const hostName = hostUser.username || hostUser.firstName || "Host";
+    const fullName = [hostUser.firstName, hostUser.lastName].filter(Boolean).join(" ").trim();
+    const hostName = fullName || hostUser.firstName || hostUser.username || "Host";
 
     let agencyUserId = hostUser.currentAgencyId;
 

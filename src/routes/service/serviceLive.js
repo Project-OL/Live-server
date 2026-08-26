@@ -1602,19 +1602,26 @@ export const invalidateAgencyCommissionRatesCache = async () => {
 
 export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoints, hostLedgerEntryId, cachedReceiverUser = null, opts = {}) => {
     let agencyUserId = cachedReceiverUser?.currentAgencyId;
-    let hostName = cachedReceiverUser?.username || cachedReceiverUser?.firstName || null;
+
+    const getHostDisplayName = (u) => {
+        if (!u) return null;
+        const fullName = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
+        return fullName || u.firstName || u.username || null;
+    };
+
+    let hostName = getHostDisplayName(cachedReceiverUser);
 
     if (!agencyUserId || !hostName) {
         const receiverUser = await tx.user.findUnique({
             where: { id: receiverId },
-            select: { currentAgencyId: true, username: true, firstName: true }
+            select: { currentAgencyId: true, username: true, firstName: true, lastName: true }
         });
         if (receiverUser) {
             if (!agencyUserId && receiverUser.currentAgencyId) {
                 agencyUserId = receiverUser.currentAgencyId;
             }
             if (!hostName) {
-                hostName = receiverUser.username || receiverUser.firstName || "Host";
+                hostName = getHostDisplayName(receiverUser);
             }
         }
     }
