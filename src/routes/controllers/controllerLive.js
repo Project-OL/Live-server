@@ -328,9 +328,6 @@ const getLiveStreams = async (req, res) => {
         const minKm = parseFloat(req.query.minKm) || 9;
         const maxKm = parseFloat(req.query.maxKm) || 40;
 
-        console.log("checked:query:: ", req.query);
-        console.log("checked:country:: ", country);
-
         // Default to logged-in user's own country if no explicit country, following, or nearby filter is provided
         if (!country && !followingOnly && !nearbyOnly && req.userId) {
             const currentUser = await prisma.user.findUnique({

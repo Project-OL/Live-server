@@ -1302,6 +1302,17 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     // Synchronous Gift Gallery Progress check for Receiver (Host)
     const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
 
+    const senderLevel = await prisma.walletUserLevel.findUnique({
+        where: {
+            userId_levelType: {
+                userId: senderId,
+                levelType: LevelType.WEALTH
+            }
+        },
+        select: { currentLevel: true }
+    });
+    const initialWealthLevel = senderLevel?.currentLevel || 1;
+
     const socketPayload = {
         success: true,
         streamId: stream.streamId,
@@ -1325,7 +1336,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             effectUrl: gift.effectUrl,
             coinCost: Number(gift.coinCost)
         },
-        wealthLevel: 1,
+        wealthLevel: isStealth ? 0 : initialWealthLevel,
         isLevelUp: false,
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate
@@ -1494,7 +1505,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate,
         newBalance: Number(balanceAfterCoins),
-        currentLevel: 1,
+        currentLevel: initialWealthLevel,
         isLevelUp: false
     };
 };
