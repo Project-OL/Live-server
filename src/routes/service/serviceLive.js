@@ -285,23 +285,16 @@ export const endLiveStreamService = async ({
 
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
 
+    // Persist billable duration on the same Prisma update (do not rely on a separate
+    // $executeRawUnsafe — that path was leaving effective_duration_seconds at 0 in prod).
     const updatedStream = await prisma.liveStream.update({
         where: { id },
         data: {
             isLive: false,
-            endedAt
+            endedAt,
+            effectiveDurationSeconds,
         }
     });
-
-    try {
-        await prisma.$executeRawUnsafe(`
-            UPDATE live_streams 
-            SET effective_duration_seconds = $1 
-            WHERE id = $2
-        `, effectiveDurationSeconds, id);
-    } catch (dbErr) {
-        console.error("[End Stream] Failed to update effective_duration_seconds:", dbErr.message);
-    }
 
     if (redisClient.isOpen) {
         await Promise.all([
@@ -1744,12 +1737,26 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
             // End the stream immediately
             console.log(`[Stream Moderation] Blocking stream ${id} due to explicit content violation.`);
 
-            // 3. Mark stream as not live in DB
+            // 3. Mark stream as not live in DB (include billable duration)
+            const endedAt = new Date();
+            const startedAt = stream.startedAt || stream.createdAt || endedAt;
+            const grossDurationSeconds = Math.max(
+                0,
+                Math.floor((endedAt.getTime() - startedAt.getTime()) / 1000),
+            );
+            let uncountedSec = 0;
+            if (redisClient.isOpen) {
+                const uncountedStr = await redisClient.get(`stream:uncounted_seconds:${stream.streamId}`);
+                if (uncountedStr) uncountedSec = parseInt(uncountedStr, 10) || 0;
+            }
+            const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
+
             const updatedStream = await prisma.liveStream.update({
                 where: { id },
                 data: {
                     isLive: false,
-                    endedAt: new Date()
+                    endedAt,
+                    effectiveDurationSeconds,
                 }
             });
 
