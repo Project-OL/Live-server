@@ -877,6 +877,7 @@ const getGifts = async (req, res) => {
     }
 };
 
+
 const sendStreamGift = async (req, res) => {
     try {
         const { giftId, targetUserId, count = 1 } = req.body;
