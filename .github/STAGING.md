@@ -7,6 +7,7 @@ Do not use OIDC / S3 / SSM for staging. Secrets are already configured on Enviro
 | | |
 |---|---|
 | App dir | `/home/ec2-user/live-server` |
+| Log dir | `/home/ec2-user/logs` (must override unpack default `/opt/ol/logs`) |
 | PM2 | `ol-live` |
 | URL | https://live-staging.offoolive.com |
 

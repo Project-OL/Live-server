@@ -1,7 +1,7 @@
 name: Staging build and deploy
 
 # Mirrors production.yml: pack artifact, scp to /tmp, ssh 'bash -s' < unpack.sh
-# Staging paths: APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server
+# Staging paths: APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server LOG_DIR=/home/ec2-user/logs
 
 on:
   push:
@@ -94,8 +94,8 @@ jobs:
             -o ServerAliveCountMax=120 \
             -o TCPKeepAlive=yes \
             "$EC2_USER@$EC2_HOST" \
-            'APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server ARTIFACT=/tmp/live-server-artifact.tgz bash -s' \
+            'APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server LOG_DIR=/home/ec2-user/logs ARTIFACT=/tmp/live-server-artifact.tgz bash -s' \
             < .github/deploy/ec2-unpack-live-server.sh
 # Same as production.yml (scp + bash -s < unpack). Staging layout:
-#   APP_DIR=/home/ec2-user/live-server
+#   APP_DIR=/home/ec2-user/live-server LOG_DIR=/home/ec2-user/logs
 # Secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY
