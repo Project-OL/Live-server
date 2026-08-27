@@ -839,11 +839,39 @@ const setChatPermission = async (req, res) => {
 
 const getGifts = async (req, res) => {
     try {
-        const gifts = await prisma.gift.findMany({
-            where: { isActive: true },
-            orderBy: { coinCost: "asc" }
+        const page = parseInt(req.query.page, 10) || 1;
+        const limit = parseInt(req.query.limit, 10) || 20;
+        const skip = (page - 1) * limit;
+
+        const [gifts, total] = await Promise.all([
+            prisma.gift.findMany({
+                where: { isActive: true },
+                include: {
+                    gift_categories: {
+                        select: {
+                            id: true,
+                            name: true,
+                            slug: true
+                        }
+                    }
+                },
+                orderBy: { coinCost: "asc" },
+                skip,
+                take: limit
+            }),
+            prisma.gift.count({ where: { isActive: true } })
+        ]);
+
+        return res.status(200).json({
+            success: true,
+            data: gifts,
+            pagination: {
+                page,
+                limit,
+                total,
+                totalPages: Math.ceil(total / limit)
+            }
         });
-        return res.status(200).json({ success: true, data: gifts });
     } catch (error) {
         return res.status(500).json({ success: false, message: error.message });
     }
