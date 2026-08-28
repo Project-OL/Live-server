@@ -192,8 +192,8 @@ export const sendMessageService = async ({
 
         user = dbUser;
         const levelMap = new Map(walletLevels.map(w => [w.levelType, w.currentLevel]));
-        senderWealthLevel = levelMap.get(LevelType.WEALTH) ?? dbUser?.userLevel?.wealthLevel ?? 0;
-        senderLivestreamLevel = levelMap.get(LevelType.LIVESTREAM) ?? dbUser?.userLevel?.livestreamLevel ?? 0;
+        senderWealthLevel = levelMap.get(LevelType.WEALTH) ?? (dbUser?.userLevel?.wealthLevel || 1);
+        senderLivestreamLevel = levelMap.get(LevelType.LIVESTREAM) ?? (dbUser?.userLevel?.livestreamLevel || 1);
 
         // Apply fuzzy censorship with 60% threshold
         try {
@@ -268,8 +268,8 @@ export const sendMessageService = async ({
             if (tUser) {
                 targetUserObj = tUser;
                 const lvlMap = new Map(tLevels.map(w => [w.levelType, w.currentLevel]));
-                targetWealthLevel = lvlMap.get(LevelType.WEALTH) ?? tUser.userLevel?.wealthLevel ?? 0;
-                targetLivestreamLevel = lvlMap.get(LevelType.LIVESTREAM) ?? tUser.userLevel?.livestreamLevel ?? 0;
+                targetWealthLevel = lvlMap.get(LevelType.WEALTH) ?? (tUser.userLevel?.wealthLevel || 1);
+                targetLivestreamLevel = lvlMap.get(LevelType.LIVESTREAM) ?? (tUser.userLevel?.livestreamLevel || 1);
             }
         } catch (err) {
             console.error("[SystemMessage] Failed to load target user details:", err);
@@ -433,8 +433,8 @@ export const getMessagesService = async ({
     return Promise.all(messages.map(async m => {
         const targetId = (m.senderId === SYSTEM_SENDER_ID && m.replyToUserId) ? m.replyToUserId : m.senderId;
         const userObj = userMap.get(targetId);
-        const wealthLevel = levelMap.get(`${targetId}_${LevelType.WEALTH}`) ?? userObj?.userLevel?.wealthLevel ?? 0;
-        const livestreamLevel = levelMap.get(`${targetId}_${LevelType.LIVESTREAM}`) ?? userObj?.userLevel?.livestreamLevel ?? 0;
+        const wealthLevel = levelMap.get(`${targetId}_${LevelType.WEALTH}`) ?? (userObj?.userLevel?.wealthLevel || 1);
+        const livestreamLevel = levelMap.get(`${targetId}_${LevelType.LIVESTREAM}`) ?? (userObj?.userLevel?.livestreamLevel || 1);
 
         let senderObj;
         if (m.senderId === SYSTEM_SENDER_ID) {

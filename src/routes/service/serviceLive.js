@@ -2430,8 +2430,8 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
         const coins7d = giftMap.get(u.id) || 0;
         const isGuardian = guardianSet.has(u.id);
         const isVip = !!u.vipSubscriptionActive;
-        const wealthLevel = walletLevelMap.get(u.id) ?? u.userLevel?.wealthLevel ?? 0;
-        const livestreamLevel = u.userLevel?.livestreamLevel ?? 0;
+        const wealthLevel = walletLevelMap.get(u.id) ?? (u.userLevel?.wealthLevel || 1);
+        const livestreamLevel = (u.userLevel?.livestreamLevel || 1);
         const isAdmin = adminSet.has(u.id);
 
         let age = null;
@@ -2529,8 +2529,8 @@ export const getHostProfileService = async ({ hostUserId }) => {
         name: hostName,
         username: hostUser.username,
         avatarUrl: hostUser.avatarUrl || null,
-        wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? hostUser.userLevel?.wealthLevel ?? 0,
-        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
+        wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? (hostUser.userLevel?.wealthLevel || 1),
+        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? (hostUser.userLevel?.livestreamLevel || 1)
     } : null;
 
     if (host && redisClient.isOpen) {

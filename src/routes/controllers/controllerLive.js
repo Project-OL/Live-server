@@ -692,8 +692,8 @@ const kickUser = async (req, res) => {
             const kickerLevel = await prisma.userLevel.findUnique({ where: { userId: req.userId } });
             const targetLevel = await prisma.userLevel.findUnique({ where: { userId: targetUserId } });
 
-            const kickerWealth = kickerLevel ? kickerLevel.wealthLevel : 0;
-            const targetWealth = targetLevel ? targetLevel.wealthLevel : 0;
+            const kickerWealth = kickerLevel ? (kickerLevel.wealthLevel || 1) : 1;
+            const targetWealth = targetLevel ? (targetLevel.wealthLevel || 1) : 1;
 
             if (kickerWealth < targetWealth) {
                 return res.status(403).json({
