@@ -1241,8 +1241,10 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             preFetchedGift: gift
         });
         luckyResult.socketPayload.senderName = senderName;
+        luckyResult.socketPayload.senderPublicId = isStealth ? null : (senderPrivacy.publicId || null);
         luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
         luckyResult.socketPayload.receiverName = receiverName;
+        luckyResult.socketPayload.receiverPublicId = receiverPrivacy ? (receiverPrivacy.publicId || null) : null;
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
 
@@ -1317,15 +1319,18 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         success: true,
         streamId: stream.streamId,
         senderId: isStealth ? null : senderId,
+        senderPublicId: isStealth ? null : (senderPrivacy.publicId || null),
         senderName,
         senderAvatarUrl: isStealth ? null : (senderPrivacy.avatarUrl || null),
         isMystery: isStealth,
         senderRemainingCoins: Number(balanceAfterCoins),
         receiverId,
+        receiverPublicId: receiverPrivacy ? (receiverPrivacy.publicId || null) : null,
         receiverName,
         pointsAwarded: Number(pointsAwarded),
         receiverTotalPoints: Number(balanceAfterPoints),
         targetUserId: targetUserId || null,
+        targetUserPublicId: receiverPrivacy ? (receiverPrivacy.publicId || null) : null,
         targetUserName: receiverName,
         count: giftCount,
         totalCost: Number(coinCost),
@@ -2554,6 +2559,7 @@ export const getUserPrivacyService = async ({ userId }) => {
     const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
+            publicId: true,
             username: true,
             firstName: true,
             lastName: true,
@@ -2567,6 +2573,7 @@ export const getUserPrivacyService = async ({ userId }) => {
     const displayName = nameStr || user?.username || "Guest";
 
     const result = {
+        publicId: user?.publicId ? user.publicId.toString() : null,
         name: displayName,
         username: user?.username || "Guest",
         avatarUrl: user?.avatarUrl || null,
