@@ -9,7 +9,10 @@
     "test": "nodemon server.js",
     "kill-port": "kill-port $PORT",
     "start": "node server.js",
-    "postinstall": "prisma generate"
+    "postinstall": "prisma generate",
+    "lift-live-bans": "node scripts/lift-live-moderation-bans.js",
+    "lift-live-bans:dry-run": "node scripts/lift-live-moderation-bans.js --dry-run",
+    "lift-live-bans:verify": "node scripts/lift-live-moderation-bans.js --verify-only"
   },
   "keywords": [],
   "author": "",

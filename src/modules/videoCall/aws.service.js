@@ -1,6 +1,7 @@
 import { RekognitionClient, DetectModerationLabelsCommand } from "@aws-sdk/client-rekognition";
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import dotenv from "dotenv";
+import { isNudeMonitoringEnabled } from "../../config/moderation.js";
 
 dotenv.config();
 
@@ -41,6 +42,10 @@ export const uploadFlaggedFrameToS3 = async (buffer, s3Key) => {
 
 export const moderateImage = async (buffer) => {
     try {
+        if (!isNudeMonitoringEnabled()) {
+            return { isViolation: false };
+        }
+
         if (process.env.MOCK_MODERATION === "true") {
             return { isViolation: true, label: "Mock Explicit Nudity", confidence: 99.9, action: "BLOCK" };
         }

@@ -49,7 +49,7 @@ jobs:
             --exclude=exp.js \
             --exclude=test-creds.txt \
             --exclude=google-credentials.json \
-            server.js package.json package-lock.json prisma prisma.config.ts src public
+            server.js package.json package-lock.json prisma prisma.config.ts src public scripts
           ls -lh live-server-artifact.tgz
 
       - name: Upload GitHub Actions artifact
