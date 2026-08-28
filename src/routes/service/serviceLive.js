@@ -1224,6 +1224,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const receiverId = receiverUserId;
     const isStealth = senderPrivacy.isStealth;
 
+    const senderPublicId = isStealth ? null : (senderPrivacy?.publicId || null);
+    const receiverPublicId = receiverPrivacy ? (receiverPrivacy?.publicId || null) : null;
+
     let stealthAlias = null;
     if (isStealth) {
         stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
@@ -1241,10 +1244,11 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             preFetchedGift: gift
         });
         luckyResult.socketPayload.senderName = senderName;
-        luckyResult.socketPayload.senderPublicId = isStealth ? null : (senderPrivacy.publicId || null);
+        luckyResult.socketPayload.senderPublicId = isStealth ? null : senderPublicId;
         luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
         luckyResult.socketPayload.receiverName = receiverName;
-        luckyResult.socketPayload.receiverPublicId = receiverPrivacy ? (receiverPrivacy.publicId || null) : null;
+        luckyResult.socketPayload.receiverPublicId = receiverPublicId;
+        luckyResult.socketPayload.targetUserPublicId = receiverPublicId;
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
 
@@ -1319,18 +1323,18 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         success: true,
         streamId: stream.streamId,
         senderId: isStealth ? null : senderId,
-        senderPublicId: isStealth ? null : (senderPrivacy.publicId || null),
+        senderPublicId: isStealth ? null : senderPublicId,
         senderName,
         senderAvatarUrl: isStealth ? null : (senderPrivacy.avatarUrl || null),
         isMystery: isStealth,
         senderRemainingCoins: Number(balanceAfterCoins),
         receiverId,
-        receiverPublicId: receiverPrivacy ? (receiverPrivacy.publicId || null) : null,
+        receiverPublicId: receiverPublicId,
         receiverName,
         pointsAwarded: Number(pointsAwarded),
         receiverTotalPoints: Number(balanceAfterPoints),
         targetUserId: targetUserId || null,
-        targetUserPublicId: receiverPrivacy ? (receiverPrivacy.publicId || null) : null,
+        targetUserPublicId: receiverPublicId,
         targetUserName: receiverName,
         count: giftCount,
         totalCost: Number(coinCost),
@@ -2552,7 +2556,12 @@ export const getUserPrivacyService = async ({ userId }) => {
     if (redisClient.isOpen) {
         const cached = await redisClient.get(cacheKey);
         if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.publicId !== undefined) {
+                    return parsed;
+                }
+            } catch (e) { }
         }
     }
 
