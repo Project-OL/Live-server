@@ -67,19 +67,13 @@ async function connectRedisOptional(redisUrl) {
 }
 
 async function scanAndDelete(redis, pattern) {
-  let cursor = 0;
   let deleted = 0;
-  do {
-    const reply = await redis.scan(cursor, { MATCH: pattern, COUNT: 500 });
-    cursor = reply.cursor;
-    const keys = reply.keys;
-    if (keys.length > 0) {
-      if (!dryRun) {
-        await redis.del(keys);
-      }
-      deleted += keys.length;
+  for await (const key of redis.scanIterator({ MATCH: pattern, COUNT: 500 })) {
+    if (!dryRun) {
+      await redis.del(key);
     }
-  } while (cursor !== 0);
+    deleted += 1;
+  }
   return deleted;
 }
 
@@ -255,15 +249,20 @@ async function main() {
     }
 
     if (redis?.isOpen) {
-      const suspendedKeys = await scanAndDelete(redis, 'user:suspended:*');
-      const banKeys = await scanAndDelete(redis, 'user:restriction:*:LIVE_STREAM_START_BAN');
+      try {
+        const suspendedKeys = await scanAndDelete(redis, 'user:suspended:*');
+        const banKeys = await scanAndDelete(redis, 'user:restriction:*:LIVE_STREAM_START_BAN');
 
-      console.log(
-        `\nRedis: ${dryRun ? 'would delete' : 'deleted'} ${suspendedKeys} user:suspended:* key(s)`,
-      );
-      console.log(
-        `Redis: ${dryRun ? 'would delete' : 'deleted'} ${banKeys} user:restriction:*:LIVE_STREAM_START_BAN key(s)`,
-      );
+        console.log(
+          `\nRedis: ${dryRun ? 'would delete' : 'deleted'} ${suspendedKeys} user:suspended:* key(s)`,
+        );
+        console.log(
+          `Redis: ${dryRun ? 'would delete' : 'deleted'} ${banKeys} user:restriction:*:LIVE_STREAM_START_BAN key(s)`,
+        );
+      } catch (redisErr) {
+        console.error('\nRedis cache clear failed:', redisErr.message);
+        console.error('DB bans were cleared; re-run this script to finish Redis invalidation.');
+      }
     }
   } else {
     console.log('\n=== Verify only (no lift) ===\n');
