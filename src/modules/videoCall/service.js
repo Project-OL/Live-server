@@ -875,8 +875,8 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                 const callerPing = heartbeatCache.get(`${session.id}:${session.callerId}`) || globalPing;
                 const creatorPing = heartbeatCache.get(`${session.id}:${session.creatorId}`) || globalPing;
 
-                const callerStale = callerPing ? (now - callerPing > 15000) : false;
-                const creatorStale = creatorPing ? (now - creatorPing > 15000) : false;
+                const callerStale = callerPing ? (now - callerPing > 30000) : false;
+                const creatorStale = creatorPing ? (now - creatorPing > 30000) : false;
 
                 if (callerStale || creatorStale) {
                     const missingUserId = callerStale ? session.callerId : session.creatorId;
