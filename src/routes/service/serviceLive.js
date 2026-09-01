@@ -1224,6 +1224,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const receiverId = receiverUserId;
     const isStealth = senderPrivacy.isStealth;
 
+    const senderPublicId = isStealth ? null : (senderPrivacy?.publicId || null);
+    const receiverPublicId = receiverPrivacy ? (receiverPrivacy?.publicId || null) : null;
+
     let stealthAlias = null;
     if (isStealth) {
         stealthAlias = await getOrCreateSessionAlias(stream.streamId, senderId);
@@ -1241,8 +1244,11 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             preFetchedGift: gift
         });
         luckyResult.socketPayload.senderName = senderName;
+        luckyResult.socketPayload.senderPublicId = isStealth ? null : senderPublicId;
         luckyResult.socketPayload.senderAvatarUrl = isStealth ? null : (senderPrivacy.avatarUrl || null);
         luckyResult.socketPayload.receiverName = receiverName;
+        luckyResult.socketPayload.receiverPublicId = receiverPublicId;
+        luckyResult.socketPayload.targetUserPublicId = receiverPublicId;
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
 
@@ -1302,19 +1308,33 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     // Synchronous Gift Gallery Progress check for Receiver (Host)
     const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
 
+    const senderLevel = await prisma.walletUserLevel.findUnique({
+        where: {
+            userId_levelType: {
+                userId: senderId,
+                levelType: LevelType.WEALTH
+            }
+        },
+        select: { currentLevel: true }
+    });
+    const initialWealthLevel = senderLevel?.currentLevel || 1;
+
     const socketPayload = {
         success: true,
         streamId: stream.streamId,
         senderId: isStealth ? null : senderId,
+        senderPublicId: isStealth ? null : senderPublicId,
         senderName,
         senderAvatarUrl: isStealth ? null : (senderPrivacy.avatarUrl || null),
         isMystery: isStealth,
         senderRemainingCoins: Number(balanceAfterCoins),
         receiverId,
+        receiverPublicId: receiverPublicId,
         receiverName,
         pointsAwarded: Number(pointsAwarded),
         receiverTotalPoints: Number(balanceAfterPoints),
         targetUserId: targetUserId || null,
+        targetUserPublicId: receiverPublicId,
         targetUserName: receiverName,
         count: giftCount,
         totalCost: Number(coinCost),
@@ -1325,7 +1345,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             effectUrl: gift.effectUrl,
             coinCost: Number(gift.coinCost)
         },
-        wealthLevel: 1,
+        wealthLevel: isStealth ? 0 : initialWealthLevel,
         isLevelUp: false,
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate
@@ -1494,7 +1514,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate,
         newBalance: Number(balanceAfterCoins),
-        currentLevel: 1,
+        currentLevel: initialWealthLevel,
         isLevelUp: false
     };
 };
@@ -2419,8 +2439,8 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
         const coins7d = giftMap.get(u.id) || 0;
         const isGuardian = guardianSet.has(u.id);
         const isVip = !!u.vipSubscriptionActive;
-        const wealthLevel = walletLevelMap.get(u.id) ?? u.userLevel?.wealthLevel ?? 0;
-        const livestreamLevel = u.userLevel?.livestreamLevel ?? 0;
+        const wealthLevel = walletLevelMap.get(u.id) ?? (u.userLevel?.wealthLevel || 1);
+        const livestreamLevel = (u.userLevel?.livestreamLevel || 1);
         const isAdmin = adminSet.has(u.id);
 
         let age = null;
@@ -2518,8 +2538,8 @@ export const getHostProfileService = async ({ hostUserId }) => {
         name: hostName,
         username: hostUser.username,
         avatarUrl: hostUser.avatarUrl || null,
-        wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? hostUser.userLevel?.wealthLevel ?? 0,
-        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? hostUser.userLevel?.livestreamLevel ?? 0
+        wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? (hostUser.userLevel?.wealthLevel || 1),
+        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? (hostUser.userLevel?.livestreamLevel || 1)
     } : null;
 
     if (host && redisClient.isOpen) {
@@ -2536,13 +2556,19 @@ export const getUserPrivacyService = async ({ userId }) => {
     if (redisClient.isOpen) {
         const cached = await redisClient.get(cacheKey);
         if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.publicId !== undefined) {
+                    return parsed;
+                }
+            } catch (e) { }
         }
     }
 
     const user = await prisma.user.findUnique({
         where: { id: userId },
         select: {
+            publicId: true,
             username: true,
             firstName: true,
             lastName: true,
@@ -2556,6 +2582,7 @@ export const getUserPrivacyService = async ({ userId }) => {
     const displayName = nameStr || user?.username || "Guest";
 
     const result = {
+        publicId: user?.publicId ? user.publicId.toString() : null,
         name: displayName,
         username: user?.username || "Guest",
         avatarUrl: user?.avatarUrl || null,

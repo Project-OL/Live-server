@@ -1,5 +1,6 @@
 import { leaveStreamService, getViewerCountService, sendMessageService, SYSTEM_SENDER_ID, getOrCreateSessionAlias, removeSessionAlias } from './serviceMessage.js';
 import prisma from '../../config/prisma.js';
+import { LevelType } from '@prisma/client';
 import {
     addUserToSheetService,
     removeUserFromSheetService,
@@ -73,22 +74,43 @@ export const setupLiveSockets = (io) => {
                     let username = "Guest";
                     let name = "Guest";
                     let isStealth = false;
-                    const user = await prisma.user.findUnique({
-                        where: { id: userId },
-                        select: {
-                            username: true,
-                            firstName: true,
-                            lastName: true,
-                            privacyMysteryLive: true,
-                            vipSubscriptionActive: true
-                        }
-                    });
+                    let wealthLevel = 1;
+                    let userPublicId = null;
+                    const [user, walletLevelRow] = await Promise.all([
+                        prisma.user.findUnique({
+                            where: { id: userId },
+                            select: {
+                                publicId: true,
+                                username: true,
+                                firstName: true,
+                                lastName: true,
+                                privacyMysteryLive: true,
+                                vipSubscriptionActive: true,
+                                userLevel: {
+                                    select: { wealthLevel: true }
+                                }
+                            }
+                        }),
+                        prisma.walletUserLevel.findUnique({
+                            where: {
+                                userId_levelType: {
+                                    userId,
+                                    levelType: LevelType.WEALTH
+                                }
+                            },
+                            select: { currentLevel: true }
+                        })
+                    ]);
                     if (user) {
                         username = user.username;
                         name = `${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest";
+                        userPublicId = user.publicId ? user.publicId.toString() : null;
                         isStealth = Boolean(user.privacyMysteryLive && user.vipSubscriptionActive);
+                        wealthLevel = isStealth ? 0 : (walletLevelRow?.currentLevel ?? (user.userLevel?.wealthLevel || 1));
                     }
                     socket.data.isStealth = isStealth;
+                    socket.data.wealthLevel = wealthLevel;
+                    socket.data.publicId = userPublicId;
 
                     // Always add to history set in Redis for admin records
                     await redisClient.sAdd(`stream:history:${streamId}`, userId);
@@ -188,10 +210,12 @@ export const setupLiveSockets = (io) => {
                         // Broadcast user_joined to notify all clients to sync
                         broadcastToStream(streamId, "user_joined", {
                             userId,
+                            publicId: socket.data.publicId || null,
                             name,
                             username,
                             viewerCount,
-                            ride
+                            ride,
+                            wealthLevel: socket.data.wealthLevel ?? 1
                         });
 
                         setImmediate(async () => {

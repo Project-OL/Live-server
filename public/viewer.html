@@ -702,7 +702,8 @@
             document.body.appendChild(errDiv);
         };
 
-        const SERVER_URL = "https://live.offoolive.com";
+        const isLocal = window.location.hostname === "localhost" || window.location.hostname === "127.0.0.1" || window.location.hostname.startsWith("192.168.") || window.location.port === "5000";
+        const SERVER_URL = isLocal ? window.location.origin : "https://live.offoolive.com";
         const STREAM_API_BASE = `${SERVER_URL}/api/live-stream`;
         const VIDEO_API_BASE = `${SERVER_URL}/api/video-call`;
         const LIVEKIT_URL = "wss://stream.offoolive.com";
