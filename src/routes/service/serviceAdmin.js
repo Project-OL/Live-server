@@ -24,7 +24,7 @@ export async function isUserRestrictedFast(userId, type) {
           return parsed;
         } else {
           // Cache is cleared or expired, delete stale cache key immediately
-          redisClient.del(redisKey).catch(() => {});
+          redisClient.del(redisKey).catch(() => { });
         }
       }
     }
@@ -36,9 +36,9 @@ export async function isUserRestrictedFast(userId, type) {
   const active = await getActiveUserRestriction(userId, type);
   if (active && redisClient.isOpen) {
     const ttlSeconds = Math.max(1, Math.floor((new Date(active.restrictedUntil).getTime() - Date.now()) / 1000));
-    redisClient.set(redisKey, JSON.stringify(active), { EX: ttlSeconds }).catch(() => {});
+    redisClient.set(redisKey, JSON.stringify(active), { EX: ttlSeconds }).catch(() => { });
   } else if (!active && redisClient.isOpen) {
-    redisClient.del(redisKey).catch(() => {});
+    redisClient.del(redisKey).catch(() => { });
   }
   return active;
 }
@@ -140,7 +140,7 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
   const ttlSeconds = Math.max(1, Math.floor((restrictionEndDate.getTime() - Date.now()) / 1000));
   if (redisClient.isOpen) {
     const redisKey = `user:restriction:${userId}:${type}`;
-    redisClient.set(redisKey, JSON.stringify(createdRestriction), { EX: ttlSeconds }).catch(() => {});
+    redisClient.set(redisKey, JSON.stringify(createdRestriction), { EX: ttlSeconds }).catch(() => { });
   }
 
   // 2. If LIVE_STREAM_START_BAN applied, kill any ongoing live stream for this host immediately
@@ -223,7 +223,7 @@ async function autoUnmuteSheetUserIfRestricted(userId) {
  */
 export async function clearRestrictionByIdService(userId, restrictionId, adminId) {
   const now = new Date();
-  
+
   // Find restriction to know its type for Redis cache invalidation
   const restriction = await prisma.userRestriction.findFirst({
     where: { id: restrictionId, userId }
@@ -243,7 +243,7 @@ export async function clearRestrictionByIdService(userId, restrictionId, adminId
 
   if (result.count > 0 && restriction) {
     if (redisClient.isOpen) {
-      redisClient.del(`user:restriction:${userId}:${restriction.type}`).catch(() => {});
+      redisClient.del(`user:restriction:${userId}:${restriction.type}`).catch(() => { });
     }
     if (restriction.type === 'LIVE_AUDIO_MUTE') {
       await autoUnmuteSheetUserIfRestricted(userId);
@@ -257,7 +257,7 @@ export async function clearRestrictionByIdService(userId, restrictionId, adminId
             type: restriction.type
           });
         }
-      } catch (err) {}
+      } catch (err) { }
     });
   }
 
@@ -283,7 +283,7 @@ export async function clearRestrictionsByTypeService(userId, type, adminId) {
 
   if (result.count > 0) {
     if (redisClient.isOpen) {
-      redisClient.del(`user:restriction:${userId}:${type}`).catch(() => {});
+      redisClient.del(`user:restriction:${userId}:${type}`).catch(() => { });
     }
     if (type === 'LIVE_AUDIO_MUTE') {
       await autoUnmuteSheetUserIfRestricted(userId);
@@ -297,7 +297,7 @@ export async function clearRestrictionsByTypeService(userId, type, adminId) {
             type
           });
         }
-      } catch (err) {}
+      } catch (err) { }
     });
   }
 

@@ -1175,9 +1175,7 @@ export const getGiftGalleryTargetsService = async (hostId) => {
         currentProgress,
         gifts: resultGifts
     };
-};
-
-export const getGiftInfoService = async ({ giftId }) => {
+};export const getGiftInfoService = async ({ giftId }) => {
     if (!giftId) return null;
     const cacheKey = `gift:info:${giftId}`;
     if (redisClient.isOpen) {
@@ -1187,7 +1185,12 @@ export const getGiftInfoService = async ({ giftId }) => {
         }
     }
     const gift = await prisma.gift.findUnique({
-        where: { id: giftId }
+        where: { id: giftId },
+        include: {
+            gift_categories: {
+                select: { id: true, name: true, slug: true }
+            }
+        }
     });
     if (gift && redisClient.isOpen) {
         await redisClient.set(cacheKey, JSON.stringify(gift), "EX", 86400);
@@ -1222,6 +1225,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
     const pointsAwarded = (coinCost * 60n) / 100n;
     const receiverId = receiverUserId;
+
     const isStealth = senderPrivacy.isStealth;
 
     const senderPublicId = isStealth ? null : (senderPrivacy?.publicId || null);
@@ -1234,7 +1238,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
     const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
-    if (gift.isLucky || gift.effectLuckyGift) {
+    const isCategoryLucky = gift.gift_categories?.slug?.toLowerCase() === "lucky" || gift.gift_categories?.name?.toLowerCase() === "lucky";
+
+    if (gift.isLucky || gift.effectLuckyGift || isCategoryLucky) {
         const luckyResult = await sendLuckyGiftService({
             senderId,
             receiverId,
