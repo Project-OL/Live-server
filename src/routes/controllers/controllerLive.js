@@ -840,7 +840,7 @@ const setChatPermission = async (req, res) => {
 const getGifts = async (req, res) => {
     try {
         const page = parseInt(req.query.page, 10) || 1;
-        const limit = parseInt(req.query.limit, 10) || 500;
+        const limit = 500;
         const skip = (page - 1) * limit;
 
         const [gifts, total] = await Promise.all([
