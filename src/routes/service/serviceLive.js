@@ -1183,7 +1183,7 @@ export const getGiftGalleryTargetsService = async (hostId) => {
         if (cached) {
             try {
                 const parsed = JSON.parse(cached);
-                if (parsed && parsed.gift_categories !== undefined) {
+                if (parsed && (parsed.category !== undefined || parsed.gift_categories !== undefined)) {
                     return parsed;
                 }
             } catch (e) { }
@@ -1192,7 +1192,7 @@ export const getGiftGalleryTargetsService = async (hostId) => {
     const gift = await prisma.gift.findUnique({
         where: { id: giftId },
         include: {
-            gift_categories: {
+            category: {
                 select: { id: true, name: true, slug: true }
             }
         }
@@ -1243,7 +1243,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
     const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
-    const isCategoryLucky = gift.gift_categories?.slug?.toLowerCase() === "lucky" || gift.gift_categories?.name?.toLowerCase() === "lucky";
+    const isCategoryLucky = gift.category?.slug?.toLowerCase() === "lucky" || gift.category?.name?.toLowerCase() === "lucky" || gift.gift_categories?.slug?.toLowerCase() === "lucky" || gift.gift_categories?.name?.toLowerCase() === "lucky";
 
     if (gift.isLucky || gift.effectLuckyGift || isCategoryLucky) {
         const luckyResult = await sendLuckyGiftService({
