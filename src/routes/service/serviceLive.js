@@ -1243,7 +1243,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
     const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
-    const isCategoryLucky = gift.category?.slug?.toLowerCase() === "lucky" || gift.category?.name?.toLowerCase() === "lucky" || gift.gift_categories?.slug?.toLowerCase() === "lucky" || gift.gift_categories?.name?.toLowerCase() === "lucky";
+    const isCategoryLucky = gift.category?.slug?.toLowerCase() === "lucky";
 
     if (gift.isLucky || gift.effectLuckyGift || isCategoryLucky) {
         const luckyResult = await sendLuckyGiftService({
