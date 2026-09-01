@@ -871,21 +871,12 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
             });
 
             for (const session of activeSessionsForHeartbeat) {
-                const globalPing = heartbeatCache.get(session.id);
-                const callerPing = heartbeatCache.get(`${session.id}:${session.callerId}`) || globalPing;
-                const creatorPing = heartbeatCache.get(`${session.id}:${session.creatorId}`) || globalPing;
+                const sessionPing = heartbeatCache.get(session.id);
 
-                const callerStale = callerPing ? (now - callerPing > 30000) : false;
-                const creatorStale = creatorPing ? (now - creatorPing > 30000) : false;
-
-                if (callerStale || creatorStale) {
-                    const missingUserId = callerStale ? session.callerId : session.creatorId;
-                    console.log(`[VideoCall Protection] Heartbeat lost for session ${session.id} (Participant: ${missingUserId}). Auto-ending call.`);
-                    heartbeatCache.delete(`${session.id}:${session.callerId}`);
-                    heartbeatCache.delete(`${session.id}:${session.creatorId}`);
+                if (!sessionPing || (now - sessionPing > 60000)) {
+                    console.log(`[VideoCall Protection] Global heartbeat lost for session ${session.id}. Auto-ending call.`);
                     heartbeatCache.delete(session.id);
-
-                    await endCall(session.id, missingUserId, "HEARTBEAT_LOST");
+                    await endCall(session.id, session.callerId, "HEARTBEAT_LOST");
                 }
             }
         } catch (hbErr) {
