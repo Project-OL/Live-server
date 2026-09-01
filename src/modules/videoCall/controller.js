@@ -74,7 +74,8 @@ export const getCallSettings = async (req, res) => {
 export const heartbeat = async (req, res) => {
     try {
         const body = await heartbeatSchema.validateAsync(req.body);
-        videoCallService.heartbeatCache.set(body.sessionId, Date.now());
+        const userId = req.user?.id || req.body?.userId;
+        videoCallService.recordHeartbeat(body.sessionId, userId);
         return res.status(200).json({ success: true, message: "Heartbeat received" });
     } catch (error) {
         return res.status(400).json({ success: false, message: error.message });

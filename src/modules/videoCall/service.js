@@ -13,6 +13,15 @@ import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.
 
 export const heartbeatCache = new Map();
 
+export const recordHeartbeat = (sessionId, userId) => {
+    if (!sessionId) return;
+    const now = Date.now();
+    heartbeatCache.set(sessionId, now);
+    if (userId) {
+        heartbeatCache.set(`${sessionId}:${userId}`, now);
+    }
+};
+
 export const scheduledDisconnects = new Map();
 
 export const activeReturnTimeouts = new Map();
@@ -522,7 +531,8 @@ export const acceptCall = async (sessionId, receiverId) => {
         coinRatePerMin: Number(coinRate)
     });
 
-    heartbeatCache.set(sessionId, Date.now());
+    recordHeartbeat(sessionId, session.callerId);
+    recordHeartbeat(sessionId, session.creatorId);
 
     // 2nd minute precision disconnect check (Very fast, runs in background)
     (async () => {
@@ -681,6 +691,12 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
         console.error(`[LiveKit] Background close room ${session.livekitRoom} failed:`, err);
     });
     heartbeatCache.delete(sessionId);
+    if (session.callerId) heartbeatCache.delete(`${sessionId}:${session.callerId}`);
+    if (session.creatorId) heartbeatCache.delete(`${sessionId}:${session.creatorId}`);
+    if (redisClient.isOpen) {
+        if (session.callerId) redisClient.del(`call:disconnect:${sessionId}:${session.callerId}`).catch(() => { });
+        if (session.creatorId) redisClient.del(`call:disconnect:${sessionId}:${session.creatorId}`).catch(() => { });
+    }
 
     if (scheduledDisconnects.has(sessionId)) {
         clearTimeout(scheduledDisconnects.get(sessionId));
@@ -849,16 +865,31 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
     setInterval(async () => {
         const now = Date.now();
 
-        for (const [sessionId, lastPing] of heartbeatCache.entries()) {
-            if (now - lastPing > 30000) {
-                console.log(`[VideoCall] Heartbeat lost for session ${sessionId}, auto-ending.`);
-                heartbeatCache.delete(sessionId);
+        try {
+            const activeSessionsForHeartbeat = await prisma.videoCallSession.findMany({
+                where: { status: "ACTIVE" }
+            });
 
-                const session = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
-                if (session && session.status === "ACTIVE") {
-                    await endCall(sessionId, session.callerId, "HEARTBEAT_LOST");
+            for (const session of activeSessionsForHeartbeat) {
+                const globalPing = heartbeatCache.get(session.id);
+                const callerPing = heartbeatCache.get(`${session.id}:${session.callerId}`) || globalPing;
+                const creatorPing = heartbeatCache.get(`${session.id}:${session.creatorId}`) || globalPing;
+
+                const callerStale = callerPing ? (now - callerPing > 15000) : false;
+                const creatorStale = creatorPing ? (now - creatorPing > 15000) : false;
+
+                if (callerStale || creatorStale) {
+                    const missingUserId = callerStale ? session.callerId : session.creatorId;
+                    console.log(`[VideoCall Protection] Heartbeat lost for session ${session.id} (Participant: ${missingUserId}). Auto-ending call.`);
+                    heartbeatCache.delete(`${session.id}:${session.callerId}`);
+                    heartbeatCache.delete(`${session.id}:${session.creatorId}`);
+                    heartbeatCache.delete(session.id);
+
+                    await endCall(session.id, missingUserId, "HEARTBEAT_LOST");
                 }
             }
+        } catch (hbErr) {
+            console.error("[VideoCall Protection] Heartbeat background check error:", hbErr.message);
         }
 
         try {
@@ -895,6 +926,23 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                     let hasFailed = false;
 
                     for (let m = session.minsCharged + 1; m <= currentMinute; m++) {
+                        // Billing Guard: Check if caller was disconnected prior to or during minute m boundary
+                        let isCallerDisconnected = false;
+                        if (redisClient.isOpen) {
+                            const discVal = await redisClient.get(`call:disconnect:${session.id}:${session.callerId}`);
+                            if (discVal) {
+                                const discTime = parseInt(discVal, 10);
+                                const minStartTime = new Date(session.startedAt).getTime() + (m - 1) * 60000;
+                                if (!isNaN(discTime) && discTime <= minStartTime + 5000) {
+                                    isCallerDisconnected = true;
+                                }
+                            }
+                        }
+
+                        if (isCallerDisconnected) {
+                            console.log(`[VideoCall Billing Guard] Caller ${session.callerId} was disconnected prior to Minute ${m} boundary. Skipping Minute ${m} charge for session ${session.id}.`);
+                            break;
+                        }
                         try {
                             let txAgencyUserId = null;
                             await prisma.$transaction(async (tx) => {
