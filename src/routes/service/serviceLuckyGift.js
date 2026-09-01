@@ -170,7 +170,7 @@ export const sendLuckyGiftService = async ({
                     idempotencyKey: `${txKeyBase}-host-cut`,
                     refId: giftTransactionId,
                     counterpartyId: senderId,
-                    description: `Host 4% Cut from Lucky Gift: ${gift.name}`,
+                    description: `Received Lucky Gift: ${gift.name}`,
                     metadata: {
                         giftId: gift.id,
                         giftName: gift.name,
