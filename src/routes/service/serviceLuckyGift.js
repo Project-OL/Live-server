@@ -146,11 +146,11 @@ export const sendLuckyGiftService = async ({
                     walletId: senderWallet.id,
                     amount: luckyResult.totalReward,
                     direction: LedgerDirection.CREDIT,
-                    txType: CoinTxType.GIFT_REFUND,
+                    txType: CoinTxType.PLATFORM_REWARD,
                     balanceAfter: coinsAfterCredit,
                     idempotencyKey: `${txKeyBase}-reward`,
                     refId: giftTransactionId,
-                    description: `Lucky Gift Reward Won: ${gift.name} (${luckyResult.category})`
+                    description: `Lucky Winner: ${gift.name} (${luckyResult.category})`
                 }
             });
         }
