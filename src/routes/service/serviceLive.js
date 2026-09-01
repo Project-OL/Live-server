@@ -1181,7 +1181,12 @@ export const getGiftGalleryTargetsService = async (hostId) => {
     if (redisClient.isOpen) {
         const cached = await redisClient.get(cacheKey);
         if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.gift_categories !== undefined) {
+                    return parsed;
+                }
+            } catch (e) { }
         }
     }
     const gift = await prisma.gift.findUnique({
