@@ -723,13 +723,13 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
 
                 const returnTimerKey1 = `host:return_timer:${streamId}:${hostId}`;
                 const returnTimerKey2 = `host:return_timer:${hostId}`;
-                
+
                 // Set 120-second (2 minute) return grace timer in Redis
                 if (redisClient.isOpen) {
                     await Promise.all([
                         redisClient.set(returnTimerKey1, "pending", "EX", 120),
                         redisClient.set(returnTimerKey2, "pending", "EX", 120)
-                    ]).catch(() => {});
+                    ]).catch(() => { });
                 }
 
                 console.log(`[VideoCall End] Host ${hostId} has 2 minutes (120s) to return to live stream ${streamId} from Home screen.`);
@@ -755,7 +755,7 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                                     redisClient.del(returnTimerKey1),
                                     redisClient.del(returnTimerKey2),
                                     redisClient.del(`video_call:stream_pause:${sessionId}`)
-                                ]).catch(() => {});
+                                ]).catch(() => { });
                             }
 
                             const activeStream = await prisma.liveStream.findFirst({
@@ -871,12 +871,14 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
             });
 
             for (const session of activeSessionsForHeartbeat) {
-                const sessionPing = heartbeatCache.get(session.id);
-
-                if (!sessionPing || (now - sessionPing > 60000)) {
-                    console.log(`[VideoCall Protection] Global heartbeat lost for session ${session.id}. Auto-ending call.`);
-                    heartbeatCache.delete(session.id);
-                    await endCall(session.id, session.callerId, "HEARTBEAT_LOST");
+                const sessionAge = now - new Date(session.startedAt).getTime();
+                if (sessionAge > 45000) {
+                    const sessionPing = heartbeatCache.get(session.id) || new Date(session.startedAt).getTime();
+                    if (now - sessionPing > 60000) {
+                        console.log(`[VideoCall Protection] Global heartbeat lost for session ${session.id}. Auto-ending call.`);
+                        heartbeatCache.delete(session.id);
+                        await endCall(session.id, session.callerId, "HEARTBEAT_LOST");
+                    }
                 }
             }
         } catch (hbErr) {
