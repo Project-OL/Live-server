@@ -1,6 +1,6 @@
 import { getBannedWords, censorTextWithFuzzyMatch } from "../../utils/censor.js";
 import prisma from "../../config/prisma.js";
-import redisClient from "../../config/redis.js";
+import { client as redisClient } from "../../config/redis.js";
 import * as videoCallService from "./service.js";
 
 export const userSockets = new Map();
