@@ -112,30 +112,32 @@ export const fastGoLiveStreamService = async ({
         throw new Error("Your streaming privileges are suspended due to moderation violations.");
     }
 
-    if (activeStreamId) {
-        const dbActiveStream = await prisma.liveStream.findFirst({
-            where: {
-                userId,
-                isLive: true
-            },
-            select: { id: true }
-        });
-        if (!dbActiveStream) {
-            console.warn(`[Self-Healing] Cleaning up stale Redis active stream key for user ${userId} (StreamId: ${activeStreamId})`);
-            if (redisClient.isOpen) {
-                await Promise.all([
-                    redisClient.del(activeStreamKey),
-                    redisClient.del(`stream:info:${activeStreamId}`)
-                ]).catch(() => { });
+    const dbActiveStream = await prisma.liveStream.findFirst({
+        where: {
+            userId,
+            isLive: true
+        },
+        select: { id: true, streamId: true }
+    });
+
+    if (dbActiveStream) {
+        console.log(`[Auto-End Stream] Auto-ending previous active live stream ${dbActiveStream.id} for user ${userId} before starting new live stream`);
+        try {
+            const endSummary = await endLiveStreamService({ id: dbActiveStream.id, userId });
+            const { broadcastToStream } = await import('./socket-live-service.js');
+            if (endSummary && endSummary.stream) {
+                broadcastToStream(endSummary.stream.streamId || dbActiveStream.streamId || dbActiveStream.id, "stream_ended", endSummary.summary || {});
             }
-            activeStreamId = null;
-        } else {
-            throw new Error("You already have an active live stream. End it first.");
+        } catch (autoEndErr) {
+            console.error(`[Auto-End Stream Error]:`, autoEndErr.message);
+        }
+        if (redisClient.isOpen) {
+            await redisClient.del(activeStreamKey).catch(() => {});
         }
     }
 
     // 1. Parallel DB validations (only if not cached in Redis)
-    const [user, livePhoto, existingActive] = await Promise.all([
+    const [user, livePhoto] = await Promise.all([
         isSuspended !== null ? Promise.resolve(null) : prisma.user.findUnique({
             where: { id: userId },
             select: { suspended_until: true, avatarUrl: true }
@@ -143,13 +145,6 @@ export const fastGoLiveStreamService = async ({
         prisma.userLivePhoto.findUnique({
             where: { userId },
             select: { imageUrl: true }
-        }),
-        activeStreamId ? Promise.resolve(null) : prisma.liveStream.findFirst({
-            where: {
-                userId,
-                isLive: true
-            },
-            select: { id: true }
         })
     ]);
 
@@ -160,13 +155,6 @@ export const fastGoLiveStreamService = async ({
         throw new Error(`Your streaming privileges are suspended until ${user.suspended_until.toLocaleString()} due to moderation violations.`);
     } else if (user && redisClient.isOpen) {
         await redisClient.set(suspendedCacheKey, "false", "EX", 3600);
-    }
-
-    if (existingActive) {
-        if (redisClient.isOpen) {
-            await redisClient.set(activeStreamKey, existingActive.id, "EX", 86400);
-        }
-        throw new Error("You already have an active live stream. End it first.");
     }
 
     const coverImageUrl = livePhoto?.imageUrl || user?.avatarUrl || null;
