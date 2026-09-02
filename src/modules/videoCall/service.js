@@ -942,6 +942,8 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                                 const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
                                 const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
 
+                                await checkCoinsFrozenFast(session.callerId);
+
                                 const callerCoins = await getFastCoinBalance(callerWallet.id, tx);
                                 if (callerCoins < coinRate) {
                                     throw new Error("INSUFFICIENT_BALANCE");

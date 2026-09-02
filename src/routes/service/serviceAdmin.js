@@ -165,6 +165,24 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
     });
   }
 
+  // Auto-disconnect active video calls if personal or trading coins are frozen
+  if (type === 'PERSONAL_COINS_FREEZE' || type === 'TRADING_COINS_FREEZE') {
+    setImmediate(async () => {
+      try {
+        const { endVideoCallService } = await import('../../modules/videoCall/service.js');
+        const activeSessions = await prisma.videoCallSession.findMany({
+          where: { callerId: userId, status: 'ACTIVE' }
+        });
+        for (const s of activeSessions) {
+          console.log(`[Admin Restriction] Auto-ending active video call session ${s.id} for user ${userId} due to coin freeze`);
+          await endVideoCallService({ sessionId: s.id, userId: s.callerId, endReason: 'ADMIN_FREEZE' });
+        }
+      } catch (callKillErr) {
+        console.error('[Admin Restriction Auto-Kill Video Call Error]:', callKillErr.message);
+      }
+    });
+  }
+
   // 3. If LIVE_AUDIO_MUTE applied, immediately kick the user off any active audio sheet
   if (type === 'LIVE_AUDIO_MUTE') {
     setImmediate(async () => {
