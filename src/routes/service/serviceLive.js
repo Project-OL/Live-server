@@ -1251,6 +1251,16 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         luckyResult.socketPayload.isMystery = isStealth;
         if (isStealth) luckyResult.socketPayload.senderId = null;
 
+        if (luckyResult.luckyWin) {
+            luckyResult.luckyWin.senderName = senderName;
+            luckyResult.luckyWin.senderFirstName = isStealth ? null : (senderPrivacy?.firstName || null);
+            luckyResult.luckyWin.senderLastName = isStealth ? null : (senderPrivacy?.lastName || null);
+            luckyResult.luckyWin.senderAvatarUrl = isStealth ? null : (senderPrivacy?.avatarUrl || null);
+            luckyResult.luckyWin.senderPublicId = isStealth ? null : senderPublicId;
+            luckyResult.luckyWin.receiverName = receiverName;
+            luckyResult.luckyWin.receiverPublicId = receiverPublicId;
+        }
+
         const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
         if (galleryProgressUpdate) {
             luckyResult.galleryProgress = galleryProgressUpdate;

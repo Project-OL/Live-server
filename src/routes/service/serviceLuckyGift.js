@@ -276,6 +276,10 @@ export const sendLuckyGiftService = async ({
         luckyWin: luckyResult.totalReward > 0n ? {
             senderId,
             receiverId,
+            giftId: gift.id,
+            giftName: gift.name,
+            giftDisplayImageUrl: gift.displayImageUrl,
+            unitCoinCost: gift.coinCost,
             rewardCoins: Number(luckyResult.totalReward),
             category: luckyResult.category,
             breakdownArray: luckyResult.breakdownArray
