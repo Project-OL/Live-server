@@ -906,10 +906,11 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
-                const displaySenderName = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery Gifter") : (user ? user.username : "User");
+                const nameStr = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
+                const displaySenderName = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery Gifter") : (nameStr || user?.username || "User");
 
                 if (result.breakdownArray.length <= 1) {
                     // Single Lucky Draw Result
