@@ -4,6 +4,7 @@
 #
 # This file previously had the wrong trigger (branches: [prodv2], copied verbatim from the
 # prodv2 branch) so pushes to `staging` deployed nothing. Fixed to trigger on `staging`.
+# Test push 2026-09-04 to re-verify SSH connectivity from GitHub Actions.
 name: Staging build and deploy
 
 on:
