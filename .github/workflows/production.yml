@@ -1,27 +1,19 @@
-# Deploys to the NEW private EC2 (ol-prod-app-01 / i-0351dd6514d9c3f06) via SSM.
-# Current live production stays on branch `production` (SSH to the existing EC2).
-# IAM: ol-prod-github-deploy-role trust must allow
-#   repo:Project-OL/Live-server:ref:refs/heads/prodv2
-name: Prodv2 build and deploy
+# Deploys to the staging EC2 (ol-stag) via SSH (existing STAGING_EC2_HOST/STAGING_EC2_USER/
+# STAGING_EC2_SSH_PRIVATE_KEY secrets, "staging" environment). The NEW private EC2
+# (ol-prod-app-01) is deployed separately by the `prodv2` branch's own workflow via SSM.
+#
+# This file previously had the wrong trigger (branches: [prodv2], copied verbatim from the
+# prodv2 branch) so pushes to `staging` deployed nothing. Fixed to trigger on `staging`.
+name: Staging build and deploy
 
 on:
   push:
-    branches: [prodv2]
+    branches: [staging]
   workflow_dispatch:
 
 concurrency:
-  group: prodv2-ec2-live-server
+  group: staging-ec2-live-server
   cancel-in-progress: false
-
-permissions:
-  contents: read
-  id-token: write
-
-env:
-  AWS_REGION: ap-south-1
-  AWS_ROLE_ARN: arn:aws:iam::465457334877:role/ol-prod-github-deploy-role
-  DEPLOY_BUCKET: ol-production-deploy-artifacts-465457334877
-  EC2_INSTANCE_ID: i-0351dd6514d9c3f06
 
 jobs:
   build:
@@ -57,11 +49,12 @@ jobs:
         with:
           name: live-server-${{ github.sha }}
           path: live-server-artifact.tgz
-          retention-days: 30
+          retention-days: 14
 
   deploy:
     needs: build
     runs-on: ubuntu-latest
+    environment: staging
     steps:
       - uses: actions/checkout@v4
 
@@ -70,117 +63,39 @@ jobs:
         with:
           name: live-server-${{ github.sha }}
 
-      - name: Configure AWS credentials
-        uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ env.AWS_ROLE_ARN }}
-          aws-region: ${{ env.AWS_REGION }}
-
-      - name: Verify AWS identity
-        run: aws sts get-caller-identity
-
-      - name: Upload deployment artifact to S3
-        run: |
-          aws s3 cp \
-            live-server-artifact.tgz \
-            "s3://${DEPLOY_BUCKET}/live-server/live-server-${GITHUB_SHA}.tgz"
-
-      - name: Upload deployment script to S3
-        run: |
-          aws s3 cp \
-            .github/deploy/ec2-unpack-live-server.sh \
-            "s3://${DEPLOY_BUCKET}/live-server/ec2-unpack-live-server-${GITHUB_SHA}.sh"
-
-      - name: Send deployment command to EC2
+      - name: Check staging EC2 secrets
         env:
-          ARTIFACT_KEY: live-server/live-server-${{ github.sha }}.tgz
-          DEPLOY_SCRIPT_KEY: live-server/ec2-unpack-live-server-${{ github.sha }}.sh
+          KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          HOST: ${{ secrets.STAGING_EC2_HOST }}
+          USER: ${{ secrets.STAGING_EC2_USER }}
         run: |
-          COMMAND_ID=$(
-            aws ssm send-command \
-              --region "$AWS_REGION" \
-              --instance-ids "$EC2_INSTANCE_ID" \
-              --document-name "AWS-RunShellScript" \
-              --comment "Live-server prodv2 deployment ${GITHUB_SHA}" \
-              --parameters commands="[
-                \"set -e\",
-                \"rm -f /tmp/live-server-artifact.tgz /tmp/ec2-unpack-live-server.sh\",
-                \"aws s3 cp s3://${DEPLOY_BUCKET}/${ARTIFACT_KEY} /tmp/live-server-artifact.tgz\",
-                \"aws s3 cp s3://${DEPLOY_BUCKET}/${DEPLOY_SCRIPT_KEY} /tmp/ec2-unpack-live-server.sh\",
-                \"chmod 700 /tmp/ec2-unpack-live-server.sh\",
-                \"bash /tmp/ec2-unpack-live-server.sh\"
-              ]" \
-              --query 'Command.CommandId' \
-              --output text
-          )
+          if [ -z "$KEY" ] || [ -z "$HOST" ] || [ -z "$USER" ]; then
+            echo "Set Environment staging secrets: STAGING_EC2_HOST, STAGING_EC2_USER, STAGING_EC2_SSH_PRIVATE_KEY"
+            exit 1
+          fi
 
-          echo "SSM Command ID: $COMMAND_ID"
-          echo "COMMAND_ID=$COMMAND_ID" >> "$GITHUB_ENV"
-
-      - name: Wait for deployment
+      - name: Deploy to EC2
+        env:
+          SSH_PRIVATE_KEY: ${{ secrets.STAGING_EC2_SSH_PRIVATE_KEY }}
+          EC2_HOST: ${{ secrets.STAGING_EC2_HOST }}
+          EC2_USER: ${{ secrets.STAGING_EC2_USER }}
         run: |
-          echo "Waiting for SSM deployment..."
-
-          for i in {1..60}; do
-            STATUS=$(
-              aws ssm get-command-invocation \
-                --region "$AWS_REGION" \
-                --command-id "$COMMAND_ID" \
-                --instance-id "$EC2_INSTANCE_ID" \
-                --query 'Status' \
-                --output text
-            )
-
-            echo "Attempt $i: SSM status = $STATUS"
-
-            case "$STATUS" in
-              Success)
-                echo "Deployment completed successfully."
-                break
-                ;;
-
-              Failed|Cancelled|TimedOut|Cancelling)
-                echo "Deployment failed with status: $STATUS"
-
-                aws ssm get-command-invocation \
-                  --region "$AWS_REGION" \
-                  --command-id "$COMMAND_ID" \
-                  --instance-id "$EC2_INSTANCE_ID" \
-                  --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-                  --output yaml
-
-                exit 1
-                ;;
-
-              Pending|InProgress|Delayed)
-                sleep 5
-                ;;
-
-              *)
-                echo "Unknown SSM status: $STATUS"
-                sleep 5
-                ;;
-            esac
-
-            if [ "$i" -eq 60 ]; then
-              echo "Deployment timed out waiting for SSM."
-
-              aws ssm get-command-invocation \
-                --region "$AWS_REGION" \
-                --command-id "$COMMAND_ID" \
-                --instance-id "$EC2_INSTANCE_ID" \
-                --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-                --output yaml
-
-              exit 1
-            fi
-          done
-
-      - name: Show deployment output
-        run: |
-          aws ssm get-command-invocation \
-            --region "$AWS_REGION" \
-            --command-id "$COMMAND_ID" \
-            --instance-id "$EC2_INSTANCE_ID" \
-            --query '{Status:Status,StatusDetails:StatusDetails,Stdout:StandardOutputContent,Stderr:StandardErrorContent}' \
-            --output yaml
+          mkdir -p ~/.ssh
+          printf '%s\n' "$SSH_PRIVATE_KEY" | tr -d '\r' > ~/.ssh/id_deploy
+          chmod 600 ~/.ssh/id_deploy
+          ssh-keyscan -H "$EC2_HOST" >> ~/.ssh/known_hosts || true
+          scp -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            live-server-artifact.tgz "$EC2_USER@$EC2_HOST:/tmp/live-server-artifact.tgz"
+          ssh -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            "$EC2_USER@$EC2_HOST" \
+            'bash -s' < .github/deploy/ec2-unpack-live-server.sh
+# Required GitHub Actions secrets (Environment "staging"):
+#   STAGING_EC2_HOST / STAGING_EC2_USER / STAGING_EC2_SSH_PRIVATE_KEY
+# EC2_USER must be root, or the ec2-unpack script's APP_USER (olapp), for the script's privilege
+# checks to pass.
