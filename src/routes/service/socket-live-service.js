@@ -875,6 +875,14 @@ export const setupLiveSockets = (io) => {
                         const count = result.socketPayload.count || 1;
                         const totalCost = Number(result.socketPayload.totalCost || (Number(result.socketPayload.gift?.coinCost || 0) * count) || 0);
 
+                        const broadcastMsgToRoom = (msg) => {
+                            if (!msg) return;
+                            broadcastToStream(streamId, "new_message", msg);
+                            if (result.socketPayload?.streamId && result.socketPayload.streamId !== streamId) {
+                                broadcastToStream(result.socketPayload.streamId, "new_message", msg);
+                            }
+                        };
+
                         if (isLucky) {
                             // 1. Lucky Gift Sent System Message
                             const sentMsg = await sendMessageService({
@@ -882,7 +890,7 @@ export const setupLiveSockets = (io) => {
                                 senderId: SYSTEM_SENDER_ID,
                                 message: `Lucky Sent: ${senderName} : sent ${giftName} x ${count}.`
                             });
-                            broadcastToStream(streamId, "new_message", sentMsg);
+                            broadcastMsgToRoom(sentMsg);
 
                             // 2. Lucky Gift Won System Message
                             if (result.luckyWin && Number(result.luckyWin.rewardCoins || 0) > 0) {
@@ -891,7 +899,7 @@ export const setupLiveSockets = (io) => {
                                     senderId: SYSTEM_SENDER_ID,
                                     message: `Lucky Won: ${result.luckyWin.senderName || senderName} sent ${result.luckyWin.receiverName || receiverName} ${result.luckyWin.giftName || giftName}, won ${result.luckyWin.rewardCoins} coins.`
                                 });
-                                broadcastToStream(streamId, "new_message", winMsg);
+                                broadcastMsgToRoom(winMsg);
                             }
                         } else {
                             // Normal Gift System Message
@@ -900,7 +908,7 @@ export const setupLiveSockets = (io) => {
                                 senderId: SYSTEM_SENDER_ID,
                                 message: `${senderName} sent ${receiverName} ${giftName} worth ${totalCost}.`
                             });
-                            broadcastToStream(streamId, "new_message", normalMsg);
+                            broadcastMsgToRoom(normalMsg);
                         }
                     } catch (err) {
                         console.error("[Socket send_gift System Message Error]:", err.message);
@@ -991,13 +999,21 @@ export const setupLiveSockets = (io) => {
                         const giftObj = result.gift;
                         const count = comboCount || 1;
 
+                        const broadcastMsgToRoom = (msg) => {
+                            if (!msg) return;
+                            broadcastToStream(streamId, "new_message", msg);
+                            if (result.socketPayload?.streamId && result.socketPayload.streamId !== streamId) {
+                                broadcastToStream(result.socketPayload.streamId, "new_message", msg);
+                            }
+                        };
+
                         // 1. Lucky Gift Sent System Message
                         const sentMsg = await sendMessageService({
                             streamId,
                             senderId: SYSTEM_SENDER_ID,
                             message: `Lucky Sent: ${displaySenderName} : sent ${giftObj?.name || 'Gift'} x ${count}.`
                         });
-                        broadcastToStream(streamId, "new_message", sentMsg);
+                        broadcastMsgToRoom(sentMsg);
 
                         // 2. Lucky Gift Won System Message (if winner)
                         if (result.luckyWin && Number(result.luckyWin.rewardCoins || 0) > 0) {
@@ -1006,7 +1022,7 @@ export const setupLiveSockets = (io) => {
                                 senderId: SYSTEM_SENDER_ID,
                                 message: `Lucky Won: ${displaySenderName} sent ${receiverName} ${giftObj?.name || 'Gift'}, won ${result.luckyWin.rewardCoins} coins.`
                             });
-                            broadcastToStream(streamId, "new_message", winMsg);
+                            broadcastMsgToRoom(winMsg);
                         }
                     } catch (err) {
                         console.error("[Socket send_lucky_gift System Message Error]:", err.message);
