@@ -1,5 +1,6 @@
-# Deploys to the NEW private EC2 (ol-prod-app-01 / i-0351dd6514d9c3f06) via SSM.
-# Current live production stays on branch `production` (SSH to the existing EC2).
+# Deploys to the private EC2 (ol-prod-app-01 / i-0351dd6514d9c3f06) via SSM.
+# The `production` branch was retired 2026-09-04 (its old SSH-deployed EC2 is no longer
+# reachable from GitHub Actions); this prodv2 pipeline is now the only production deploy path.
 # IAM: ol-prod-github-deploy-role trust must allow
 #   repo:Project-OL/Live-server:ref:refs/heads/prodv2
 name: Prodv2 build and deploy
