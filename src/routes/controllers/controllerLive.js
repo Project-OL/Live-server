@@ -909,6 +909,19 @@ const sendStreamGift = async (req, res) => {
 
         if (result.luckyWin) {
             broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+            const luckyWinObj = result.luckyWin;
+            setImmediate(async () => {
+                try {
+                    const systemMessage = await sendMessageService({
+                        streamId: result.socketPayload.streamId,
+                        senderId: SYSTEM_SENDER_ID,
+                        message: `Lucky Won: ${luckyWinObj.senderName || 'User'} sent ${luckyWinObj.receiverName || 'Host'} ${luckyWinObj.giftName || result.socketPayload?.gift?.name || 'Gift'}, won ${luckyWinObj.rewardCoins} coins.`
+                    });
+                    broadcastToStream(result.socketPayload.streamId, "new_message", systemMessage);
+                } catch (err) {
+                    console.error("[Lucky Win System Message Error]:", err.message);
+                }
+            });
         }
 
         // Broadcast gallery update if it unlocked a new gallery target progress

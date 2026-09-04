@@ -864,10 +864,23 @@ export const setupLiveSockets = (io) => {
                     console.log(`[Socket Gift Gallery] Broadcast GIFT_GALLERY_UPDATE & GIFT_GALLERY_PROGRESS_UPDATED in stream ${streamId}`);
                 }
 
-                // If Lucky Gift Winner -> Broadcast Lucky Win event
+                // If Lucky Gift Winner -> Broadcast Lucky Win event & System Chat Message
                 if (result.luckyWin) {
                     broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
                     console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${result.luckyWin.senderId}: ${result.luckyWin.rewardCoins} coins`);
+                    const luckyWinObj = result.luckyWin;
+                    setImmediate(async () => {
+                        try {
+                            const systemMessage = await sendMessageService({
+                                streamId,
+                                senderId: SYSTEM_SENDER_ID,
+                                message: `Lucky Won: ${luckyWinObj.senderName || 'User'} sent ${luckyWinObj.receiverName || 'Host'} ${luckyWinObj.giftName || result.socketPayload?.gift?.name || 'Gift'}, won ${luckyWinObj.rewardCoins} coins.`
+                            });
+                            broadcastToStream(streamId, "new_message", systemMessage);
+                        } catch (err) {
+                            console.error("[Socket Lucky Win System Message Error]:", err.message);
+                        }
+                    });
                 }
             } catch (err) {
                 console.error("[Socket] send_gift failed:", err.message);
@@ -929,6 +942,30 @@ export const setupLiveSockets = (io) => {
                             isMystery: isStealth
                         });
                     }
+                }
+
+                if (result.luckyWin) {
+                    const receiverUser = receiverId ? await prisma.user.findUnique({ where: { id: receiverId }, select: { username: true, name: true } }) : null;
+                    const receiverName = receiverUser ? (receiverUser.name || receiverUser.username || "Host") : "Host";
+                    result.luckyWin.senderName = displaySenderName;
+                    result.luckyWin.receiverName = receiverName;
+
+                    broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+                    console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${userId}: ${result.luckyWin.rewardCoins} coins`);
+
+                    const luckyWinObj = result.luckyWin;
+                    setImmediate(async () => {
+                        try {
+                            const systemMessage = await sendMessageService({
+                                streamId,
+                                senderId: SYSTEM_SENDER_ID,
+                                message: `Lucky Won: ${luckyWinObj.senderName || 'User'} sent ${luckyWinObj.receiverName || 'Host'} ${luckyWinObj.giftName || result.gift?.name || 'Gift'}, won ${luckyWinObj.rewardCoins} coins.`
+                            });
+                            broadcastToStream(streamId, "new_message", systemMessage);
+                        } catch (err) {
+                            console.error("[Socket Lucky Win System Message Error]:", err.message);
+                        }
+                    });
                 }
 
                 // Global Announcement Trigger if Lucky Gift Total Cost >= 300,000 Coins
