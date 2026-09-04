@@ -925,6 +925,14 @@ const sendStreamGift = async (req, res) => {
                 const count = result.socketPayload.count || 1;
                 const totalCost = Number(result.socketPayload.totalCost || (Number(result.socketPayload.gift?.coinCost || 0) * count) || 0);
 
+                const broadcastMsgToRoom = (msg) => {
+                    if (!msg) return;
+                    broadcastToStream(result.socketPayload.streamId, "new_message", msg);
+                    if (streamDbId && streamDbId !== result.socketPayload.streamId) {
+                        broadcastToStream(streamDbId, "new_message", msg);
+                    }
+                };
+
                 if (isLucky) {
                     // 1. Lucky Gift Sent System Message
                     const sentMsg = await sendMessageService({
@@ -932,7 +940,7 @@ const sendStreamGift = async (req, res) => {
                         senderId: SYSTEM_SENDER_ID,
                         message: `Lucky Sent: ${senderName} : sent ${giftName} x ${count}.`
                     });
-                    broadcastToStream(result.socketPayload.streamId, "new_message", sentMsg);
+                    broadcastMsgToRoom(sentMsg);
 
                     // 2. Lucky Gift Won System Message
                     if (result.luckyWin && Number(result.luckyWin.rewardCoins || 0) > 0) {
@@ -941,7 +949,7 @@ const sendStreamGift = async (req, res) => {
                             senderId: SYSTEM_SENDER_ID,
                             message: `Lucky Won: ${result.luckyWin.senderName || senderName} sent ${result.luckyWin.receiverName || receiverName} ${result.luckyWin.giftName || giftName}, won ${result.luckyWin.rewardCoins} coins.`
                         });
-                        broadcastToStream(result.socketPayload.streamId, "new_message", winMsg);
+                        broadcastMsgToRoom(winMsg);
                     }
                 } else {
                     // Normal Gift System Message
@@ -950,7 +958,7 @@ const sendStreamGift = async (req, res) => {
                         senderId: SYSTEM_SENDER_ID,
                         message: `${senderName} sent ${receiverName} ${giftName} worth ${totalCost}.`
                     });
-                    broadcastToStream(result.socketPayload.streamId, "new_message", normalMsg);
+                    broadcastMsgToRoom(normalMsg);
                 }
             } catch (err) {
                 console.error("[Gift System Message Error]:", err.message);
