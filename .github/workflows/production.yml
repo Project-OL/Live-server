@@ -95,9 +95,13 @@ jobs:
             -o StrictHostKeyChecking=accept-new \
             -o ConnectTimeout=20 \
             "$EC2_USER@$EC2_HOST" \
-            'bash -s' < .github/deploy/ec2-unpack-live-server.sh
+            'APP_USER=ec2-user APP_DIR=/home/ec2-user/live-server LOG_DIR=/home/ec2-user/live-server/logs ARTIFACT=/tmp/live-server-artifact.tgz bash -s' \
+            < .github/deploy/ec2-unpack-live-server.sh
 # Required GitHub Actions secrets (Environment "staging"):
 #   STAGING_EC2_HOST / STAGING_EC2_USER / STAGING_EC2_SSH_PRIVATE_KEY
-# EC2_USER must be root, or the ec2-unpack script's APP_USER (olapp), for the script's privilege
-# checks to pass.
-# retest 2026-09-05T04:29:05Z — box IP + DNS fixed, verifying staging deploy lands
+# ec2-unpack-live-server.sh defaults to the production layout (APP_USER=olapp,
+# APP_DIR=/opt/ol/apps/live-server) — staging's actual OS user is ec2-user and the app lives
+# at /home/ec2-user/live-server, so the ssh invocation above overrides APP_USER/APP_DIR/LOG_DIR
+# explicitly (mirrors ol-node-rest's staging.yml, which does the same for its own script).
+# Without this override the script's privilege check rejects ec2-user with
+# "must run as olapp or root" — this is what broke the very first staging deploy attempt.
