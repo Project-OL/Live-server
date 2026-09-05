@@ -100,3 +100,4 @@ jobs:
 #   STAGING_EC2_HOST / STAGING_EC2_USER / STAGING_EC2_SSH_PRIVATE_KEY
 # EC2_USER must be root, or the ec2-unpack script's APP_USER (olapp), for the script's privilege
 # checks to pass.
+# retest 2026-09-05T04:29:05Z — box IP + DNS fixed, verifying staging deploy lands
