@@ -839,7 +839,7 @@ export const setupLiveSockets = (io) => {
         });
 
         // Unified Send Gift Socket Handler (Handles both Normal & Lucky gifts)
-        socket.on("send_gift", async ({ streamId, receiverId, targetUserId, giftId, count = 1, comboCount = 1 }) => {
+        socket.on("send_gift", async ({ streamId, receiverId, targetUserId, giftId, count = 1, comboCount = 1, clientTxId = null }) => {
             try {
                 if (!userId) {
                     return socket.emit("error", { message: "Unauthorized socket user" });
@@ -851,7 +851,8 @@ export const setupLiveSockets = (io) => {
                     senderId: userId,
                     giftId,
                     targetUserId: targetUserId || receiverId,
-                    count: giftCount
+                    count: giftCount,
+                    clientTxId
                 });
 
                 // Standard Gift Animation broadcast

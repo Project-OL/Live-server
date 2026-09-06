@@ -7,7 +7,6 @@ import { isUserRestrictedFast } from './serviceAdmin.js';
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from '@prisma/client';
 import {
     getOrCreateWallet,
-    getFastCoinBalance,
     getFastPointBalance,
     updateUserLevel,
 } from '../../modules/videoCall/service.js';
@@ -16,6 +15,15 @@ import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/a
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
+import {
+    getCoinBalanceInTx,
+    getPointBalanceInTx,
+    lockWalletsForUpdate,
+    assertCoinsNotFrozenInTx,
+    writeCoinBalanceCache,
+    writePointBalanceCache,
+    runMoneyTransaction
+} from '../../services/walletBalance.service.js';
 import { getOrCreateSessionAlias } from './serviceMessage.js';
 
 import {
@@ -287,7 +295,7 @@ export const endLiveStreamService = async ({
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
 
     // Persist billable duration on the same Prisma update (do not rely on a separate
-    // $executeRawUnsafe — that path was leaving effective_duration_seconds at 0 in prod).
+    // $executeRawUnsafe â€” that path was leaving effective_duration_seconds at 0 in prod).
     const updatedStream = await prisma.liveStream.update({
         where: { id },
         data: {
@@ -1191,7 +1199,9 @@ export const getGiftGalleryTargetsService = async (hostId) => {
     return gift;
 };
 
-export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targetUserId, count = 1 }) => {
+export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targetUserId, count = 1, clientTxId = null }) => {
+    // Fast pre-check only; the authoritative freeze check runs under the wallet
+    // lock inside the transaction below.
     await checkCoinsFrozenFast(senderId);
 
     const stream = await getLiveStreamService({ id: streamDbId });
@@ -1270,63 +1280,185 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         return luckyResult;
     }
 
-    const walletKey = `wallet:coins:${senderId}`;
-    let senderCoinsStr = redisClient.isOpen ? await redisClient.get(walletKey) : null;
-    let senderCoins;
+    // The debit, the host point credit, the sender's wealth level and the
+    // agency commission all settle in one transaction holding FOR UPDATE on
+    // both wallet rows. Affordability is decided from the ledger inside that
+    // transaction - never from Redis, which ol-node-rest also writes.
+    // See src/services/walletBalance.service.js.
+    const giftTransactionId = crypto.randomUUID();
+    const idemBase = clientTxId
+        ? `gift-stream:${senderId}:${clientTxId}`
+        : `gift-stream:${giftTransactionId}`;
 
-    if (senderCoinsStr === null) {
-        let senderWallet = await prisma.wallet.findUnique({
-            where: { userId_currencyType: { userId: senderId, currencyType: WalletCurrencyType.COIN } }
-        });
-        if (!senderWallet) {
-            senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
+    let txAgencyUserId = null;
+    const settled = await runMoneyTransaction(async (tx) => {
+        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
+        const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT, tx);
+
+        await lockWalletsForUpdate(tx, [senderWallet.id, receiverWallet.id]);
+        await assertCoinsNotFrozenInTx(tx, senderId);
+
+        const senderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
+        if (senderCoins < coinCost) {
+            throw new Error("Insufficient coins to send this gift.");
         }
-        senderCoins = await getFastCoinBalance(senderWallet.id);
-    } else {
-        senderCoins = BigInt(senderCoinsStr);
-    }
+        const balanceAfterCoins = senderCoins - coinCost;
 
-    if (senderCoins < coinCost) {
-        throw new Error("Insufficient coins to send this gift.");
-    }
+        const userLevel = await tx.walletUserLevel.findUnique({
+            where: {
+                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
+            }
+        });
+        const currentLevel = userLevel ? userLevel.currentLevel : 1;
+        const cumulativeTotal = userLevel ? userLevel.cumulativeTotal : 0n;
+        const newCumulativeTotal = cumulativeTotal + coinCost;
 
-    const balanceAfterCoins = senderCoins - coinCost;
+        const nextLevelConfig = await tx.walletLevelConfig.findUnique({
+            where: {
+                levelType_level: { levelType: LevelType.WEALTH, level: currentLevel + 1 }
+            }
+        });
+
+        let finalLevel = currentLevel;
+        let isLevelUp = false;
+        if (nextLevelConfig && newCumulativeTotal >= nextLevelConfig.threshold) {
+            finalLevel = nextLevelConfig.level;
+            isLevelUp = true;
+        }
+
+        const receiverPoints = await getPointBalanceInTx(tx, receiverWallet.id);
+        const balanceAfterPoints = receiverPoints + pointsAwarded;
+
+        await tx.coinLedgerEntry.create({
+            data: {
+                walletId: senderWallet.id,
+                direction: LedgerDirection.DEBIT,
+                txType: CoinTxType.GIFT_SEND,
+                amount: coinCost,
+                balanceAfter: balanceAfterCoins,
+                idempotencyKey: `${idemBase}-coin`,
+                refId: giftTransactionId,
+                counterpartyId: receiverId,
+                description: `Sent gift ${gift.name} in live stream`,
+                metadata: {
+                    giftId: gift.id,
+                    giftTransactionId,
+                    context: "live_stream",
+                    quantity: giftCount
+                }
+            }
+        });
+
+        await tx.wallet.update({
+            where: { id: senderWallet.id },
+            data: { version: { increment: 1n } }
+        });
+
+        const hostLedger = await tx.pointLedgerEntry.create({
+            data: {
+                walletId: receiverWallet.id,
+                direction: LedgerDirection.CREDIT,
+                txType: PointTxType.GIFT_RECEIVE,
+                amount: pointsAwarded,
+                balanceAfter: balanceAfterPoints,
+                idempotencyKey: `${idemBase}-point`,
+                refId: giftTransactionId,
+                counterpartyId: senderId,
+                description: `Received gift ${gift.name} in live stream`,
+                metadata: {
+                    giftId: gift.id,
+                    giftName: gift.name,
+                    context: "live_stream",
+                    quantity: giftCount,
+                    unitCoinCost: Number(gift.coinCost),
+                    giftTransactionId
+                }
+            }
+        });
+
+        await tx.giftTransaction.create({
+            data: {
+                id: giftTransactionId,
+                senderUserId: senderId,
+                receiverUserId: receiverId,
+                giftId: gift.id,
+                coinCost: gift.coinCost,
+                quantity: giftCount,
+                pointsAwarded: Number(pointsAwarded),
+                context: "live_stream"
+            }
+        });
+
+        await tx.walletUserLevel.upsert({
+            where: {
+                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
+            },
+            create: {
+                userId: senderId,
+                levelType: LevelType.WEALTH,
+                currentLevel: finalLevel,
+                cumulativeTotal: newCumulativeTotal
+            },
+            update: {
+                currentLevel: finalLevel,
+                cumulativeTotal: newCumulativeTotal
+            }
+        });
+
+        await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
+
+        const commRes = await processLiveStreamAgencyCommission(
+            tx,
+            receiverId,
+            pointsAwarded,
+            hostLedger.id,
+            null,
+            {
+                businessRefId: giftTransactionId,
+                hostTxType: PointTxType.GIFT_RECEIVE,
+                gift,
+                context: "live_stream",
+                quantity: giftCount,
+                unitCoinCost: Number(gift.coinCost)
+            }
+        );
+        if (commRes && commRes.agencyUserId) {
+            txAgencyUserId = commRes.agencyUserId;
+        }
+
+        return { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp };
+    });
+
+    const { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp } = settled;
+
+    // Committed. Everything below is best-effort and must not fail the send.
+    await writeCoinBalanceCache(senderId, balanceAfterCoins);
+    await writePointBalanceCache(receiverId, balanceAfterPoints);
     if (redisClient.isOpen) {
-        await redisClient.set(walletKey, balanceAfterCoins.toString(), "EX", 3600);
-    }
-
-    const receiverPointsKey = `wallet:points:${receiverId}`;
-    let currentReceiverPointsStr = redisClient.isOpen ? await redisClient.get(receiverPointsKey) : null;
-    let currentReceiverPoints;
-
-    if (currentReceiverPointsStr === null) {
-        const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
-        currentReceiverPoints = await getFastPointBalance(receiverWallet.id);
-    } else {
-        currentReceiverPoints = BigInt(currentReceiverPointsStr);
-    }
-
-    const balanceAfterPoints = currentReceiverPoints + pointsAwarded;
-    if (redisClient.isOpen) {
-        await redisClient.set(receiverPointsKey, balanceAfterPoints.toString(), "EX", 3600);
         // Level XP Cache Invalidation for sender wealth level & receiver stream level
         redisClient.del(`level:wealth:${senderId}`).catch(() => { });
         redisClient.del(`level:stream:${receiverId}`).catch(() => { });
     }
 
-    // Synchronous Gift Gallery Progress check for Receiver (Host)
-    const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
+    if (txAgencyUserId) {
+        await afterCommissionCreditCommit(txAgencyUserId).catch((err) =>
+            console.error("[Stream Gift] agency tier recompute failed:", err.message)
+        );
+    }
 
-    const senderLevel = await prisma.walletUserLevel.findUnique({
-        where: {
-            userId_levelType: {
-                userId: senderId,
-                levelType: LevelType.WEALTH
+    if (redisClient.isOpen) {
+        try {
+            const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
+            if (keys && keys.length > 0) {
+                await redisClient.del(keys);
             }
-        },
-        select: { currentLevel: true }
-    });
-    const initialWealthLevel = senderLevel?.currentLevel || 1;
+        } catch (err) {
+            console.error("[Stream Gift] viewer cache bust failed:", err.message);
+        }
+    }
+
+    // Gift Gallery Progress for Receiver (Host)
+    const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
 
     const socketPayload = {
         success: true,
@@ -1354,177 +1486,20 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             effectUrl: gift.effectUrl,
             coinCost: Number(gift.coinCost)
         },
-        wealthLevel: isStealth ? 0 : initialWealthLevel,
-        isLevelUp: false,
+        wealthLevel: isStealth ? 0 : finalLevel,
+        isLevelUp,
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate
     };
 
-    setImmediate(async () => {
-        try {
-            console.log(`[Gift Background DB Sync] Starting DB sync for stream: ${streamDbId}`);
-            const userLevel = await prisma.walletUserLevel.findUnique({
-                where: {
-                    userId_levelType: {
-                        userId: senderId,
-                        levelType: LevelType.WEALTH
-                    }
-                }
-            });
-
-            const currentLevel = userLevel ? userLevel.currentLevel : 1;
-            const cumulativeTotal = userLevel ? userLevel.cumulativeTotal : 0n;
-            const newCumulativeTotal = cumulativeTotal + coinCost;
-
-            const nextLevelConfig = await prisma.walletLevelConfig.findUnique({
-                where: {
-                    levelType_level: {
-                        levelType: LevelType.WEALTH,
-                        level: currentLevel + 1
-                    }
-                }
-            });
-
-            let finalLevel = currentLevel;
-            let isLevelUp = false;
-            if (nextLevelConfig && newCumulativeTotal >= nextLevelConfig.threshold) {
-                finalLevel = nextLevelConfig.level;
-                isLevelUp = true;
-            }
-
-            socketPayload.wealthLevel = isStealth ? 0 : finalLevel;
-            socketPayload.isLevelUp = isLevelUp;
-
-
-
-            const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
-            const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT);
-
-            let txAgencyUserId = null;
-            const giftTransactionId = crypto.randomUUID();
-            await prisma.$transaction(async (tx) => {
-                await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
-
-                const receiverPoints = await getFastPointBalance(receiverWallet.id, tx);
-                const balanceAfterPointsCalculated = receiverPoints + pointsAwarded;
-
-                const [hostLedger] = await Promise.all([
-                    tx.pointLedgerEntry.create({
-                        data: {
-                            walletId: receiverWallet.id,
-                            direction: LedgerDirection.CREDIT,
-                            txType: PointTxType.GIFT_RECEIVE,
-                            amount: pointsAwarded,
-                            balanceAfter: balanceAfterPointsCalculated,
-                            idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-points`,
-                            refId: giftTransactionId,
-                            counterpartyId: senderId,
-                            description: `Received gift ${gift.name} in live stream`,
-                            metadata: {
-                                giftId: gift.id,
-                                giftName: gift.name,
-                                context: "live_stream",
-                                quantity: giftCount,
-                                unitCoinCost: Number(gift.coinCost),
-                                giftTransactionId
-                            }
-                        }
-                    }),
-                    tx.giftTransaction.create({
-                        data: {
-                            id: giftTransactionId,
-                            senderUserId: senderId,
-                            receiverUserId: receiverId,
-                            giftId: gift.id,
-                            coinCost: gift.coinCost,
-                            quantity: giftCount,
-                            pointsAwarded: Number(pointsAwarded),
-                            context: "live_stream"
-                        }
-                    }),
-                    tx.coinLedgerEntry.create({
-                        data: {
-                            walletId: senderWallet.id,
-                            direction: LedgerDirection.DEBIT,
-                            txType: CoinTxType.GIFT_SEND,
-                            amount: coinCost,
-                            balanceAfter: balanceAfterCoins,
-                            idempotencyKey: `gift-stream-${streamDbId}-${Date.now()}-coins`,
-                            refId: giftTransactionId,
-                            counterpartyId: receiverId,
-                            description: `Sent gift ${gift.name} in live stream`,
-                            metadata: {
-                                giftId: gift.id,
-                                giftTransactionId,
-                                context: "live_stream",
-                                quantity: giftCount
-                            }
-                        }
-                    }),
-                    tx.walletUserLevel.upsert({
-                        where: {
-                            userId_levelType: {
-                                userId: senderId,
-                                levelType: LevelType.WEALTH
-                            }
-                        },
-                        create: {
-                            userId: senderId,
-                            levelType: LevelType.WEALTH,
-                            currentLevel: finalLevel,
-                            cumulativeTotal: newCumulativeTotal
-                        },
-                        update: {
-                            currentLevel: finalLevel,
-                            cumulativeTotal: newCumulativeTotal
-                        }
-                    })
-                ]);
-
-                await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
-
-                const commRes = await processLiveStreamAgencyCommission(
-                    tx,
-                    receiverId,
-                    pointsAwarded,
-                    hostLedger.id,
-                    null,
-                    {
-                        businessRefId: giftTransactionId,
-                        hostTxType: PointTxType.GIFT_RECEIVE,
-                        gift,
-                        context: "live_stream",
-                        quantity: giftCount,
-                        unitCoinCost: Number(gift.coinCost)
-                    }
-                );
-                if (commRes && commRes.agencyUserId) {
-                    txAgencyUserId = commRes.agencyUserId;
-                }
-            }, { maxWait: 10000, timeout: 15000 });
-
-            if (txAgencyUserId) {
-                await afterCommissionCreditCommit(txAgencyUserId);
-            }
-            if (redisClient.isOpen) {
-                const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
-                if (keys && keys.length > 0) {
-                    await redisClient.del(keys);
-                }
-            }
-            console.log(`[Gift Background DB Sync] Successfully synced to DB for stream: ${streamDbId}`);
-        } catch (dbErr) {
-            console.error(`[Gift Background DB Sync] Async sync error:`, dbErr.message);
-        }
-    });
-
     return {
+        transactionId: giftTransactionId,
         socketPayload,
         galleryProgress: galleryProgressUpdate,
         galleryProgressUpdate: galleryProgressUpdate,
         newBalance: Number(balanceAfterCoins),
-        currentLevel: initialWealthLevel,
-        isLevelUp: false
+        currentLevel: finalLevel,
+        isLevelUp
     };
 };
 
@@ -1755,7 +1730,8 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
     return { agencyUserId, commissionPoints, agentLedgerEntry };
 };
 
-export const sendGlobalMessageService = async ({ senderId, message, streamId = null }) => {
+export const sendGlobalMessageService = async ({ senderId, message, streamId = null, clientTxId = null }) => {
+    // Fast pre-check only; re-checked under the wallet lock below.
     await checkCoinsFrozenFast(senderId);
 
     if (!message || message.trim() === "") {
@@ -1785,69 +1761,53 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         throw new Error("Sender user not found.");
     }
 
-    const walletKey = `wallet:coins:${senderId}`;
-    let senderCoinsStr = await redisClient.get(walletKey);
-    let senderCoins;
+    // Same rule as the gift paths: the 10,000-coin charge is decided from the
+    // ledger inside a transaction holding the wallet lock, and the message is
+    // only returned (and therefore broadcast) once that transaction commits.
+    const messageTxId = crypto.randomUUID();
+    const idemKey = clientTxId ? `global-msg:${senderId}:${clientTxId}` : `global-msg:${messageTxId}`;
 
-    let senderWallet = await prisma.wallet.findUnique({
-        where: { userId_currencyType: { userId: senderId, currencyType: WalletCurrencyType.COIN } }
-    });
-    if (!senderWallet) {
-        senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
-    }
+    const balanceAfterCoins = await runMoneyTransaction(async (tx) => {
+        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
+        await lockWalletsForUpdate(tx, [senderWallet.id]);
+        await assertCoinsNotFrozenInTx(tx, senderId);
 
-    const dbCoins = await getFastCoinBalance(senderWallet.id);
-    if (senderCoinsStr === null) {
-        senderCoins = dbCoins;
-    } else {
-        senderCoins = BigInt(senderCoinsStr);
-        if (dbCoins > senderCoins) {
-            senderCoins = dbCoins;
+        const senderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
+        if (senderCoins < cost) {
+            throw new Error("Insufficient coins to send a global message.");
         }
-    }
+        const dbBalanceAfter = senderCoins - cost;
 
-    if (senderCoins < cost) {
-        throw new Error("Insufficient coins to send a global message.");
-    }
+        await tx.coinLedgerEntry.create({
+            data: {
+                walletId: senderWallet.id,
+                direction: LedgerDirection.DEBIT,
+                txType: CoinTxType.GLOBAL_MESSAGE || "GLOBAL_MESSAGE",
+                amount: cost,
+                balanceAfter: dbBalanceAfter,
+                idempotencyKey: idemKey,
+                refId: messageTxId,
+                description: `Sent global message: "${message.substring(0, 30)}..."`
+            }
+        });
 
-    const balanceAfterCoins = senderCoins - cost;
-    await redisClient.set(walletKey, balanceAfterCoins.toString(), "EX", 3600);
+        await tx.wallet.update({
+            where: { id: senderWallet.id },
+            data: { version: { increment: 1n } }
+        });
 
-    setImmediate(async () => {
-        try {
-            await prisma.$transaction(async (tx) => {
-                await tx.$queryRawUnsafe(`SELECT 1 FROM wallets WHERE id = '${senderWallet.id}' FOR UPDATE`);
+        await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
 
-                const freshCoins = await getFastCoinBalance(senderWallet.id, tx);
-                const dbBalanceAfter = freshCoins - cost;
-
-                await tx.coinLedgerEntry.create({
-                    data: {
-                        walletId: senderWallet.id,
-                        direction: LedgerDirection.DEBIT,
-                        txType: CoinTxType.GLOBAL_MESSAGE || "GLOBAL_MESSAGE",
-                        amount: cost,
-                        balanceAfter: dbBalanceAfter,
-                        idempotencyKey: `global-msg-${senderId}-${Date.now()}`,
-                        description: `Sent global message: "${message.substring(0, 30)}..."`
-                    }
-                });
-
-                await tx.wallet.update({
-                    where: { id: senderWallet.id },
-                    data: { version: { increment: 1n } }
-                });
-
-                await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
-            }, { maxWait: 10000, timeout: 15000 });
-
-        } catch (dbErr) {
-            console.error(`[Global Message DB Sync] Critical Failure during async sync:`, dbErr);
-            redisClient.del(walletKey).catch(err => console.error(err));
-        }
+        return dbBalanceAfter;
     });
+
+    await writeCoinBalanceCache(senderId, balanceAfterCoins);
+    if (redisClient.isOpen) {
+        redisClient.del(`level:wealth:${senderId}`).catch(() => { });
+    }
 
     return {
+        transactionId: messageTxId,
         newBalance: Number(balanceAfterCoins),
         socketPayload: {
             senderId,

@@ -53,6 +53,10 @@ import { getIO } from '../../socket/index.js';
 import { client as redisClient } from '../../config/redis.js';
 import { WalletCurrencyType } from '@prisma/client';
 import { getOrCreateWallet, getFastCoinBalance } from '../../modules/videoCall/service.js';
+import {
+    readCoinBalanceCacheForDisplay,
+    writeCoinBalanceCache
+} from '../../services/walletBalance.service.js';
 
 const router = express.Router();
 
@@ -880,7 +884,7 @@ const getGifts = async (req, res) => {
 
 const sendStreamGift = async (req, res) => {
     try {
-        const { giftId, targetUserId, count = 1 } = req.body;
+        const { giftId, targetUserId, count = 1, clientTxId = null } = req.body;
         const streamDbId = req.params.id;
 
         if (!giftId) {
@@ -888,7 +892,7 @@ const sendStreamGift = async (req, res) => {
         }
 
         const giftCount = count
-        const result = await sendStreamGiftService({ streamDbId, senderId: req.userId, giftId, targetUserId, count: giftCount });
+        const result = await sendStreamGiftService({ streamDbId, senderId: req.userId, giftId, targetUserId, count: giftCount, clientTxId });
 
         // Broadcast GIFT_SENT to stream UUID, stream DB ID, receiver personal channel, and sender personal channel
         broadcastToStream(result.socketPayload.streamId, "GIFT_SENT", result.socketPayload);
@@ -1035,11 +1039,23 @@ const sendStreamGift = async (req, res) => {
                 isLucky: result.isLucky || false,
                 sendValue: result.totalCost !== undefined ? Number(result.totalCost) : (Number(result.socketPayload?.gift?.coinCost || 0) * Number(result.socketPayload?.count || 1)),
                 returnValue: result.totalRewardCoins !== undefined ? Number(result.totalRewardCoins) : (result.luckyWin ? Number(result.luckyWin.rewardCoins) : 0),
+                transactionId: result.transactionId || null,
                 category: result.category || null
             }
         });
     } catch (error) {
-        return res.status(400).json({ success: false, message: error.message });
+        // The debit is synchronous now, so these are the client's real outcome.
+        const msg = error.message || "Failed to send gift";
+        if (msg.includes("Insufficient coin")) {
+            return res.status(402).json({ success: false, code: "INSUFFICIENT_COINS", message: msg });
+        }
+        if (msg.includes("frozen")) {
+            return res.status(403).json({ success: false, code: "PERSONAL_COINS_FROZEN", message: msg });
+        }
+        if (error.code === "P2002") {
+            return res.status(409).json({ success: false, code: "IDEM_CONFLICT", message: "Duplicate gift send (already processed)" });
+        }
+        return res.status(400).json({ success: false, message: msg });
     }
 };
 
@@ -1093,23 +1109,18 @@ const sendGlobalMessage = async (req, res) => {
 
 const getWalletBalance = async (req, res) => {
     try {
-        const walletKey = `wallet:coins:${req.userId}`;
-        if (redisClient.isOpen) {
-            const cachedCoins = await redisClient.get(walletKey);
-            if (cachedCoins !== null) {
-                return res.status(200).json({
-                    success: true,
-                    balance: Number(cachedCoins)
-                });
-            }
+        // Display only - this value is never used to authorise a debit.
+        const cachedCoins = await readCoinBalanceCacheForDisplay(req.userId);
+        if (cachedCoins !== null) {
+            return res.status(200).json({
+                success: true,
+                balance: Number(cachedCoins)
+            });
         }
 
         const wallet = await getOrCreateWallet(req.userId, WalletCurrencyType.COIN);
         const coins = await getFastCoinBalance(wallet.id);
-
-        if (redisClient.isOpen) {
-            await redisClient.set(walletKey, coins.toString(), "EX", 3600);
-        }
+        await writeCoinBalanceCache(req.userId, coins);
 
         return res.status(200).json({
             success: true,
