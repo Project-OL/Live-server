@@ -10,6 +10,7 @@
     "kill-port": "kill-port $PORT",
     "start": "node server.js",
     "postinstall": "prisma generate",
+    "check:wallet-cache": "node scripts/check-wallet-cache-usage.mjs",
     "lift-live-bans": "node scripts/lift-live-moderation-bans.js",
     "lift-live-bans:dry-run": "node scripts/lift-live-moderation-bans.js --dry-run",
     "lift-live-bans:verify": "node scripts/lift-live-moderation-bans.js --verify-only"

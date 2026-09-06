@@ -194,24 +194,40 @@ export const verifyFrame = async (req, res) => {
 
 export const sendGift = async (req, res) => {
     try {
-        const { sessionId, giftId, quantity } = req.body;
+        const { sessionId, giftId, quantity, clientTxId = null } = req.body;
         if (!sessionId || !giftId) {
             return res.status(400).json({ success: false, message: "sessionId and giftId are required." });
         }
 
         const giftCount = Math.max(1, parseInt(quantity || 1, 10));
-        const result = await videoCallService.sendGift(sessionId, req.userId, giftId, giftCount);
+        const result = await videoCallService.sendGift(sessionId, req.userId, giftId, giftCount, clientTxId);
         return res.status(200).json({
             success: true,
             message: "Gift sent successfully",
             data: {
+                transactionId: result.transactionId,
                 newBalance: Number(result.newBalance),
                 currentLevel: result.currentLevel,
                 isLevelUp: result.isLevelUp
             }
         });
     } catch (error) {
-        return res.status(500).json({ success: false, message: error.message });
+        // The debit is now synchronous, so these reach the client instead of
+        // being swallowed by a background sync - map them to real statuses.
+        const msg = error.message || "Failed to send gift";
+        if (msg.includes("Insufficient coins")) {
+            return res.status(402).json({ success: false, code: "INSUFFICIENT_COINS", message: msg });
+        }
+        if (msg.includes("frozen")) {
+            return res.status(403).json({ success: false, code: "PERSONAL_COINS_FROZEN", message: msg });
+        }
+        if (error.code === "P2002") {
+            return res.status(409).json({ success: false, code: "IDEM_CONFLICT", message: "Duplicate gift send (already processed)" });
+        }
+        if (msg.includes("not found") || msg.includes("not active") || msg.includes("inactive")) {
+            return res.status(400).json({ success: false, message: msg });
+        }
+        return res.status(500).json({ success: false, message: msg });
     }
 };
 

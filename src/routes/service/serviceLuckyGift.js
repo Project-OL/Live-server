@@ -10,11 +10,20 @@ import crypto from 'crypto';
 import { client as redisClient } from '../../config/redis.js';
 import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType } from '@prisma/client';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
-import { getOrCreateWallet, getFastCoinBalance, getFastPointBalance } from '../../modules/videoCall/service.js';
+import { getOrCreateWallet } from '../../modules/videoCall/service.js';
 import { processLiveStreamAgencyCommission } from './serviceLive.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
+import {
+    getCoinBalanceInTx,
+    getPointBalanceInTx,
+    lockWalletsForUpdate,
+    assertCoinsNotFrozenInTx,
+    writeCoinBalanceCache,
+    writePointBalanceCache,
+    runMoneyTransaction
+} from '../../services/walletBalance.service.js';
 
 export const calculateHostEarning = ({ totalCost }) => {
     const costBigInt = BigInt(totalCost);
@@ -35,6 +44,7 @@ export const sendLuckyGiftService = async ({
     clientTxId = null,
     preFetchedGift = null
 }) => {
+    // Fast pre-check only; re-checked under the wallet lock inside the tx.
     await checkCoinsFrozenFast(senderId);
     if (clientTxId) {
         const cachedTx = await redisClient.get(`lucky:idempotency:${clientTxId}`);
@@ -57,21 +67,6 @@ export const sendLuckyGiftService = async ({
 
     const unitCost = BigInt(gift.coinCost);
     const totalCost = unitCost * BigInt(count);
-
-    const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN);
-    const walletKey = `wallet:coins:${senderId}`;
-    let senderCoinsStr = redisClient.isOpen ? await redisClient.get(walletKey) : null;
-    let senderCoins;
-
-    if (senderCoinsStr === null) {
-        senderCoins = await getFastCoinBalance(senderWallet.id);
-    } else {
-        senderCoins = BigInt(senderCoinsStr);
-    }
-
-    if (senderCoins < totalCost) {
-        throw new Error(`Insufficient coin balance. Required: ${totalCost}, Available: ${senderCoins}`);
-    }
 
     const hostPoints = calculateHostEarning({ totalCost });
     const isCombo = count > 1;
@@ -101,23 +96,30 @@ export const sendLuckyGiftService = async ({
         };
     }
 
-    const netSenderDeduction = totalCost - luckyResult.totalReward;
-    const finalBalanceCoins = senderCoins - netSenderDeduction;
-
-    if (redisClient.isOpen) {
-        await redisClient.set(walletKey, finalBalanceCoins.toString(), "EX", 3600);
-    }
-
     const giftTransactionId = crypto.randomUUID();
     const luckyContext = isCombo ? "LUCKY_COMBO" : "LUCKY_SINGLE";
-    const txRecord = await prisma.$transaction(async (tx) => {
+    // Deterministic per logical send: a client-supplied txId when there is one,
+    // otherwise the gift transaction id, which is stable across tx retries.
+    const txKeyBase = clientTxId ? `lucky:${senderId}:${clientTxId}` : `lucky:${giftTransactionId}`;
+
+    // The sender must be able to afford the FULL gift cost before any reward is
+    // credited back - the lucky reward is a separate credit, not a discount.
+    // Affordability is read from the ledger under FOR UPDATE, never from Redis.
+    const txRecord = await runMoneyTransaction(async (tx) => {
         const effectiveReceiverId = receiverId || senderId;
+        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
         const hostWallet = await getOrCreateWallet(effectiveReceiverId, WalletCurrencyType.POINT, tx);
 
-        const currentSenderCoins = senderCoins;
-        const coinsAfterDebit = currentSenderCoins - totalCost;
+        await lockWalletsForUpdate(tx, [senderWallet.id, hostWallet.id]);
+        await assertCoinsNotFrozenInTx(tx, senderId);
 
-        const txKeyBase = clientTxId || `lucky-${gift.id}-${senderId}-${Date.now()}-${Math.random().toString(36).substring(2, 8)}`;
+        const currentSenderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
+        if (currentSenderCoins < totalCost) {
+            throw new Error(
+                `Insufficient coin balance. Required: ${totalCost}, Available: ${currentSenderCoins}`
+            );
+        }
+        const coinsAfterDebit = currentSenderCoins - totalCost;
 
         await tx.coinLedgerEntry.create({
             data: {
@@ -139,8 +141,10 @@ export const sendLuckyGiftService = async ({
             }
         });
 
+        let finalBalanceCoins = coinsAfterDebit;
         if (luckyResult.totalReward > 0n) {
             const coinsAfterCredit = coinsAfterDebit + luckyResult.totalReward;
+            finalBalanceCoins = coinsAfterCredit;
             await tx.coinLedgerEntry.create({
                 data: {
                     walletId: senderWallet.id,
@@ -155,10 +159,16 @@ export const sendLuckyGiftService = async ({
             });
         }
 
+        await tx.wallet.update({
+            where: { id: senderWallet.id },
+            data: { version: { increment: 1n } }
+        });
+
         let hostLedgerId = null;
+        let pointsAfterHost = null;
         if (hostPoints > 0n && hostWallet) {
-            const currentHostPoints = await getFastPointBalance(hostWallet.id, tx);
-            const pointsAfterHost = currentHostPoints + hostPoints;
+            const currentHostPoints = await getPointBalanceInTx(tx, hostWallet.id);
+            pointsAfterHost = currentHostPoints + hostPoints;
 
             const hostLedger = await tx.pointLedgerEntry.create({
                 data: {
@@ -184,6 +194,28 @@ export const sendLuckyGiftService = async ({
             hostLedgerId = hostLedger.id;
         }
 
+        // Agency commission settles in the same transaction as the host credit
+        // it derives from, so the two can never diverge.
+        let agencyUserId = null;
+        if (isCombo && hostPoints > 0n && hostLedgerId) {
+            const commRes = await processLiveStreamAgencyCommission(
+                tx,
+                effectiveReceiverId,
+                hostPoints,
+                hostLedgerId,
+                null,
+                {
+                    businessRefId: giftTransactionId,
+                    hostTxType: PointTxType.LIVESTREAM_GIFT,
+                    gift,
+                    context: luckyContext,
+                    quantity: count,
+                    unitCoinCost: Number(gift.coinCost)
+                }
+            );
+            agencyUserId = commRes?.agencyUserId ?? null;
+        }
+
         const log = await tx.giftTransaction.create({
             data: {
                 id: giftTransactionId,
@@ -197,42 +229,39 @@ export const sendLuckyGiftService = async ({
             }
         });
 
-        return { log, hostLedgerId };
-    }, { timeout: 15000, maxWait: 10000 });
-
-    // Non-blocking background worker for Agency Commission, Reserve Pool & Level Cache invalidating
-    setImmediate(async () => {
-        try {
-            if (isCombo && hostPoints > 0n && txRecord.hostLedgerId) {
-                const effectiveReceiverId = receiverId || senderId;
-                const commRes = await processLiveStreamAgencyCommission(
-                    prisma,
-                    effectiveReceiverId,
-                    hostPoints,
-                    txRecord.hostLedgerId,
-                    null,
-                    {
-                        businessRefId: giftTransactionId,
-                        hostTxType: PointTxType.LIVESTREAM_GIFT,
-                        gift,
-                        context: luckyContext,
-                        quantity: count,
-                        unitCoinCost: Number(gift.coinCost)
-                    }
-                );
-                if (commRes?.agencyUserId) {
-                    await afterCommissionCreditCommit(commRes.agencyUserId);
-                }
-            }
-            await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });
-            if (redisClient.isOpen) {
-                redisClient.del(`level:wealth:${senderId}`).catch(() => {});
-                if (receiverId) redisClient.del(`level:stream:${receiverId}`).catch(() => {});
-            }
-        } catch (bgErr) {
-            console.error("[LuckyGift Background Worker Error]:", bgErr.message);
-        }
+        return { log, hostLedgerId, agencyUserId, finalBalanceCoins, pointsAfterHost, effectiveReceiverId };
     });
+
+    const finalBalanceCoins = txRecord.finalBalanceCoins;
+
+    // Committed. Everything below is best-effort and must not fail the send.
+    await writeCoinBalanceCache(senderId, finalBalanceCoins);
+    if (txRecord.pointsAfterHost !== null) {
+        await writePointBalanceCache(txRecord.effectiveReceiverId, txRecord.pointsAfterHost);
+    }
+
+    if (txRecord.agencyUserId) {
+        await afterCommissionCreditCommit(txRecord.agencyUserId).catch((err) =>
+            console.error("[LuckyGift] agency tier recompute failed:", err.message)
+        );
+    }
+
+    // Reserve pool counters drive payout odds, so a lost update skews RTP for
+    // every later draw. Awaited and logged against the transaction id rather
+    // than fired into a background task that swallows its own failure.
+    try {
+        await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });
+    } catch (poolErr) {
+        console.error(
+            `[LuckyGift] reserve pool update FAILED for giftTransactionId=${giftTransactionId} cost=${totalCost} reward=${luckyResult.totalReward}:`,
+            poolErr.message
+        );
+    }
+
+    if (redisClient.isOpen) {
+        redisClient.del(`level:wealth:${senderId}`).catch(() => {});
+        if (receiverId) redisClient.del(`level:stream:${receiverId}`).catch(() => {});
+    }
 
     const resultPayload = {
         success: true,
@@ -287,7 +316,9 @@ export const sendLuckyGiftService = async ({
     };
 
     if (clientTxId) {
-        await redisClient.set(`lucky:idempotency:${clientTxId}`, JSON.stringify(resultPayload), 'EX', 86400);
+        // node-redis takes options as an object; the positional ioredis form
+        // ('EX', 86400) silently left these replay snapshots without a TTL.
+        await redisClient.set(`lucky:idempotency:${clientTxId}`, JSON.stringify(resultPayload), { EX: 86400 });
     }
 
     return resultPayload;
