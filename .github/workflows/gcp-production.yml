@@ -1,0 +1,184 @@
+# Deploys Live-server to the shared GCE VM on GCP. Triggered by pushes to `production`.
+#
+# Branch split (same convention across ol-node-rest, Live-server and ol-admin):
+#   production -> GCP  (this file)
+#   prodv2     -> AWS  (.github/workflows/production.yml, unchanged)
+#
+# `production.yml` triggers only on `prodv2`, so this cannot collide with the
+# live AWS deploy. Reuses .github/deploy/ec2-unpack-live-server.sh verbatim --
+# that script is provider-agnostic (tar + npm ci + pm2) and is piped over stdin.
+#
+# All three apps land on ONE VM:
+#   ol-node-rest  /opt/ol/apps/ol-node-rest  pm2 ol-api/ol-worker/ol-face-worker  :3000
+#   live-server   /opt/ol/apps/live-server   pm2 ol-live                          :5000
+#   ol-admin      /var/www/admins3jinyu.offoolive.com  (static, nginx)
+#
+# Required repository configuration:
+#   vars.GCP_PROJECT_ID, vars.GCP_ZONE, vars.GCE_INSTANCE
+#   secrets.GCP_WORKLOAD_IDENTITY_PROVIDER + secrets.GCP_DEPLOY_SERVICE_ACCOUNT (preferred)
+#   or secrets.GCP_SA_KEY
+#
+# The WIF pool's principalSet binding must include this repo
+# (repo:Project-OL/Live-server) or auth fails.
+#
+# Secrets are NOT shipped here: $APP_DIR/.env and google-credentials.json are
+# placed on the VM by hand and preserved across deploys by the unpack script.
+name: GCP production build and deploy
+
+on:
+  push:
+    branches: [production]
+  workflow_dispatch:
+
+concurrency:
+  group: gcp-production-gce-live-server
+  cancel-in-progress: false
+
+permissions:
+  contents: read
+  id-token: write
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+
+      # postinstall runs `prisma generate`, hence the dummy DATABASE_URL.
+      - name: Install dependencies (validate lockfile + Prisma)
+        run: npm ci
+        env:
+          DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
+
+      # Same file list as the AWS pipeline -- source is shipped, npm ci runs on the box.
+      - name: Pack artifact
+        run: |
+          tar -czf live-server-artifact.tgz \
+            --exclude=node_modules \
+            --exclude=.git \
+            --exclude=.env \
+            --exclude=scratch \
+            --exclude=exp.js \
+            --exclude=test-creds.txt \
+            --exclude=google-credentials.json \
+            server.js package.json package-lock.json prisma prisma.config.ts src public scripts
+          ls -lh live-server-artifact.tgz
+
+      - name: Upload GitHub Actions artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: live-server-gcp-${{ github.sha }}
+          path: live-server-artifact.tgz
+          retention-days: 30
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment: production
+
+    env:
+      GCP_PROJECT_ID: ${{ vars.GCP_PROJECT_ID }}
+      GCP_ZONE: ${{ vars.GCP_ZONE }}
+      GCE_INSTANCE: ${{ vars.GCE_INSTANCE }}
+      APP_USER: olapp
+      APP_DIR: /opt/ol/apps/live-server
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: live-server-gcp-${{ github.sha }}
+
+      # NOTE: the `secrets` context is NOT available in a step-level `if:`, so the
+      # auth mode is decided here and published as a step output instead.
+      # Referencing secrets in an `if:` makes the whole workflow fail to compile.
+      - name: Check GCP deploy configuration
+        id: cfg
+        env:
+          WIF_PROVIDER: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          WIF_SA: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+          SA_KEY: ${{ secrets.GCP_SA_KEY }}
+        run: |
+          missing=0
+          if [ -z "$GCP_PROJECT_ID" ]; then
+            echo "::error::Set repository variable GCP_PROJECT_ID"
+            missing=1
+          fi
+          if [ -z "$GCP_ZONE" ]; then
+            echo "::error::Set repository variable GCP_ZONE"
+            missing=1
+          fi
+          if [ -z "$GCE_INSTANCE" ]; then
+            echo "::error::Set repository variable GCE_INSTANCE"
+            missing=1
+          fi
+          if [ -n "$SA_KEY" ]; then
+            echo "auth=key" >> "$GITHUB_OUTPUT"
+          elif [ -n "$WIF_PROVIDER" ] && [ -n "$WIF_SA" ]; then
+            echo "auth=wif" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Set either secret GCP_SA_KEY, or both GCP_WORKLOAD_IDENTITY_PROVIDER and GCP_DEPLOY_SERVICE_ACCOUNT"
+            missing=1
+          fi
+          if [ "$missing" != "0" ]; then
+            exit 1
+          fi
+          echo "project=$GCP_PROJECT_ID zone=$GCP_ZONE instance=$GCE_INSTANCE"
+
+      - name: Authenticate to GCP (Workload Identity Federation)
+        if: steps.cfg.outputs.auth == 'wif'
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          workload_identity_provider: ${{ secrets.GCP_WORKLOAD_IDENTITY_PROVIDER }}
+          service_account: ${{ secrets.GCP_DEPLOY_SERVICE_ACCOUNT }}
+
+      - name: Authenticate to GCP (service-account key)
+        if: steps.cfg.outputs.auth == 'key'
+        uses: google-github-actions/auth@v2
+        with:
+          project_id: ${{ vars.GCP_PROJECT_ID }}
+          credentials_json: ${{ secrets.GCP_SA_KEY }}
+
+      - name: Set up gcloud
+        uses: google-github-actions/setup-gcloud@v2
+
+      - name: Verify GCP identity
+        run: |
+          gcloud auth list --filter=status:ACTIVE --format="value(account)"
+          gcloud compute instances describe "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --format="value(name,status)"
+
+      # The VM has no public IP -> IAP tunnel for both scp and ssh.
+      - name: Upload artifact to the VM
+        run: |
+          gcloud compute scp \
+            live-server-artifact.tgz \
+            "${GCE_INSTANCE}:/tmp/live-server-artifact.tgz" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --tunnel-through-iap --quiet
+
+      - name: Unpack and restart on the VM
+        run: |
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --tunnel-through-iap --quiet \
+            --command "sudo APP_USER='${APP_USER}' APP_DIR='${APP_DIR}' ARTIFACT=/tmp/live-server-artifact.tgz bash -s" \
+            < .github/deploy/ec2-unpack-live-server.sh
+
+      # live-server exposes no /health route, so probe the listening port.
+      - name: Health check
+        run: |
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --tunnel-through-iap --quiet \
+            --command "for i in \$(seq 1 20); do if (exec 3<>/dev/tcp/127.0.0.1/5000) 2>/dev/null; then echo 'ol-live listening on 5000'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; pm2 list; pm2 logs ol-live --lines 50 --nostream; exit 1"

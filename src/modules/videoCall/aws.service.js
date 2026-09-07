@@ -13,16 +13,31 @@ const client = new RekognitionClient({
     }
 });
 
+// Object storage is provider-swappable, mirroring ol-node-rest's src/config/s3.ts.
+// With every S3_* var unset this resolves to exactly the previous AWS S3 client.
+// Set S3_ENDPOINT_URL (+ path style) to point flagged-frame uploads at Cloudflare
+// R2 so they land in the same bucket ol-node-rest reads from — otherwise the
+// admin live-moderation UI, which builds URLs through ol-node's R2 storage layer,
+// 404s on every frame this uploads.
+//
+// Rekognition above is NOT affected: it moderates raw Bytes and stays on AWS.
 const s3Client = new S3Client({
-    region: process.env.AWS_REGION || "ap-south-1",
+    region: process.env.S3_REGION || process.env.AWS_REGION || "ap-south-1",
+    ...(process.env.S3_ENDPOINT_URL ? { endpoint: process.env.S3_ENDPOINT_URL } : {}),
+    ...(process.env.S3_FORCE_PATH_STYLE === "true" || process.env.S3_FORCE_PATH_STYLE === "1"
+        ? { forcePathStyle: true }
+        : {}),
     credentials: {
-        accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-        secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
-    }
+        accessKeyId: process.env.S3_ACCESS_KEY_ID || process.env.AWS_ACCESS_KEY_ID,
+        secretAccessKey: process.env.S3_SECRET_ACCESS_KEY || process.env.AWS_SECRET_ACCESS_KEY
+    },
+    // R2 rejects the SDK's default trailing-checksum behaviour; suits both providers.
+    requestChecksumCalculation: "WHEN_REQUIRED",
+    responseChecksumValidation: "WHEN_REQUIRED"
 });
 
 export const uploadFlaggedFrameToS3 = async (buffer, s3Key) => {
-    const bucketName = process.env.AWS_S3_BUCKET || "ol-app-storage";
+    const bucketName = process.env.S3_BUCKET || process.env.AWS_S3_BUCKET || "ol-app-storage";
     try {
         const command = new PutObjectCommand({
             Bucket: bucketName,

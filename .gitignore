@@ -2,6 +2,10 @@ node_modules
 # Keep environment variables out of version control
 .env
 .env.copy
+# GCP deployment env record (Cloud SQL password, R2 + AWS keys, JWT secrets).
+# Copied onto the VM by hand as /opt/ol/apps/live-server/.env — never committed.
+.env.gcp
+.env.gcp.*
 
 /generated/prisma
 # google-credentials.json
