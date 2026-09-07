@@ -91,6 +91,9 @@ jobs:
           aws s3 cp \
             .github/deploy/ec2-unpack-live-server.sh \
             "s3://${DEPLOY_BUCKET}/live-server/ec2-unpack-live-server-${GITHUB_SHA}.sh"
+          aws s3 cp \
+            .github/deploy/verify-storage-target.sh \
+            "s3://${DEPLOY_BUCKET}/live-server/verify-storage-target-${GITHUB_SHA}.sh"
 
       - name: Send deployment command to EC2
         env:
