@@ -243,6 +243,10 @@ export const endLiveStreamService = async ({
         throw new Error("Unauthorized to end this live stream.");
     }
 
+    if (!stream.isLive) {
+        return { stream, alreadyEnded: true };
+    }
+
     if (isProduction && stream.playbackId) {
         try {
             await egressClient.stopEgress(stream.playbackId);
