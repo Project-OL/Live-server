@@ -107,6 +107,24 @@ jobs:
           done
           [ "$SCP_OK" = "1" ] || { echo "scp upload failed after 4 attempts" >&2; exit 1; }
 
+          # Verify the storage target before unpacking: staging must stay on AWS S3.
+          # If S3_ENDPOINT_URL ever appears in staging's .env, flagged-frame uploads
+          # would land in the production R2 bucket instead.
+          echo '### Object storage target' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          ssh -i ~/.ssh/id_deploy \
+            -o IdentitiesOnly=yes \
+            -o StrictHostKeyChecking=accept-new \
+            -o ConnectTimeout=20 \
+            "$EC2_USER@$EC2_HOST" \
+            'APP_DIR=/home/ec2-user/live-server EXPECT_STORAGE=aws-s3 bash -s' \
+            < .github/deploy/verify-storage-target.sh 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          verify_status=${PIPESTATUS[0]}
+          set -e
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          [ "$verify_status" -eq 0 ] || exit "$verify_status"
+
           SSH_OK=0
           for i in 1 2 3 4; do
             if ssh -i ~/.ssh/id_deploy \

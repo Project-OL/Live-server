@@ -167,6 +167,24 @@ jobs:
             --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
             --tunnel-through-iap --quiet
 
+      # Runs BEFORE unpacking so a mis-set .env stops the deploy instead of going live.
+      # Flagged-frame uploads in videoCall/aws.service.js follow S3_ENDPOINT_URL; a GCP
+      # host without it silently writes them into the AWS S3 bucket.
+      - name: Verify storage target (expect Cloudflare R2)
+        run: |
+          echo '### Object storage target' >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          set +e
+          gcloud compute ssh "$GCE_INSTANCE" \
+            --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
+            --tunnel-through-iap --quiet \
+            --command "sudo APP_DIR='${APP_DIR}' EXPECT_STORAGE=r2 bash -s" \
+            < .github/deploy/verify-storage-target.sh 2>&1 | tee -a "$GITHUB_STEP_SUMMARY"
+          status=${PIPESTATUS[0]}
+          set -e
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          exit $status
+
       - name: Unpack and restart on the VM
         run: |
           gcloud compute ssh "$GCE_INSTANCE" \
