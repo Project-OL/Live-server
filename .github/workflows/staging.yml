@@ -5,6 +5,12 @@
 # This file previously had the wrong trigger (branches: [prodv2], copied verbatim from the
 # prodv2 branch) so pushes to `staging` deployed nothing. Fixed to trigger on `staging`.
 # Test push 2026-09-04 to re-verify SSH connectivity from GitHub Actions.
+#
+# RENAMED 2026-09-08 from `production.yml` to `staging.yml`. It previously shared the
+# `production.yml` path with the prodv2 deploy while holding entirely different content,
+# so any staging -> prodv2 merge would have silently overwritten the production deploy
+# with this staging one. Distinct filenames per environment - matching ol-node-rest and
+# admin - make that class of mistake impossible.
 name: Staging build and deploy
 
 on:
