@@ -873,55 +873,7 @@ export const setupLiveSockets = (io) => {
                     console.log(`[Socket Gift Gallery] Broadcast GIFT_GALLERY_UPDATE & GIFT_GALLERY_PROGRESS_UPDATED in stream ${streamId}`);
                 }
 
-                // Broadcast System Chat Messages (Normal Gift / Lucky Sent / Lucky Won)
-                setImmediate(async () => {
-                    try {
-                        const isLucky = result.isLucky || result.socketPayload?.gift?.effectLuckyGift || false;
-                        const senderName = result.socketPayload.senderName || 'User';
-                        const receiverName = result.socketPayload.receiverName || 'Host';
-                        const giftName = result.socketPayload.gift?.name || 'Gift';
-                        const count = result.socketPayload.count || 1;
-                        const totalCost = Number(result.socketPayload.totalCost || (Number(result.socketPayload.gift?.coinCost || 0) * count) || 0);
 
-                        const broadcastMsgToRoom = (msg) => {
-                            if (!msg) return;
-                            broadcastToStream(streamId, "new_message", msg);
-                            if (result.socketPayload?.streamId && result.socketPayload.streamId !== streamId) {
-                                broadcastToStream(result.socketPayload.streamId, "new_message", msg);
-                            }
-                        };
-
-                        if (isLucky) {
-                            // 1. Lucky Gift Sent System Message
-                            const sentMsg = await sendMessageService({
-                                streamId,
-                                senderId: SYSTEM_SENDER_ID,
-                                message: `Lucky Sent: ${senderName} : sent ${giftName} x ${count}.`
-                            });
-                            broadcastMsgToRoom(sentMsg);
-
-                            // 2. Lucky Gift Won System Message
-                            if (result.luckyWin && Number(result.luckyWin.rewardCoins || 0) > 0) {
-                                const winMsg = await sendMessageService({
-                                    streamId,
-                                    senderId: SYSTEM_SENDER_ID,
-                                    message: `Lucky Won: ${result.luckyWin.senderName || senderName} sent ${result.luckyWin.receiverName || receiverName} ${result.luckyWin.giftName || giftName}, won ${result.luckyWin.rewardCoins} coins.`
-                                });
-                                broadcastMsgToRoom(winMsg);
-                            }
-                        } else {
-                            // Normal Gift System Message
-                            const normalMsg = await sendMessageService({
-                                streamId,
-                                senderId: SYSTEM_SENDER_ID,
-                                message: `${senderName} sent ${receiverName} ${giftName} worth ${totalCost}.`
-                            });
-                            broadcastMsgToRoom(normalMsg);
-                        }
-                    } catch (err) {
-                        console.error("[Socket send_gift System Message Error]:", err.message);
-                    }
-                });
 
                 if (result.luckyWin) {
                     broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
@@ -1001,41 +953,7 @@ export const setupLiveSockets = (io) => {
                     console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${userId}: ${result.luckyWin.rewardCoins} coins`);
                 }
 
-                // Broadcast Lucky Gift Sent & Lucky Gift Won System Chat Messages
-                setImmediate(async () => {
-                    try {
-                        const giftObj = result.gift;
-                        const count = comboCount || 1;
 
-                        const broadcastMsgToRoom = (msg) => {
-                            if (!msg) return;
-                            broadcastToStream(streamId, "new_message", msg);
-                            if (result.socketPayload?.streamId && result.socketPayload.streamId !== streamId) {
-                                broadcastToStream(result.socketPayload.streamId, "new_message", msg);
-                            }
-                        };
-
-                        // 1. Lucky Gift Sent System Message
-                        const sentMsg = await sendMessageService({
-                            streamId,
-                            senderId: SYSTEM_SENDER_ID,
-                            message: `Lucky Sent: ${displaySenderName} : sent ${giftObj?.name || 'Gift'} x ${count}.`
-                        });
-                        broadcastMsgToRoom(sentMsg);
-
-                        // 2. Lucky Gift Won System Message (if winner)
-                        if (result.luckyWin && Number(result.luckyWin.rewardCoins || 0) > 0) {
-                            const winMsg = await sendMessageService({
-                                streamId,
-                                senderId: SYSTEM_SENDER_ID,
-                                message: `Lucky Won: ${displaySenderName} sent ${receiverName} ${giftObj?.name || 'Gift'}, won ${result.luckyWin.rewardCoins} coins.`
-                            });
-                            broadcastMsgToRoom(winMsg);
-                        }
-                    } catch (err) {
-                        console.error("[Socket send_lucky_gift System Message Error]:", err.message);
-                    }
-                });
 
                 // Global Announcement Trigger if Lucky Gift Total Cost >= 300,000 Coins
                 const luckyTotalCost = Number(result.totalCost || 0);
