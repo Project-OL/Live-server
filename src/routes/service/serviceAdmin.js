@@ -157,7 +157,7 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
 
         if (activeStream) {
           console.log(`[Admin Restriction] Auto-ending active live stream ${activeStream.id} for banned user ${userId}`);
-          await endLiveStreamService({ id: activeStream.id, userId: userId });
+          await endLiveStreamService({ id: activeStream.id, userId: userId, reason: "ADMIN_RESTRICTION_BAN" });
         }
       } catch (killErr) {
         console.error('[Admin Restriction Auto-Kill Error]:', killErr.message);

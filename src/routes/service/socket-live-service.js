@@ -340,7 +340,7 @@ export const setupLiveSockets = (io) => {
                                         reason: "HOST_DISCONNECTED_TIMEOUT",
                                         message: "Live stream ended due to host network disconnection."
                                     });
-                                    await endLiveStreamService({ id: activeStream.id, userId });
+                                    await endLiveStreamService({ id: activeStream.id, userId, reason: "HOST_DISCONNECTED_TIMEOUT" });
                                     console.log(`[Socket Host Disconnect Timeout] Successfully auto-ended live stream ${streamId} after network loss timeout! ✅`);
                                 }
                             } else {

@@ -805,7 +805,7 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                                 });
 
                                 const { endLiveStreamService } = await import("../../routes/service/serviceLive.js");
-                                await endLiveStreamService({ id: activeStream.id, userId: hostId });
+                                await endLiveStreamService({ id: activeStream.id, userId: hostId, reason: "HOST_NOT_RETURNED_2MIN" });
                                 console.log(`[VideoCall 2-Min Return Timeout] Auto-ended live stream ${streamId} successfully! âœ…`);
                             }
                         }

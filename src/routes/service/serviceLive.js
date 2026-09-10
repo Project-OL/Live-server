@@ -131,7 +131,7 @@ export const fastGoLiveStreamService = async ({
     if (dbActiveStream) {
         console.log(`[Auto-End Stream] Auto-ending previous active live stream ${dbActiveStream.id} for user ${userId} before starting new live stream`);
         try {
-            const endSummary = await endLiveStreamService({ id: dbActiveStream.id, userId });
+            const endSummary = await endLiveStreamService({ id: dbActiveStream.id, userId, reason: "REPLACED_BY_NEW_GOLIVE" });
             const { broadcastToStream } = await import('./socket-live-service.js');
             if (endSummary && endSummary.stream) {
                 broadcastToStream(endSummary.stream.streamId || dbActiveStream.streamId || dbActiveStream.id, "stream_ended", endSummary.summary || {});
@@ -229,21 +229,27 @@ export const fastGoLiveStreamService = async ({
 
 export const endLiveStreamService = async ({
     id,
-    userId
+    userId,
+    reason = "UNKNOWN"
 }) => {
+    console.log(`[Live Stream END] ▶ Attempting end. reason=${reason} dbId=${id} userId=${userId}`);
+
     const stream = await prisma.liveStream.findUnique({
         where: { id }
     });
 
     if (!stream) {
+        console.warn(`[Live Stream END] ✖ Stream not found. reason=${reason} dbId=${id} userId=${userId}`);
         throw new Error("Live stream not found.");
     }
 
     if (stream.userId !== userId) {
+        console.warn(`[Live Stream END] ✖ Unauthorized. reason=${reason} dbId=${id} requestedBy=${userId} actualHost=${stream.userId}`);
         throw new Error("Unauthorized to end this live stream.");
     }
 
     if (!stream.isLive) {
+        console.log(`[Live Stream END] ⏭ Already ended, no-op. reason=${reason} dbId=${id} streamId=${stream.streamId} userId=${userId}`);
         return { stream, alreadyEnded: true };
     }
 
@@ -308,6 +314,8 @@ export const endLiveStreamService = async ({
             effectiveDurationSeconds,
         }
     });
+
+    console.log(`[Live Stream END] ✅ Ended successfully. reason=${reason} dbId=${id} streamId=${stream.streamId} userId=${userId} grossDurationSeconds=${grossDurationSeconds} effectiveDurationSeconds=${effectiveDurationSeconds}`);
 
     if (redisClient.isOpen) {
         await Promise.all([
@@ -1876,7 +1884,7 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
 
         if (check.action === "BLOCK") {
             // End the stream immediately
-            console.log(`[Stream Moderation] Blocking stream ${id} due to explicit content violation.`);
+            console.log(`[Live Stream END] ▶ Attempting end. reason=AI_MODERATION_NUDITY_BLOCK dbId=${id} streamId=${stream.streamId} userId=${stream.userId}`);
 
             // 3. Mark stream as not live in DB (include billable duration)
             const endedAt = new Date();
@@ -1900,6 +1908,8 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                     effectiveDurationSeconds,
                 }
             });
+
+            console.log(`[Live Stream END] ✅ Ended successfully. reason=AI_MODERATION_NUDITY_BLOCK dbId=${id} streamId=${stream.streamId} userId=${stream.userId} grossDurationSeconds=${grossDurationSeconds} effectiveDurationSeconds=${effectiveDurationSeconds}`);
 
             // 4. Batch sync viewers/chats from Redis to PostgreSQL
             try {

@@ -95,8 +95,10 @@ export const startStreamHeartbeatMonitor = (io) => {
 
                     // Check heartbeat timestamp from Redis
                     let lastHeartbeatTime = null;
+                    let rawHb = null;
+                    const redisWasOpen = redisClient.isOpen;
                     if (redisClient.isOpen) {
-                        const rawHb = await redisClient.get(`stream:heartbeat:${streamIdKey}`);
+                        rawHb = await redisClient.get(`stream:heartbeat:${streamIdKey}`);
                         if (rawHb) {
                             try {
                                 const parsed = JSON.parse(rawHb);
@@ -106,6 +108,8 @@ export const startStreamHeartbeatMonitor = (io) => {
                             }
                         }
                     }
+
+                    console.log(`[Heartbeat Monitor Debug] stream=${streamIdKey} redisOpen=${redisWasOpen} rawHb=${rawHb} lastHeartbeatTime=${lastHeartbeatTime} now=${now} gapMs=${lastHeartbeatTime ? (now - lastHeartbeatTime) : "N/A"}`);
 
                     // If heartbeat was received within the timeout window, stream is HEALTHY
                     if (lastHeartbeatTime && (now - lastHeartbeatTime <= HEARTBEAT_TIMEOUT_MS)) {
@@ -163,7 +167,7 @@ export const startStreamHeartbeatMonitor = (io) => {
 
                     // Execute endLiveStreamService
                     try {
-                        await endLiveStreamService({ id: stream.id, userId: hostUserId });
+                        await endLiveStreamService({ id: stream.id, userId: hostUserId, reason: "HEARTBEAT_LOST" });
                     } catch (endErr) {
                         console.error(`[Heartbeat Monitor] Error in endLiveStreamService for ${stream.id}:`, endErr.message);
                     }

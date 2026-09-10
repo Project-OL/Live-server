@@ -154,7 +154,8 @@ const endLiveStream = async (req, res) => {
     try {
         const result = await endLiveStreamService({
             id: req.params.id,
-            userId: req.userId
+            userId: req.userId,
+            reason: "MANUAL_USER_END"
         });
 
         // Broadcast rich summary payload to all viewers in stream room
