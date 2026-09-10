@@ -16,8 +16,11 @@ const HEARTBEAT_KEY_TTL_SECONDS = 90;
  * @param {string} streamId - Stream room identifier
  * @param {string} userId - Host user ID
  */
-export const recordStreamHeartbeat = async (streamId, userId) => {
-    if (!streamId) return null;
+export const recordStreamHeartbeat = async (streamId, userId, source = "unknown") => {
+    if (!streamId) {
+        console.warn(`[Heartbeat] Ping received via ${source} but streamId is missing — ignored.`);
+        return null;
+    }
     const now = Date.now();
     const payload = JSON.stringify({ userId, timestamp: now });
     if (redisClient.isOpen) {
@@ -26,9 +29,12 @@ export const recordStreamHeartbeat = async (streamId, userId) => {
             if (userId) {
                 await redisClient.set(`stream:heartbeat:user:${userId}`, payload, { EX: HEARTBEAT_KEY_TTL_SECONDS });
             }
+            console.log(`[Heartbeat] ✅ Ping recorded via ${source} for stream ${streamId} (user ${userId || "unknown"}) at ${new Date(now).toISOString()}`);
         } catch (err) {
             console.error("[Heartbeat] Redis set error:", err.message);
         }
+    } else {
+        console.warn(`[Heartbeat] Ping received via ${source} for stream ${streamId} but Redis is not open — not recorded.`);
     }
     return now;
 };

@@ -64,10 +64,8 @@ export const setupLiveSockets = (io) => {
             console.log(`[Socket] User ${userId} joined personal channel user:${userId}`);
         }
 
-        socket.on("stream_heartbeat", async ({ streamId }) => {
-            if (streamId) {
-                await recordStreamHeartbeat(streamId, socket.data?.userId || userId);
-            }
+        socket.on("stream_heartbeat", async ({ streamId } = {}) => {
+            await recordStreamHeartbeat(streamId, socket.data?.userId || userId, "socket");
         });
 
         socket.on("join_stream", async ({ streamId }) => {

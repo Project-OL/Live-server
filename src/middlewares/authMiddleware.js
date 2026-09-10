@@ -9,11 +9,13 @@ export const authenticate = async (req, res, next) => {
     try {
         const authHeader = req.headers.authorization;
         if (!authHeader || !authHeader.startsWith("Bearer ")) {
+            console.warn(`[Auth Middleware Failure]: Missing/malformed Authorization header for ${req.method} ${req.originalUrl}`);
             return next(new AppError(401, "Authorization token missing", "UNAUTHORIZED"));
         }
 
         const token = authHeader.substring(7).trim();
         if (!token) {
+            console.warn(`[Auth Middleware Failure]: Empty bearer token for ${req.method} ${req.originalUrl}`);
             return next(new AppError(401, "Authorization token missing", "UNAUTHORIZED"));
         }
 
@@ -43,7 +45,7 @@ export const authenticate = async (req, res, next) => {
 
         next();
     } catch (err) {
-        console.error("[Auth Middleware Failure]:", err.name, err.message);
+        console.error(`[Auth Middleware Failure]: ${err.name} ${err.message} for ${req.method} ${req.originalUrl}`);
         if (err instanceof AppError) {
             return next(err);
         }

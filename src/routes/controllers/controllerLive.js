@@ -1398,7 +1398,7 @@ const streamHeartbeat = async (req, res) => {
                 message: "streamId is required."
             });
         }
-        const timestamp = await recordStreamHeartbeat(streamId, req.userId);
+        const timestamp = await recordStreamHeartbeat(streamId, req.userId, "http");
         return res.json({
             success: true,
             timestamp,
