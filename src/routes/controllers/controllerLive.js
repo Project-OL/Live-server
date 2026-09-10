@@ -3,6 +3,7 @@ import fs from 'fs';
 import auth from '../../middlewares/authMiddleware.js';
 import prisma from '../../config/prisma.js';
 import { createLiveSchema, sendMessageSchema } from '../../validations/validationLive.js';
+import { recordStreamHeartbeat } from '../service/serviceHeartbeat.js';
 
 import {
     fastGoLiveStreamService,
@@ -1390,6 +1391,29 @@ const getHostStats = async (req, res) => {
     }
 };
 
+const streamHeartbeat = async (req, res) => {
+    try {
+        const streamId = req.body.streamId || req.query.streamId;
+        if (!streamId) {
+            return res.status(400).json({
+                success: false,
+                message: "streamId is required."
+            });
+        }
+        const timestamp = await recordStreamHeartbeat(streamId, req.userId, "http");
+        return res.json({
+            success: true,
+            timestamp,
+            message: "Stream heartbeat recorded."
+        });
+    } catch (error) {
+        return res.status(500).json({
+            success: false,
+            message: error.message
+        });
+    }
+};
+
 router.get('/host-stats', auth, getHostStats);
 router.get('/user/effect-settings', auth, getUserEffectSettings);
 router.patch('/user/effect-settings', auth, updateUserEffectSettings);
@@ -1401,6 +1425,7 @@ router.get('/fans-ranking/:hostId', auth, getFansRanking);
 router.get('/my-photo', auth, getMyLivePhoto);
 router.get('/gift-gallery/targets', auth, getGiftGalleryTargets);
 
+router.post('/heartbeat', auth, streamHeartbeat);
 router.post('/go-live', auth, fastGoLiveStream);
 router.post('/end/:id', auth, endLiveStream);
 router.post('/join/:id', auth, joinLiveStream);

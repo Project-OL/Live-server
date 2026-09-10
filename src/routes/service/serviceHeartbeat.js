@@ -4,7 +4,7 @@
  * Record a stream heartbeat ping from Host (Disabled).
  */
 export const recordStreamHeartbeat = async () => {
-    return null;
+    return Date.now();
 };
 
 /**
