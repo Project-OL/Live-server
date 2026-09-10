@@ -44,7 +44,7 @@ export const getOrCreateSessionAliasObj = async (streamId, userId) => {
             const alias = generateFakeName();
             const fakePublicId = generateFakePublicId();
             const dataObj = { alias, fakePublicId };
-            await redisClient.set(redisKey, JSON.stringify(dataObj), 'EX', 86400); // 24 Hours TTL
+            await redisClient.set(redisKey, JSON.stringify(dataObj), { EX: 86400 }); // 24 Hours TTL
             return dataObj;
         }
         try {
@@ -53,7 +53,7 @@ export const getOrCreateSessionAliasObj = async (streamId, userId) => {
                 return parsed;
             }
             const dataObj = { alias: rawData, fakePublicId: generateFakePublicId() };
-            await redisClient.set(redisKey, JSON.stringify(dataObj), 'EX', 86400);
+            await redisClient.set(redisKey, JSON.stringify(dataObj), { EX: 86400 });
             return dataObj;
         } catch (e) {
             const dataObj = { alias: rawData, fakePublicId: generateFakePublicId() };

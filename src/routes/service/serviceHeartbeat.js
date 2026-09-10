@@ -2,6 +2,15 @@ import { client as redisClient } from '../../config/redis.js';
 import prisma from '../../config/prisma.js';
 import { endLiveStreamService } from './serviceLive.js';
 
+// Stream is considered unhealthy after this many ms without a heartbeat ping.
+const HEARTBEAT_TIMEOUT_MS = 60000;
+// How often the background monitor sweeps active streams.
+const HEARTBEAT_MONITOR_INTERVAL_MS = 5000;
+// Grace period after stream creation before a heartbeat is required at all.
+const STREAM_START_GRACE_MS = 60000;
+// Redis key TTL for heartbeat entries (kept comfortably above the timeout above).
+const HEARTBEAT_KEY_TTL_SECONDS = 90;
+
 /**
  * Record a stream heartbeat ping from Host.
  * @param {string} streamId - Stream room identifier
@@ -13,9 +22,9 @@ export const recordStreamHeartbeat = async (streamId, userId) => {
     const payload = JSON.stringify({ userId, timestamp: now });
     if (redisClient.isOpen) {
         try {
-            await redisClient.set(`stream:heartbeat:${streamId}`, payload, "EX", 30);
+            await redisClient.set(`stream:heartbeat:${streamId}`, payload, { EX: HEARTBEAT_KEY_TTL_SECONDS });
             if (userId) {
-                await redisClient.set(`stream:heartbeat:user:${userId}`, payload, "EX", 30);
+                await redisClient.set(`stream:heartbeat:user:${userId}`, payload, { EX: HEARTBEAT_KEY_TTL_SECONDS });
             }
         } catch (err) {
             console.error("[Heartbeat] Redis set error:", err.message);
@@ -44,7 +53,7 @@ let heartbeatMonitorInterval = null;
 
 /**
  * Start the background worker that monitors all live streams every 5 seconds.
- * If host heartbeat is missing for > 15 seconds and host is NOT in a video call
+ * If host heartbeat is missing for > HEARTBEAT_TIMEOUT_MS and host is NOT in a video call
  * or 2-minute return window, auto-ends the stream.
  * @param {import('socket.io').Server} io - Socket.io instance
  */
@@ -53,7 +62,7 @@ export const startStreamHeartbeatMonitor = (io) => {
         clearInterval(heartbeatMonitorInterval);
     }
 
-    console.log("[Heartbeat Protection] Background monitor started (interval: 5s, timeout: 15s).");
+    console.log(`[Heartbeat Protection] Background monitor started (interval: ${HEARTBEAT_MONITOR_INTERVAL_MS / 1000}s, timeout: ${HEARTBEAT_TIMEOUT_MS / 1000}s).`);
 
     heartbeatMonitorInterval = setInterval(async () => {
         try {
@@ -73,8 +82,8 @@ export const startStreamHeartbeatMonitor = (io) => {
                     const hostUserId = stream.userId;
                     const startTime = (stream.startedAt || stream.createdAt || new Date()).getTime();
 
-                    // 15-second grace window upon initial stream creation
-                    if (now - startTime < 15000) {
+                    // Grace window upon initial stream creation
+                    if (now - startTime < STREAM_START_GRACE_MS) {
                         continue;
                     }
 
@@ -92,19 +101,19 @@ export const startStreamHeartbeatMonitor = (io) => {
                         }
                     }
 
-                    // If heartbeat was received within last 15 seconds (15,000 ms), stream is HEALTHY
-                    if (lastHeartbeatTime && (now - lastHeartbeatTime <= 15000)) {
+                    // If heartbeat was received within the timeout window, stream is HEALTHY
+                    if (lastHeartbeatTime && (now - lastHeartbeatTime <= HEARTBEAT_TIMEOUT_MS)) {
                         continue;
                     }
 
                     // If no heartbeat key exists, check when stream started or if heartbeat expired
                     const durationSinceLastPing = lastHeartbeatTime ? (now - lastHeartbeatTime) : (now - startTime);
 
-                    if (durationSinceLastPing <= 15000) {
+                    if (durationSinceLastPing <= HEARTBEAT_TIMEOUT_MS) {
                         continue;
                     }
 
-                    // --- Heartbeat Missing > 15 seconds. Check Pause Conditions ---
+                    // --- Heartbeat Missing > HEARTBEAT_TIMEOUT_MS. Check Pause Conditions ---
 
                     // PAUSE CONDITION 1: Host is in an active 1-on-1 Video Call
                     const activeVideoCall = await prisma.videoCallSession.findFirst({
@@ -115,7 +124,7 @@ export const startStreamHeartbeatMonitor = (io) => {
                     });
 
                     if (activeVideoCall) {
-                        console.log(`[Heartbeat Monitor] Host ${hostUserId} is in active video call (${activeVideoCall.id}). Pausing 15s heartbeat timeout.`);
+                        console.log(`[Heartbeat Monitor] Host ${hostUserId} is in active video call (${activeVideoCall.id}). Pausing heartbeat timeout.`);
                         continue;
                     }
 
@@ -124,7 +133,7 @@ export const startStreamHeartbeatMonitor = (io) => {
                         const returnTimer1 = await redisClient.get(`host:return_timer:${streamIdKey}:${hostUserId}`);
                         const returnTimer2 = await redisClient.get(`host:return_timer:${hostUserId}`);
                         if (returnTimer1 || returnTimer2) {
-                            console.log(`[Heartbeat Monitor] Host ${hostUserId} is in 2-minute return grace window. Pausing 15s heartbeat timeout.`);
+                            console.log(`[Heartbeat Monitor] Host ${hostUserId} is in 2-minute return grace window. Pausing heartbeat timeout.`);
                             continue;
                         }
                     }
@@ -168,7 +177,7 @@ export const startStreamHeartbeatMonitor = (io) => {
         } catch (loopErr) {
             console.error("[Heartbeat Monitor] Loop error:", loopErr.message);
         }
-    }, 5000);
+    }, HEARTBEAT_MONITOR_INTERVAL_MS);
 };
 
 export const stopStreamHeartbeatMonitor = () => {

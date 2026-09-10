@@ -64,7 +64,7 @@ export const setupVideoCallSockets = (io) => {
                         console.warn(`[VideoCall Disconnect] Participant ${userId} disconnected from call ${sessionId}. Starting 15s grace timer.`);
 
                         if (redisClient.isOpen) {
-                            await redisClient.set(disconnectKey, disconnectedAt.toString(), "EX", 30).catch(() => { });
+                            await redisClient.set(disconnectKey, disconnectedAt.toString(), { EX: 30 }).catch(() => { });
                         }
 
                         setTimeout(async () => {

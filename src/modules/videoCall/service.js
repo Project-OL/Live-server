@@ -596,7 +596,7 @@ export const acceptCall = async (sessionId, receiverId) => {
             });
             if (activeStream) {
                 const streamId = activeStream.streamId || activeStream.id;
-                await redisClient.set(`video_call:stream_pause:${sessionId}`, streamId, 'EX', 86400);
+                await redisClient.set(`video_call:stream_pause:${sessionId}`, streamId, { EX: 86400 });
 
                 broadcastToStream(streamId, "HOST_LIVE_PAUSED", {
                     streamId,
@@ -738,8 +738,8 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                 // Set 120-second (2 minute) return grace timer in Redis
                 if (redisClient.isOpen) {
                     await Promise.all([
-                        redisClient.set(returnTimerKey1, "pending", "EX", 120),
-                        redisClient.set(returnTimerKey2, "pending", "EX", 120)
+                        redisClient.set(returnTimerKey1, "pending", { EX: 120 }),
+                        redisClient.set(returnTimerKey2, "pending", { EX: 120 })
                     ]).catch(() => { });
                 }
 

@@ -276,7 +276,7 @@ export const setupLiveSockets = (io) => {
                     console.warn(`[Socket Host Disconnect] Host ${userId} disconnected from stream ${streamId}. Starting 30s network loss timer.`);
                     const timerKey = `host:disconnect_timer:${streamId}`;
                     if (redisClient.isOpen) {
-                        await redisClient.set(timerKey, "pending", "EX", 30).catch(() => { });
+                        await redisClient.set(timerKey, "pending", { EX: 30 }).catch(() => { });
                     }
 
                     // 30-second background worker check

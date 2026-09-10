@@ -16,7 +16,7 @@ export const resolveUserTokenVersion = async (userId) => {
     });
     const version = user?.tokenVersion ?? 0;
     if (redisClient.isOpen) {
-      await redisClient.set(cacheKey, version.toString(), "EX", 300);
+      await redisClient.set(cacheKey, version.toString(), { EX: 300 });
     }
     return version;
   } catch (err) {

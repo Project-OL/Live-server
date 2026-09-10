@@ -158,11 +158,11 @@ export const fastGoLiveStreamService = async ({
 
     if (user && user.suspended_until && user.suspended_until > new Date()) {
         if (redisClient.isOpen) {
-            await redisClient.set(suspendedCacheKey, "true", "EX", 300);
+            await redisClient.set(suspendedCacheKey, "true", { EX: 300 });
         }
         throw new Error(`Your streaming privileges are suspended until ${user.suspended_until.toLocaleString()} due to moderation violations.`);
     } else if (user && redisClient.isOpen) {
-        await redisClient.set(suspendedCacheKey, "false", "EX", 3600);
+        await redisClient.set(suspendedCacheKey, "false", { EX: 3600 });
     }
 
     const coverImageUrl = livePhoto?.imageUrl || user?.avatarUrl || null;
@@ -188,8 +188,8 @@ export const fastGoLiveStreamService = async ({
 
     if (redisClient.isOpen) {
         await Promise.all([
-            redisClient.set(`stream:info:${streamId}`, JSON.stringify(createdStream), "EX", 86400),
-            redisClient.set(activeStreamKey, streamId, "EX", 86400)
+            redisClient.set(`stream:info:${streamId}`, JSON.stringify(createdStream), { EX: 86400 }),
+            redisClient.set(activeStreamKey, streamId, { EX: 86400 })
         ]);
     }
 
@@ -674,8 +674,8 @@ export const getLiveStreamService = async ({
 
     if (stream && redisClient.isOpen) {
         await Promise.all([
-            redisClient.set(`stream:info:${stream.id}`, JSON.stringify(stream), "EX", 86400),
-            redisClient.set(`stream:info:${stream.streamId}`, JSON.stringify(stream), "EX", 86400)
+            redisClient.set(`stream:info:${stream.id}`, JSON.stringify(stream), { EX: 86400 }),
+            redisClient.set(`stream:info:${stream.streamId}`, JSON.stringify(stream), { EX: 86400 })
         ]);
     }
     return stream;
@@ -1041,11 +1041,11 @@ const ensureActiveGalleryCached = async (year, month) => {
             await redisClient.del(giftIdsKey);
             await redisClient.sAdd(giftIdsKey, giftIds);
             await redisClient.expire(giftIdsKey, 86400); // 1 day
-            await redisClient.set(galleryCacheKey, JSON.stringify(galleryItems), 'EX', 86400);
+            await redisClient.set(galleryCacheKey, JSON.stringify(galleryItems), { EX: 86400 });
         } else {
-            await redisClient.set(galleryCacheKey, JSON.stringify([]), 'EX', 300); // 5 min cache for empty
+            await redisClient.set(galleryCacheKey, JSON.stringify([]), { EX: 300 }); // 5 min cache for empty
         }
-        await redisClient.set(galleryLoadedKey, "1", 'EX', 86400);
+        await redisClient.set(galleryLoadedKey, "1", { EX: 86400 });
     }
 };
 
@@ -1073,7 +1073,7 @@ const ensureHostProgressCached = async (hostId, year, month) => {
             await redisClient.sAdd(progressCacheKey, collectedGiftIds);
             await redisClient.expire(progressCacheKey, 604800); // 7 days
         }
-        await redisClient.set(progressLoadedKey, "1", 'EX', 604800);
+        await redisClient.set(progressLoadedKey, "1", { EX: 604800 });
     }
 };
 
@@ -1198,7 +1198,7 @@ export const getGiftGalleryTargetsService = async (hostId) => {
         }
     });
     if (gift && redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(gift), "EX", 86400);
+        await redisClient.set(cacheKey, JSON.stringify(gift), { EX: 86400 });
     }
     return gift;
 };
@@ -1597,7 +1597,7 @@ export const getAgencyCommissionRatesService = async () => {
     if (!ratesMap['D']) ratesMap['D'] = 400;
 
     if (redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(ratesMap), "EX", 86400);
+        await redisClient.set(cacheKey, JSON.stringify(ratesMap), { EX: 86400 });
     }
     return ratesMap;
 };
@@ -1993,12 +1993,12 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                     const ttlSeconds = Math.ceil(banDurationHours * 3600);
 
                     await Promise.all([
-                        redisClient.set(suspendedCacheKey, "true", "EX", ttlSeconds),
+                        redisClient.set(suspendedCacheKey, "true", { EX: ttlSeconds }),
                         redisClient.set(banCacheKey, JSON.stringify({
                             restrictionType: 'LIVE_STREAM_START_BAN',
                             reason: 'AI Moderation Nudity Violation',
                             restrictedUntil: suspendedUntil.toISOString()
-                        }), "EX", ttlSeconds)
+                        }), { EX: ttlSeconds })
                     ]).catch(e => console.error("[Stream Moderation Cache] Redis set error:", e.message));
                 }
 
@@ -2142,7 +2142,7 @@ export const getUserEffectSettingsService = async (userId) => {
         });
     }
 
-    await redisClient.set(redisKey, JSON.stringify(settings), 'EX', 86400);
+    await redisClient.set(redisKey, JSON.stringify(settings), { EX: 86400 });
     return settings;
 };
 
@@ -2171,7 +2171,7 @@ export const updateUserEffectSettingsService = async (userId, newSettings) => {
     });
 
     const redisKey = `user:effect_settings:${userId}`;
-    await redisClient.set(redisKey, JSON.stringify(settings), 'EX', 86400);
+    await redisClient.set(redisKey, JSON.stringify(settings), { EX: 86400 });
     return settings;
 };
 
@@ -2462,7 +2462,7 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
     });
 
     if (redisClient.isOpen && viewers.length > 0) {
-        await redisClient.set(cacheKey, JSON.stringify(viewers), "EX", 60);
+        await redisClient.set(cacheKey, JSON.stringify(viewers), { EX: 60 });
     }
 
     return viewers;
@@ -2516,7 +2516,7 @@ export const getHostProfileService = async ({ hostUserId }) => {
     } : null;
 
     if (host && redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(host), "EX", 300);
+        await redisClient.set(cacheKey, JSON.stringify(host), { EX: 300 });
     }
 
     return host;
@@ -2563,7 +2563,7 @@ export const getUserPrivacyService = async ({ userId }) => {
     };
 
     if (redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(result), "EX", 300);
+        await redisClient.set(cacheKey, JSON.stringify(result), { EX: 300 });
     }
 
     return result;

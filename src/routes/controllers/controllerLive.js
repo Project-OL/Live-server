@@ -242,7 +242,7 @@ const joinLiveStream = async (req, res) => {
                 if (!activeEgressId) {
                     const newEgressId = await startLocalHlsEgressService(stream.streamId);
                     if (newEgressId) {
-                        await redisClient.set(egressKey, newEgressId, "EX", 86400);
+                        await redisClient.set(egressKey, newEgressId, { EX: 86400 });
                     }
                 }
             }).catch(err => console.error("Egress pre-warm error:", err.message));
