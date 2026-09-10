@@ -21,6 +21,11 @@ import {
 import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
 import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
+import { getStreamHeartbeat } from "../../routes/service/serviceHeartbeat.js";
+
+// If a heartbeat ping arrived more recently than this, the host is clearly back
+// on the live stream (even if the 2-minute return timer wasn't explicitly cleared).
+const RECENT_HEARTBEAT_WINDOW_MS = 20000;
 
 export const heartbeatCache = new Map();
 
@@ -759,7 +764,23 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
                             isStillPending = (val1 === "pending" || val2 === "pending");
                         }
 
+                        let hasRecentHeartbeat = false;
                         if (isStillPending) {
+                            const hb = await getStreamHeartbeat(streamId);
+                            if (hb && hb.timestamp && (Date.now() - hb.timestamp <= RECENT_HEARTBEAT_WINDOW_MS)) {
+                                hasRecentHeartbeat = true;
+                            }
+                        }
+
+                        if (isStillPending && hasRecentHeartbeat) {
+                            console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} has a recent heartbeat on stream ${streamId}. Skipping auto-end.`);
+                            if (redisClient.isOpen) {
+                                await Promise.all([
+                                    redisClient.del(returnTimerKey1),
+                                    redisClient.del(returnTimerKey2)
+                                ]).catch(() => { });
+                            }
+                        } else if (isStillPending) {
                             console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} did NOT return to live stream ${streamId} within 2 minutes. Auto-ending live stream...`);
                             if (redisClient.isOpen) {
                                 await Promise.all([

@@ -19,7 +19,12 @@ import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
-import { recordStreamHeartbeat, startStreamHeartbeatMonitor } from './serviceHeartbeat.js';
+import { recordStreamHeartbeat, startStreamHeartbeatMonitor, getStreamHeartbeat } from './serviceHeartbeat.js';
+
+// If a heartbeat ping arrived more recently than this, the host is clearly still
+// connected (via a reconnected socket or the HTTP fallback) even if this exact
+// socket never re-joined the room — skip the disconnect auto-end in that case.
+const RECENT_HEARTBEAT_WINDOW_MS = 20000;
 
 let ioInstance = null;
 const autoUnmuteTimers = new Map();
@@ -317,8 +322,16 @@ export const setupLiveSockets = (io) => {
                                         isReturnGraceActive = (val1 === "pending" || val2 === "pending");
                                     }
 
-                                    if (activeCall || isReturnGraceActive) {
-                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping 30s auto-end for stream ${streamId}.`);
+                                    // Check 3: Has a heartbeat ping arrived recently on another connection
+                                    // (e.g. the client's socket reconnected without re-emitting join_stream)?
+                                    let hasRecentHeartbeat = false;
+                                    const hb = await getStreamHeartbeat(streamId);
+                                    if (hb && hb.timestamp && (Date.now() - hb.timestamp <= RECENT_HEARTBEAT_WINDOW_MS)) {
+                                        hasRecentHeartbeat = true;
+                                    }
+
+                                    if (activeCall || isReturnGraceActive || hasRecentHeartbeat) {
+                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call, in 2-min Return window, or has a recent heartbeat. Skipping 30s auto-end for stream ${streamId}.`);
                                         return;
                                     }
 
