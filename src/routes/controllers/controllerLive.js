@@ -3,7 +3,6 @@ import fs from 'fs';
 import auth from '../../middlewares/authMiddleware.js';
 import prisma from '../../config/prisma.js';
 import { createLiveSchema, sendMessageSchema } from '../../validations/validationLive.js';
-import { recordStreamHeartbeat } from '../service/serviceHeartbeat.js';
 
 import {
     fastGoLiveStreamService,
@@ -1400,10 +1399,8 @@ const streamHeartbeat = async (req, res) => {
                 message: "streamId is required."
             });
         }
-        const timestamp = await recordStreamHeartbeat(streamId, req.userId, "http");
         return res.json({
             success: true,
-            timestamp,
             message: "Stream heartbeat recorded."
         });
     } catch (error) {
