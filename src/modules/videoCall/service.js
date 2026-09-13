@@ -311,6 +311,10 @@ export const initiateCall = async ({ callerId, creatorId }) => {
     const settings = await prisma.videoCallSettings.findUnique({ where: { userId: creatorId } });
     if (!settings) throw new Error("Receiver has not enabled video calls.");
 
+    if (settings.acceptVideoCalls === false) {
+        throw new Error("This user is not accepting video calls right now.");
+    }
+
     const isBlocked = await prisma.blockList.findFirst({
         where: {
             OR: [
@@ -842,7 +846,10 @@ export const getCallSettingsForCaller = async ({ callerId, creatorId }) => {
     let isEligible = true;
     let reason = null;
 
-    if (isBlocked) {
+    if (settings.acceptVideoCalls === false) {
+        isEligible = false;
+        reason = "NOT_ACCEPTING_CALLS";
+    } else if (isBlocked) {
         isEligible = false;
         reason = "BLOCKED";
     } else if (settings.blockLv10 && callerWealthLevel <= 10) {
@@ -867,6 +874,8 @@ export const getCallSettingsForCaller = async ({ callerId, creatorId }) => {
     return {
         pricePerMin: settings.pricePerMin,
         callerRatePerMin: Number(coinRate),
+        acceptVideoCalls: settings.acceptVideoCalls !== false,
+        isVideoCallEnabled: settings.acceptVideoCalls !== false,
         isEligible,
         reason,
         callerWealthLevel,

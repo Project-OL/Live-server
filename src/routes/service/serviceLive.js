@@ -2485,11 +2485,16 @@ export const getHostProfileService = async ({ hostUserId }) => {
     if (redisClient.isOpen) {
         const cached = await redisClient.get(cacheKey);
         if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
+            try {
+                const parsed = JSON.parse(cached);
+                if (parsed && parsed.acceptVideoCalls !== undefined && parsed.livestreamLevel !== undefined) {
+                    return parsed;
+                }
+            } catch (e) { }
         }
     }
 
-    const [hostUser, hostWalletLevels] = await Promise.all([
+    const [hostUser, hostWalletLevels, videoCallSettings] = await Promise.all([
         prisma.user.findUnique({
             where: { id: hostUserId },
             select: {
@@ -2510,19 +2515,32 @@ export const getHostProfileService = async ({ hostUserId }) => {
         prisma.walletUserLevel.findMany({
             where: { userId: hostUserId },
             select: { levelType: true, currentLevel: true }
+        }),
+        prisma.videoCallSettings.findUnique({
+            where: { userId: hostUserId },
+            select: { pricePerMin: true, acceptVideoCalls: true }
         })
     ]);
 
     const hostLevelMap = new Map(hostWalletLevels.map(w => [w.levelType, w.currentLevel]));
     const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
+    const acceptVideoCalls = videoCallSettings ? videoCallSettings.acceptVideoCalls !== false : true;
+    const pricePerMin = videoCallSettings?.pricePerMin || 1800;
+    const coinsPerMin = Math.ceil((pricePerMin * 5) / 3);
+
     const host = hostUser ? {
         id: hostUser.id,
+        userId: hostUser.id,
         publicId: hostUser.publicId ? hostUser.publicId.toString() : null,
         name: hostName,
         username: hostUser.username,
         avatarUrl: hostUser.avatarUrl || null,
         wealthLevel: hostLevelMap.get(LevelType.WEALTH) ?? (hostUser.userLevel?.wealthLevel || 1),
-        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? (hostUser.userLevel?.livestreamLevel || 1)
+        livestreamLevel: hostLevelMap.get(LevelType.STREAM) ?? (hostUser.userLevel?.livestreamLevel || 1),
+        acceptVideoCalls,
+        isVideoCallEnabled: acceptVideoCalls,
+        videoCallPricePerMin: pricePerMin,
+        videoCallCoinsPerMin: acceptVideoCalls ? coinsPerMin : null
     } : null;
 
     if (host && redisClient.isOpen) {

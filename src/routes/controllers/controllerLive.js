@@ -260,12 +260,20 @@ const joinLiveStream = async (req, res) => {
             console.log(`[REST Join] Stealth VIP User ${req.userId} joined room ${stream.streamId} silently.`);
         }
 
+        const streamData = {
+            ...stream,
+            acceptVideoCalls: host?.acceptVideoCalls ?? true,
+            isVideoCallEnabled: host?.acceptVideoCalls ?? true,
+            videoCallPricePerMin: host?.videoCallPricePerMin ?? 1800,
+            videoCallCoinsPerMin: host?.videoCallCoinsPerMin ?? null
+        };
+
         return res.json({
             success: true,
             mode,
             token,
             hlsUrl,
-            stream,
+            stream: streamData,
             viewerCount: finalViewerCount,
             viewers,
             host,
@@ -379,12 +387,12 @@ const getLiveStreams = async (req, res) => {
             }) : [],
             hostUserIds.length > 0 ? prisma.videoCallSettings.findMany({
                 where: { userId: { in: hostUserIds } },
-                select: { userId: true, pricePerMin: true }
+                select: { userId: true, pricePerMin: true, acceptVideoCalls: true }
             }) : []
         ]);
         const hostCountryMap = new Map(hostUsers.map(u => [u.id, u.country || null]));
         const hostAdminTagsMap = new Map(hostUsers.map(u => [u.id, u.admin_tags || []]));
-        const videoCallRateMap = new Map(videoCallSettingsList.map(s => [s.userId, s.pricePerMin]));
+        const videoCallSettingsMap = new Map(videoCallSettingsList.map(s => [s.userId, s]));
 
         const passwordKeys = streamIds.map(sId => `stream:password:${sId}`);
         const passwords = passwordKeys.length > 0 ? await redisClient.mGet(passwordKeys) : [];
@@ -405,7 +413,9 @@ const getLiveStreams = async (req, res) => {
 
         const data = streams.map((stream) => {
             const password = passwordMap.get(stream.streamId);
-            const pricePerMin = videoCallRateMap.get(stream.userId) || 1800;
+            const callSettings = videoCallSettingsMap.get(stream.userId);
+            const acceptVideoCalls = callSettings ? callSettings.acceptVideoCalls !== false : true;
+            const pricePerMin = callSettings?.pricePerMin || 1800;
             const coinsPerMin = Math.ceil((pricePerMin * 5) / 3);
             const adminTags = hostAdminTagsMap.get(stream.userId) || [];
 
@@ -415,8 +425,10 @@ const getLiveStreams = async (req, res) => {
                 hostCountry: hostCountryMap.get(stream.userId) || null,
                 adminTags,
                 isPasswordProtected: !!password,
+                acceptVideoCalls,
+                isVideoCallEnabled: acceptVideoCalls,
                 videoCallPricePerMin: pricePerMin,
-                videoCallCoinsPerMin: coinsPerMin
+                videoCallCoinsPerMin: acceptVideoCalls ? coinsPerMin : null
             };
         });
 
@@ -471,12 +483,24 @@ const getLiveStream = async (req, res) => {
             viewerIds
         });
 
+        const streamData = {
+            ...stream,
+            acceptVideoCalls: host?.acceptVideoCalls ?? true,
+            isVideoCallEnabled: host?.acceptVideoCalls ?? true,
+            videoCallPricePerMin: host?.videoCallPricePerMin ?? 1800,
+            videoCallCoinsPerMin: host?.videoCallCoinsPerMin ?? null
+        };
+
         const responseData = {
             success: true,
-            data: stream,
+            data: streamData,
             viewerCount: viewers.length,
             viewers,
             host,
+            acceptVideoCalls: host?.acceptVideoCalls ?? true,
+            isVideoCallEnabled: host?.acceptVideoCalls ?? true,
+            videoCallPricePerMin: host?.videoCallPricePerMin ?? 1800,
+            videoCallCoinsPerMin: host?.videoCallCoinsPerMin ?? null,
             isPasswordProtected,
             micPermissionRequired,
             chatPermissionMode,
