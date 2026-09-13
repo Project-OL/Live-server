@@ -17,9 +17,12 @@ services:
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://localhost:9092
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
 
+  # Host networking required for WebRTC UDP/TCP + TURN ports.
+  # Before production: follow deploy/LIVEKIT_VPS_CHECKLIST.md (TURN/TLS + firewall).
   livekit:
     image: livekit/livekit-server:latest
     command: --config /etc/livekit.yaml
     network_mode: "host"
     volumes:
       - ./livekit.yaml:/etc/livekit.yaml
+    restart: unless-stopped

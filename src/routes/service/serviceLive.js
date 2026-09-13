@@ -44,10 +44,15 @@ dotenv.config();
 
 const apiKey = process.env.LIVEKIT_API_KEY || 'devkey';
 const apiSecret = process.env.LIVEKIT_API_SECRET || 'secret';
-const livekitHost = process.env.LIVEKIT_URL || 'http://localhost:7880';
+/** RoomService / Egress need http(s); clients use wss:// */
+const livekitHost = (process.env.LIVEKIT_URL || 'http://localhost:7880')
+    .replace(/^wss:/i, 'https:')
+    .replace(/^ws:/i, 'http:');
 
 const roomService = new RoomServiceClient(livekitHost, apiKey, apiSecret);
 const egressClient = new EgressClient(livekitHost, apiKey, apiSecret);
+
+export { roomService as livekitRoomService };
 const isProduction = process.env.isProduction === 'true';
 
 
@@ -227,6 +232,40 @@ export const fastGoLiveStreamService = async ({
     };
 };
 
+/**
+ * Clear Redis markers for a stream (safe if keys missing).
+ * Used by normal end + Redis-only abort when DB row is not ready yet.
+ */
+export const clearLiveStreamRedisKeys = async ({ streamId, userId, id }) => {
+    if (!redisClient.isOpen) return;
+    const sid = streamId || id;
+    const keys = [
+        userId ? `user:active_stream:${userId}` : null,
+        sid ? `stream:info:${sid}` : null,
+        id && id !== sid ? `stream:info:${id}` : null,
+        sid ? `stream:heartbeat:${sid}` : null,
+        userId ? `stream:heartbeat:user:${userId}` : null,
+        sid ? `stream:active:${sid}` : null,
+        sid ? `stream:history:${sid}` : null,
+        sid ? `stream:chats:${sid}` : null,
+        sid ? `stream:admins:${sid}` : null,
+        sid ? `stream:kicked:${sid}` : null,
+        sid ? `stream:password:${sid}` : null,
+        sid ? `stream:sheet:${sid}` : null,
+        sid ? `stream:mic_permission:${sid}` : null,
+        sid ? `stream:chat_permission:${sid}` : null,
+        sid ? `stream:uncounted_seconds:${sid}` : null,
+        sid ? `stream:camera_off_at:${sid}` : null,
+        sid ? `host:disconnect_timer:${sid}` : null,
+    ].filter(Boolean);
+    if (keys.length === 0) return;
+    try {
+        await redisClient.del(keys);
+    } catch (err) {
+        console.error("[Redis Clean] clearLiveStreamRedisKeys:", err.message);
+    }
+};
+
 export const endLiveStreamService = async ({
     id,
     userId,
@@ -234,9 +273,55 @@ export const endLiveStreamService = async ({
 }) => {
     console.log(`[Live Stream END] ▶ Attempting end. reason=${reason} dbId=${id} userId=${userId}`);
 
-    const stream = await prisma.liveStream.findUnique({
-        where: { id }
+    // Accept DB id or streamId (Flutter may pass either)
+    let stream = await prisma.liveStream.findFirst({
+        where: {
+            OR: [{ id }, { streamId: id }]
+        }
     });
+
+    // Race: go-live wrote Redis immediately but DB insert is async — still allow abort
+    if (!stream && redisClient.isOpen) {
+        const raw =
+            (await redisClient.get(`stream:info:${id}`).catch(() => null)) ||
+            null;
+        if (raw) {
+            let parsed = null;
+            try {
+                parsed = JSON.parse(raw);
+            } catch (_) {}
+            if (parsed && parsed.userId === userId) {
+                const sid = parsed.streamId || parsed.id || id;
+                await clearLiveStreamRedisKeys({
+                    streamId: sid,
+                    userId,
+                    id: parsed.id || id
+                });
+                await closeLivekitRoom(sid);
+                console.log(
+                    `[End Stream] Redis-only abort for ${sid} (DB row not ready yet)`
+                );
+                return {
+                    stream: {
+                        ...parsed,
+                        isLive: false,
+                        endedAt: new Date()
+                    },
+                    summary: {
+                        streamId: sid,
+                        host: { id: userId, name: "Host", avatarUrl: null },
+                        durationSeconds: 0,
+                        durationFormatted: "00:00:00",
+                        wonPoints: 0,
+                        newFollowersCount: 0,
+                        totalAudiencesCount: 0,
+                        reason: "REDIS_ABORT"
+                    },
+                    redisOnly: true
+                };
+            }
+        }
+    }
 
     if (!stream) {
         console.warn(`[Live Stream END] ✖ Stream not found. reason=${reason} dbId=${id} userId=${userId}`);
@@ -250,6 +335,11 @@ export const endLiveStreamService = async ({
 
     if (!stream.isLive) {
         console.log(`[Live Stream END] ⏭ Already ended, no-op. reason=${reason} dbId=${id} streamId=${stream.streamId} userId=${userId}`);
+        await clearLiveStreamRedisKeys({
+            streamId: stream.streamId,
+            userId,
+            id: stream.id
+        });
         return { stream, alreadyEnded: true };
     }
 
@@ -305,9 +395,9 @@ export const endLiveStreamService = async ({
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
 
     // Persist billable duration on the same Prisma update (do not rely on a separate
-    // $executeRawUnsafe â€” that path was leaving effective_duration_seconds at 0 in prod).
+    // $executeRawUnsafe — that path was leaving effective_duration_seconds at 0 in prod).
     const updatedStream = await prisma.liveStream.update({
-        where: { id },
+        where: { id: stream.id },
         data: {
             isLive: false,
             endedAt,
@@ -315,15 +405,17 @@ export const endLiveStreamService = async ({
         }
     });
 
-    console.log(`[Live Stream END] ✅ Ended successfully. reason=${reason} dbId=${id} streamId=${stream.streamId} userId=${userId} grossDurationSeconds=${grossDurationSeconds} effectiveDurationSeconds=${effectiveDurationSeconds}`);
+    console.log(`[Live Stream END] ✅ Ended successfully. reason=${reason} dbId=${stream.id} streamId=${stream.streamId} userId=${userId} grossDurationSeconds=${grossDurationSeconds} effectiveDurationSeconds=${effectiveDurationSeconds}`);
 
     if (redisClient.isOpen) {
-        await Promise.all([
-            redisClient.del(`user:active_stream:${userId}`),
-            redisClient.del(`stream:info:${stream.streamId}`),
-            redisClient.del(`stream:info:${id}`),
-            redisClient.del(keyUncounted)
-        ]);
+        await clearLiveStreamRedisKeys({
+            streamId: stream.streamId,
+            userId,
+            id: stream.id
+        });
+        try {
+            await redisClient.del(keyUncounted);
+        } catch (_) {}
     }
 
     const durationSeconds = effectiveDurationSeconds;
@@ -445,22 +537,6 @@ export const endLiveStreamService = async ({
         }
     } catch (syncError) {
         console.error("[Batch Sync] Failed to sync chats to DB:", syncError.message);
-    }
-
-    try {
-        await redisClient.del([
-            `stream:active:${stream.streamId}`,
-            `stream:history:${stream.streamId}`,
-            `stream:chats:${stream.streamId}`,
-            `stream:admins:${stream.streamId}`,
-            `stream:kicked:${stream.streamId}`,
-            `stream:password:${stream.streamId}`,
-            `stream:sheet:${stream.streamId}`,
-            `stream:mic_permission:${stream.streamId}`,
-            `stream:chat_permission:${stream.streamId}`
-        ]);
-    } catch (cleanError) {
-        console.error("[Redis Clean] Failed to clear Redis keys:", cleanError.message);
     }
 
     await closeLivekitRoom(stream.streamId);

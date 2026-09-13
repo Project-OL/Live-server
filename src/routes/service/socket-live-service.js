@@ -19,7 +19,7 @@ import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
-// Heartbeat disabled
+import { recordStreamHeartbeat, startStreamHeartbeatMonitor } from './serviceHeartbeat.js';
 
 
 let ioInstance = null;
@@ -57,12 +57,19 @@ const checkIsHostOrAdmin = async (streamId, userId) => {
 
 export const setupLiveSockets = (io) => {
     ioInstance = io;
+    startStreamHeartbeatMonitor(io);
     io.on("connection", (socket) => {
         const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
         if (userId) {
             socket.join(`user:${userId}`);
             console.log(`[Socket] User ${userId} joined personal channel user:${userId}`);
         }
+
+        socket.on("stream_heartbeat", async ({ streamId }) => {
+            if (streamId) {
+                await recordStreamHeartbeat(streamId, socket.data?.userId || userId);
+            }
+        });
 
         socket.on("join_stream", async ({ streamId }) => {
             socket.join(streamId);
