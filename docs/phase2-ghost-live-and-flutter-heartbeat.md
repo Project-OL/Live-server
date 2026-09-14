@@ -3,6 +3,8 @@
 **Status:** Committed on **master** / **staging**. Heartbeat + LiveKit ghost sweep enabled. **Not on production** until sign-off.  
 **ol_app:** Flutter work still required — see `flutter-live-ghost-heartbeat-handoff.md`.
 
+**Update (2026-09-14):** `LIVE_GHOST_LIVEKIT_GRACE_MS` default lowered from 90000ms to **20000ms** (`src/routes/service/serviceHeartbeat.js`). The 90s figure throughout this doc is historical — the sweeper now auto-ends a ghost (no LiveKit host) after ~20s instead of ~90s. Backend-only mitigation; the ol_app rollback fix described below is still not implemented.
+
 ---
 
 ## What Phase 2 was (original) + what we are expanding to

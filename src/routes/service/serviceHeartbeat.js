@@ -52,9 +52,9 @@ const HEARTBEAT_START_GRACE_MS = Number(process.env.LIVE_HEARTBEAT_START_GRACE_M
 /**
  * After this age, if the host identity is not in the LiveKit room, end the stream.
  * Catches Wi-Fi ghosts where go-live API succeeded but Room.connect never did
- * (and heartbeat never started). Default 90s.
+ * (and heartbeat never started). Default 20s.
  */
-const LIVEKIT_HOST_GRACE_MS = Number(process.env.LIVE_GHOST_LIVEKIT_GRACE_MS || 90000);
+const LIVEKIT_HOST_GRACE_MS = Number(process.env.LIVE_GHOST_LIVEKIT_GRACE_MS || 20000);
 const GHOST_SWEEP_ENABLED = String(process.env.LIVE_GHOST_SWEEP_ENABLED || 'true').toLowerCase() !== 'false';
 
 const emitStreamEnded = (io, stream, streamIdKey, reason, message) => {
