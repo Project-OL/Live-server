@@ -1394,7 +1394,9 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
             id: gift.id,
             name: gift.name,
             displayImageUrl: gift.displayImageUrl,
-            effectUrl: gift.effectUrl
+            effectUrl: gift.effectUrl,
+            vapUrl: gift.vapUrl,
+            isVap: Boolean(gift.vapUrl)
         },
         wealthLevel: finalLevel,
         isLevelUp

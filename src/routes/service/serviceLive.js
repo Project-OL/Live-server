@@ -1572,6 +1572,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             name: gift.name,
             displayImageUrl: gift.displayImageUrl,
             effectUrl: gift.effectUrl,
+            vapUrl: gift.vapUrl,
+            isVap: Boolean(gift.vapUrl),
             coinCost: Number(gift.coinCost)
         },
         wealthLevel: isStealth ? 0 : finalLevel,

@@ -1307,6 +1307,7 @@ model Gift {
   coinCost             Int                      @map("coin_cost")
   displayImageUrl      String                   @map("display_image_url")
   effectUrl            String?                  @map("effect_url")
+  vapUrl               String?                  @map("vap_url")
   isLucky              Boolean                  @default(false) @map("is_lucky")
   isActive             Boolean                  @default(true) @map("is_active")
   createdAt            DateTime                 @default(now()) @map("created_at")
