@@ -25,6 +25,7 @@ export const applyUserRestriction = async (req, res, next) => {
     const { userId } = req.params;
     const { type, restrictedUntil, reason, reportId } = req.body;
     const adminId = req.userId || req.user?.id || 'system_admin';
+    const adminRole = req.adminUser?.role;
 
     if (!type || !restrictedUntil) {
       return res.status(400).json({
@@ -39,7 +40,8 @@ export const applyUserRestriction = async (req, res, next) => {
       restrictedUntil,
       reason,
       reportId,
-      adminId
+      adminId,
+      adminRole
     });
 
     return res.status(201).json({
@@ -48,9 +50,10 @@ export const applyUserRestriction = async (req, res, next) => {
       data: restriction
     });
   } catch (err) {
-    return res.status(400).json({
+    return res.status(err.statusCode || 400).json({
       success: false,
-      message: err.message || 'Failed to apply restriction'
+      message: err.message || 'Failed to apply restriction',
+      ...(err.code && { code: err.code })
     });
   }
 };

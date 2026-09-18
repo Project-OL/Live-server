@@ -1,6 +1,65 @@
 import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
 import { endLiveStreamService, toggleUserSheetMuteService, removeUserFromSheetService } from './serviceLive.js';
+import { AppError } from '../../middlewares/errorHandler.js';
+
+/**
+ * Country-scoped moderation gate, mirrors ol-node-rest's
+ * adminCountryAccessService.assertAllowed. SUPER_ADMIN always passes; an
+ * admin with zero admin_country_access rows is unrestricted (legacy
+ * behavior); an admin with >=1 row may only act on users whose country is
+ * in that set.
+ */
+async function assertCountryAccessOrThrow(adminId, adminRole, targetUserId) {
+  if (adminRole === 'SUPER_ADMIN') return;
+  if (!adminId) return;
+
+  const grants = await prisma.adminCountryAccess.findMany({
+    where: { adminId },
+    select: { country: true }
+  });
+  if (grants.length === 0) return;
+
+  const targetUser = await prisma.user.findUnique({
+    where: { id: targetUserId },
+    select: { country: true }
+  });
+  const allowed = new Set(grants.map((g) => g.country));
+  if (!targetUser?.country || !allowed.has(targetUser.country)) {
+    throw new AppError(403, "You do not have access to this user's country", 'COUNTRY_ACCESS_FORBIDDEN');
+  }
+}
+
+/**
+ * Fire-and-forget notify to ol-node-rest, which fans out to every SUPER_ADMIN.
+ * Best-effort: never blocks or fails the restriction that triggered it.
+ */
+function notifySuperAdminsOfModeration({ type, targetUserId, reason, restrictedUntil, adminId }) {
+  const baseUrl = process.env.OL_NODE_REST_BASE_URL;
+  const secret = process.env.LIVE_WEBHOOK_SECRET;
+  if (!baseUrl || !secret) return;
+
+  setImmediate(async () => {
+    try {
+      await fetch(`${baseUrl.replace(/\/+$/, '')}/api/v1/webhooks/live/moderation-notify`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'X-Live-Webhook-Secret': secret
+        },
+        body: JSON.stringify({
+          type,
+          targetUserId,
+          reason: reason || undefined,
+          restrictedUntil: new Date(restrictedUntil).toISOString(),
+          performedByAdminId: adminId
+        })
+      });
+    } catch (err) {
+      console.error('[super-admin-notify] webhook call failed', err.message);
+    }
+  });
+}
 
 export const VALID_RESTRICTION_TYPES = [
   'LIVE_CHAT_MUTE',
@@ -96,7 +155,7 @@ export async function getUserRestrictionsHistory(userId) {
  * Re-applying the same type soft-clears any previous active row for that user+type.
  * If type === 'LIVE_STREAM_START_BAN' and host is currently live, auto-kills the live stream immediately.
  */
-export async function applyUserRestrictionService({ userId, type, restrictedUntil, reason, reportId, adminId }) {
+export async function applyUserRestrictionService({ userId, type, restrictedUntil, reason, reportId, adminId, adminRole }) {
   const now = new Date();
   const restrictionEndDate = new Date(restrictedUntil);
 
@@ -106,6 +165,10 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
 
   if (!VALID_RESTRICTION_TYPES.includes(type)) {
     throw new Error(`Invalid restriction type. Must be one of: ${VALID_RESTRICTION_TYPES.join(', ')}`);
+  }
+
+  if (type === 'LIVE_CHAT_MUTE' || type === 'LIVE_AUDIO_MUTE') {
+    await assertCountryAccessOrThrow(adminId, adminRole, userId);
   }
 
   const createdRestriction = await prisma.$transaction(async (tx) => {
@@ -141,6 +204,16 @@ export async function applyUserRestrictionService({ userId, type, restrictedUnti
   if (redisClient.isOpen) {
     const redisKey = `user:restriction:${userId}:${type}`;
     redisClient.set(redisKey, JSON.stringify(createdRestriction), { EX: ttlSeconds }).catch(() => { });
+  }
+
+  if (type === 'LIVE_CHAT_MUTE' || type === 'LIVE_AUDIO_MUTE') {
+    notifySuperAdminsOfModeration({
+      type,
+      targetUserId: userId,
+      reason,
+      restrictedUntil: restrictionEndDate,
+      adminId
+    });
   }
 
   // 2. If LIVE_STREAM_START_BAN applied, kill any ongoing live stream for this host immediately

@@ -2660,6 +2660,22 @@ model UserRestriction {
   @@map("user_restrictions")
 }
 
+/// Mirror of ol-node-rest's admin_country_access (read-only here). Countries an
+/// admin may act on via the country-scoped moderation page; zero rows for an
+/// admin = unrestricted. Owned/migrated by ol-node-rest — no relations declared
+/// here since this side only ever reads by adminId.
+model AdminCountryAccess {
+  id               String   @id @default(uuid())
+  adminId          String   @map("admin_id")
+  country          String   @db.VarChar(100)
+  createdByAdminId String?  @map("created_by_admin_id")
+  createdAt        DateTime @default(now()) @map("created_at")
+
+  @@unique([adminId, country])
+  @@index([adminId])
+  @@map("admin_country_access")
+}
+
 model LiveStreamAdmin {
   id           String   @id @default(uuid()) @db.Uuid
   hostUserId   String   @map("host_user_id") @db.Uuid
