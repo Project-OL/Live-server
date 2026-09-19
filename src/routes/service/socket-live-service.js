@@ -19,7 +19,7 @@ import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
-import { recordStreamHeartbeat, startStreamHeartbeatMonitor } from './serviceHeartbeat.js';
+import { recordStreamHeartbeat, startStreamHeartbeatMonitor, HOST_DISCONNECT_TIMEOUT_MS } from './serviceHeartbeat.js';
 
 
 let ioInstance = null;
@@ -272,15 +272,16 @@ export const setupLiveSockets = (io) => {
             if (socket.data && socket.data.streamId && socket.data.userId) {
                 const { streamId, userId, isStealth, isHost, dbStreamId } = socket.data;
 
-                // If disconnected user is Host, start 30-second network loss disconnect timer (Total ~60s with socket heartbeat)
+                // If disconnected user is Host, start network loss disconnect timer
+                // (kept in lockstep with the heartbeat-lost grace, HOST_DISCONNECT_TIMEOUT_MS)
                 if (isHost) {
-                    console.warn(`[Socket Host Disconnect] Host ${userId} disconnected from stream ${streamId}. Starting 30s network loss timer.`);
+                    console.warn(`[Socket Host Disconnect] Host ${userId} disconnected from stream ${streamId}. Starting ${HOST_DISCONNECT_TIMEOUT_MS}ms network loss timer.`);
                     const timerKey = `host:disconnect_timer:${streamId}`;
                     if (redisClient.isOpen) {
-                        await redisClient.set(timerKey, "pending", { EX: 30 }).catch(() => { });
+                        await redisClient.set(timerKey, "pending", { EX: Math.ceil(HOST_DISCONNECT_TIMEOUT_MS / 1000) }).catch(() => { });
                     }
 
-                    // 30-second background worker check
+                    // Background worker check
                     setTimeout(async () => {
                         try {
                             let isStillPending = true;
@@ -290,7 +291,7 @@ export const setupLiveSockets = (io) => {
                             }
 
                             if (isStillPending) {
-                                console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within 30s grace period. Auto-ending live stream...`);
+                                console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within ${HOST_DISCONNECT_TIMEOUT_MS}ms grace period. Auto-ending live stream...`);
                                 if (redisClient.isOpen) {
                                     await redisClient.del(timerKey).catch(() => { });
                                 }
@@ -321,7 +322,7 @@ export const setupLiveSockets = (io) => {
                                     }
 
                                     if (activeCall || isReturnGraceActive) {
-                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping 30s auto-end for stream ${streamId}.`);
+                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping auto-end for stream ${streamId}.`);
                                         return;
                                     }
 
@@ -339,7 +340,7 @@ export const setupLiveSockets = (io) => {
                         } catch (timeoutErr) {
                             console.error("[Socket Host Disconnect Timeout Error]:", timeoutErr.message);
                         }
-                    }, 30000);
+                    }, HOST_DISCONNECT_TIMEOUT_MS);
                 }
 
                 try {

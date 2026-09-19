@@ -257,6 +257,7 @@ export const clearLiveStreamRedisKeys = async ({ streamId, userId, id }) => {
         sid ? `stream:uncounted_seconds:${sid}` : null,
         sid ? `stream:camera_off_at:${sid}` : null,
         sid ? `host:disconnect_timer:${sid}` : null,
+        sid ? `stream:host_confirmed:${sid}` : null,
     ].filter(Boolean);
     if (keys.length === 0) return;
     try {

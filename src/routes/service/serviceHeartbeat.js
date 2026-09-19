@@ -6,6 +6,19 @@ import {
 import { livekitHostIsPresent } from './livekitPresence.js';
 
 /**
+ * How long a host may go silent (no heartbeat) before the stream is auto-ended.
+ * Deliberately generous so a backgrounded app (user briefly switches apps) has
+ * time to come back before viewers are kicked out. Default 90s.
+ */
+const HEARTBEAT_TIMEOUT_MS = Number(process.env.LIVE_HEARTBEAT_TIMEOUT_MS || 90000);
+
+// Redis TTL for the last-heartbeat marker must outlive HEARTBEAT_TIMEOUT_MS — otherwise
+// the key expires mid-silence and the monitor falls back to stream *age* instead of
+// "time since last ping", ending the stream almost immediately instead of honoring
+// the full grace window. +15s buffer covers the 5s monitor poll interval + clock skew.
+const HEARTBEAT_KEY_TTL_SEC = Math.ceil(HEARTBEAT_TIMEOUT_MS / 1000) + 15;
+
+/**
  * Record a stream heartbeat ping from Host.
  * @param {string} streamId - Stream room identifier
  * @param {string} userId - Host user ID
@@ -16,9 +29,9 @@ export const recordStreamHeartbeat = async (streamId, userId) => {
     const payload = JSON.stringify({ userId, timestamp: now });
     if (redisClient.isOpen) {
         try {
-            await redisClient.set(`stream:heartbeat:${streamId}`, payload, { EX: 30 });
+            await redisClient.set(`stream:heartbeat:${streamId}`, payload, { EX: HEARTBEAT_KEY_TTL_SEC });
             if (userId) {
-                await redisClient.set(`stream:heartbeat:user:${userId}`, payload, { EX: 30 });
+                await redisClient.set(`stream:heartbeat:user:${userId}`, payload, { EX: HEARTBEAT_KEY_TTL_SEC });
             }
         } catch (err) {
             console.error("[Heartbeat] Redis set error:", err.message);
@@ -45,17 +58,49 @@ export const getStreamHeartbeat = async (streamId) => {
 
 let heartbeatMonitorInterval = null;
 
-/** Seconds after start before missing heartbeat ends the stream */
-const HEARTBEAT_TIMEOUT_MS = Number(process.env.LIVE_HEARTBEAT_TIMEOUT_MS || 15000);
 /** Initial grace after go-live before heartbeat is required */
 const HEARTBEAT_START_GRACE_MS = Number(process.env.LIVE_HEARTBEAT_START_GRACE_MS || 15000);
 /**
- * After this age, if the host identity is not in the LiveKit room, end the stream.
- * Catches Wi-Fi ghosts where go-live API succeeded but Room.connect never did
- * (and heartbeat never started). Default 20s.
+ * After this age, if the host identity is not in the LiveKit room AND the host has
+ * never been confirmed present before, end the stream. Catches true Wi-Fi ghosts
+ * where go-live API succeeded but Room.connect never did. Default 20s.
+ * Once a host has been confirmed present at least once (see stream:host_confirmed:*
+ * below), later LiveKit absences are no longer treated as ghosts here — they fall
+ * through to the heartbeat-lost check instead, which has the full HEARTBEAT_TIMEOUT_MS
+ * grace (so a brief media drop / backgrounded app doesn't get the fast ghost timeout).
  */
 const LIVEKIT_HOST_GRACE_MS = Number(process.env.LIVE_GHOST_LIVEKIT_GRACE_MS || 20000);
 const GHOST_SWEEP_ENABLED = String(process.env.LIVE_GHOST_SWEEP_ENABLED || 'true').toLowerCase() !== 'false';
+/**
+ * How long a host's socket may stay disconnected before the stream is auto-ended.
+ * Kept in lockstep with HEARTBEAT_TIMEOUT_MS so backgrounding the app (which often
+ * drops the socket too) doesn't get ended by this timer before the heartbeat grace
+ * even has a chance to matter.
+ */
+export const HOST_DISCONNECT_TIMEOUT_MS = Number(process.env.LIVE_HOST_DISCONNECT_TIMEOUT_MS || HEARTBEAT_TIMEOUT_MS);
+
+const hostConfirmedKey = (streamIdKey) => `stream:host_confirmed:${streamIdKey}`;
+
+/** Remember that the host has been seen in the LiveKit room at least once for this stream. */
+const markHostConfirmed = async (streamIdKey) => {
+    if (!redisClient.isOpen) return;
+    try {
+        // 24h safety-net TTL in case end-of-stream cleanup is ever skipped (e.g. crash).
+        await redisClient.set(hostConfirmedKey(streamIdKey), "1", { EX: 86400 });
+    } catch (err) {
+        console.error("[Heartbeat] host_confirmed set error:", err.message);
+    }
+};
+
+const isHostConfirmed = async (streamIdKey) => {
+    if (!redisClient.isOpen) return false;
+    try {
+        return Boolean(await redisClient.get(hostConfirmedKey(streamIdKey)));
+    } catch (err) {
+        console.error("[Heartbeat] host_confirmed get error:", err.message);
+        return false;
+    }
+};
 
 const emitStreamEnded = (io, stream, streamIdKey, reason, message) => {
     const payload = {
@@ -126,13 +171,23 @@ export const startStreamHeartbeatMonitor = (io) => {
                     // --- Ghost / Wi-Fi: go-live created DB row but host never joined LiveKit ---
                     if (GHOST_SWEEP_ENABLED && ageMs >= LIVEKIT_HOST_GRACE_MS) {
                         const hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
-                        if (!hostInLk) {
+                        if (hostInLk) {
+                            // Host confirmed present at least once — remember it so a later
+                            // drop (network blip, backgrounded app) isn't mistaken for a
+                            // "never connected" ghost and gets the full heartbeat grace instead.
+                            markHostConfirmed(streamIdKey).catch(() => { });
+                        } else {
                             const pause = await hostPausedForCallOrReturn(hostUserId, streamIdKey);
                             if (pause.paused) {
                                 console.log(`[Ghost Sweep] Stream ${streamIdKey} no LiveKit host but paused (${pause.why}).`);
+                            } else if (await isHostConfirmed(streamIdKey)) {
+                                // Host was live before; this is a drop, not a ghost. Let the
+                                // heartbeat-lost check below (full HEARTBEAT_TIMEOUT_MS grace)
+                                // decide whether to end the stream.
+                                console.log(`[Ghost Sweep] Stream ${streamIdKey} host previously confirmed but not in LiveKit now. Deferring to heartbeat monitor.`);
                             } else {
                                 console.warn(
-                                    `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}. Auto-ending.`
+                                    `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}, never confirmed. Auto-ending.`
                                 );
                                 emitStreamEnded(
                                     io,
