@@ -39,6 +39,7 @@ import {
     getHostStatsService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
+import { withGiftThumbnail } from '../../utils/giftImage.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
 import {
     sendMessageService,
@@ -895,7 +896,7 @@ const getGifts = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            data: gifts,
+            data: gifts.map(withGiftThumbnail),
             pagination: {
                 page,
                 limit,

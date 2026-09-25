@@ -14,6 +14,7 @@ import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
+import { giftImageFields } from '../../utils/giftImage.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 import {
     getCoinBalanceInTx,
@@ -1113,7 +1114,7 @@ const ensureActiveGalleryCached = async (year, month) => {
                             id: item.id,
                             giftId: item.gift.id,
                             name: item.gift.name,
-                            displayImageUrl: item.gift.displayImageUrl,
+                            ...giftImageFields(item.gift),
                             coinCost: Number(item.gift.coinCost)
                         });
                     }
@@ -1348,7 +1349,10 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         luckyResult.socketPayload.receiverPublicId = receiverPublicId;
         luckyResult.socketPayload.targetUserPublicId = receiverPublicId;
         luckyResult.socketPayload.isMystery = isStealth;
-        if (isStealth) luckyResult.socketPayload.senderId = null;
+        if (isStealth) {
+            luckyResult.socketPayload.senderId = null;
+            luckyResult.socketPayload.wealthLevel = 0;
+        }
 
         if (luckyResult.luckyWin) {
             luckyResult.luckyWin.senderName = senderName;
@@ -1392,28 +1396,6 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             throw new Error("Insufficient coins to send this gift.");
         }
         const balanceAfterCoins = senderCoins - coinCost;
-
-        const userLevel = await tx.walletUserLevel.findUnique({
-            where: {
-                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
-            }
-        });
-        const currentLevel = userLevel ? userLevel.currentLevel : 1;
-        const cumulativeTotal = userLevel ? userLevel.cumulativeTotal : 0n;
-        const newCumulativeTotal = cumulativeTotal + coinCost;
-
-        const nextLevelConfig = await tx.walletLevelConfig.findUnique({
-            where: {
-                levelType_level: { levelType: LevelType.WEALTH, level: currentLevel + 1 }
-            }
-        });
-
-        let finalLevel = currentLevel;
-        let isLevelUp = false;
-        if (nextLevelConfig && newCumulativeTotal >= nextLevelConfig.threshold) {
-            finalLevel = nextLevelConfig.level;
-            isLevelUp = true;
-        }
 
         const receiverPoints = await getPointBalanceInTx(tx, receiverWallet.id);
         const balanceAfterPoints = receiverPoints + pointsAwarded;
@@ -1478,21 +1460,9 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             }
         });
 
-        await tx.walletUserLevel.upsert({
-            where: {
-                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
-            },
-            create: {
-                userId: senderId,
-                levelType: LevelType.WEALTH,
-                currentLevel: finalLevel,
-                cumulativeTotal: newCumulativeTotal
-            },
-            update: {
-                currentLevel: finalLevel,
-                cumulativeTotal: newCumulativeTotal
-            }
-        });
+        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, coinCost);
+        const finalLevel = wealth.newLevel;
+        const isLevelUp = wealth.newLevel > wealth.previousLevel;
 
         await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
 
@@ -1571,7 +1541,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         gift: {
             id: gift.id,
             name: gift.name,
-            displayImageUrl: gift.displayImageUrl,
+            ...giftImageFields(gift),
             effectUrl: gift.effectUrl,
             vapUrl: gift.vapUrl,
             isVap: Boolean(gift.vapUrl),
@@ -1831,22 +1801,18 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
 
     const cost = 10000n;
 
-    // 1. Fetch sender info and wealth level
-    const [senderUser, userLevel] = await Promise.all([
-        prisma.user.findUnique({
-            where: { id: senderId },
-            select: { username: true, firstName: true, lastName: true, avatarUrl: true }
-        }),
-        prisma.walletUserLevel.findUnique({
-            where: {
-                userId_levelType: {
-                    userId: senderId,
-                    levelType: LevelType.WEALTH
-                }
-            },
-            select: { currentLevel: true }
-        })
-    ]);
+    // 1. Fetch sender info (wealth level comes from the charge below, post-spend)
+    const senderUser = await prisma.user.findUnique({
+        where: { id: senderId },
+        select: {
+            username: true,
+            firstName: true,
+            lastName: true,
+            avatarUrl: true,
+            privacyMysteryLive: true,
+            vipSubscriptionActive: true
+        }
+    });
 
     if (!senderUser) {
         throw new Error("Sender user not found.");
@@ -1858,7 +1824,7 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
     const messageTxId = crypto.randomUUID();
     const idemKey = clientTxId ? `global-msg:${senderId}:${clientTxId}` : `global-msg:${messageTxId}`;
 
-    const balanceAfterCoins = await runMoneyTransaction(async (tx) => {
+    const { balanceAfterCoins, wealthLevel } = await runMoneyTransaction(async (tx) => {
         const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
         await lockWalletsForUpdate(tx, [senderWallet.id]);
         await assertCoinsNotFrozenInTx(tx, senderId);
@@ -1887,9 +1853,9 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
             data: { version: { increment: 1n } }
         });
 
-        await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
+        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
 
-        return dbBalanceAfter;
+        return { balanceAfterCoins: dbBalanceAfter, wealthLevel: wealth.newLevel };
     });
 
     await writeCoinBalanceCache(senderId, balanceAfterCoins);
@@ -1904,7 +1870,7 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
             senderId,
             senderName: `${senderUser.firstName || ""} ${senderUser.lastName || ""}`.trim() || senderUser.username || "User",
             senderProfilePic: senderUser.avatarUrl || null,
-            wealthLevel: Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : (userLevel?.currentLevel || 1),
+            wealthLevel: Boolean(senderUser?.privacyMysteryLive && senderUser?.vipSubscriptionActive) ? 0 : wealthLevel,
             message,
             streamId: streamId || null,
             timestamp: new Date().toISOString()

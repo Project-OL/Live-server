@@ -1,4 +1,5 @@
 import { getBannedWords, censorTextWithFuzzyMatch } from "../../utils/censor.js";
+import { LevelType } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { client as redisClient } from "../../config/redis.js";
 import * as videoCallService from "./service.js";
@@ -29,18 +30,29 @@ export const setupVideoCallSockets = (io) => {
             }
         }
 
-        socket.on("SEND_MESSAGE", async ({ receiverId, text, wealthLevel }) => {
+        socket.on("SEND_MESSAGE", async ({ receiverId, text }) => {
             if (!userId || !receiverId) return;
 
-            const bannedWords = await getBannedWords();
-            const filteredText = censorTextWithFuzzyMatch(text, bannedWords);
+            try {
+                // Level comes from the DB, never from the client payload.
+                const [bannedWords, levelRow] = await Promise.all([
+                    getBannedWords(),
+                    prisma.walletUserLevel.findUnique({
+                        where: { userId_levelType: { userId, levelType: LevelType.WEALTH } },
+                        select: { currentLevel: true }
+                    })
+                ]);
+                const filteredText = censorTextWithFuzzyMatch(text, bannedWords);
 
-            emitToUser(receiverId, "RECEIVE_MESSAGE", {
-                senderId: userId,
-                text: filteredText,
-                wealthLevel: wealthLevel || 0,
-                timestamp: new Date().toISOString()
-            });
+                emitToUser(receiverId, "RECEIVE_MESSAGE", {
+                    senderId: userId,
+                    text: filteredText,
+                    wealthLevel: levelRow?.currentLevel ?? 1,
+                    timestamp: new Date().toISOString()
+                });
+            } catch (err) {
+                console.error("[VideoCall SEND_MESSAGE] failed:", err.message);
+            }
         });
 
         socket.on("disconnect", async () => {

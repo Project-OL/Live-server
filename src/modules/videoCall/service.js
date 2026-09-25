@@ -21,6 +21,7 @@ import {
 import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
 import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
+import { giftImageFields } from "../../utils/giftImage.js";
 // Heartbeat disabled
 
 
@@ -243,19 +244,26 @@ export const invalidateCaches = async (callerId, hostId, agencyUserId = null) =>
     }
 };
 
+// Mirrors ol-node-rest walletLevelService.applyCredit: must run inside the money
+// transaction. The row is locked FOR UPDATE so concurrent XP writes from either
+// service serialize instead of losing an increment, and the level is recomputed
+// against every active threshold so one large spend can cross several levels.
 export const updateUserLevel = async (tx, userId, levelType, increment) => {
-    const current = await tx.walletUserLevel.upsert({
-        where: { userId_levelType: { userId, levelType } },
-        create: {
-            userId,
-            levelType,
-            currentLevel: 1,
-            cumulativeTotal: 0n
-        },
-        update: {}
-    });
+    await tx.$executeRaw`
+        INSERT INTO wallet_user_levels (
+            id, user_id, level_type, current_level, cumulative_total, created_at, updated_at
+        )
+        VALUES (gen_random_uuid(), ${userId}::uuid, ${levelType}::"LevelType", 1, 0, NOW(), NOW())
+        ON CONFLICT (user_id, level_type) DO NOTHING
+    `;
+    const [current] = await tx.$queryRaw`
+        SELECT current_level AS "currentLevel", cumulative_total AS "cumulativeTotal"
+        FROM wallet_user_levels
+        WHERE user_id = ${userId}::uuid AND level_type = ${levelType}::"LevelType"
+        FOR UPDATE
+    `;
 
-    const newCumulative = current.cumulativeTotal + BigInt(increment);
+    const newCumulative = BigInt(current.cumulativeTotal) + BigInt(increment);
 
     const thresholds = await tx.walletLevelConfig.findMany({
         where: { levelType, isActive: true },
@@ -279,22 +287,28 @@ export const updateUserLevel = async (tx, userId, levelType, increment) => {
         }
     });
 
-    try {
-        if (levelType === LevelType.LIVESTREAM) {
-            await tx.userLevel.upsert({
-                where: { userId },
-                create: { userId, livestreamLevel: newLevel, livestreamXp: newCumulative },
-                update: { livestreamLevel: newLevel, livestreamXp: newCumulative }
-            });
-        } else if (levelType === LevelType.WEALTH) {
-            await tx.userLevel.upsert({
-                where: { userId },
-                create: { userId, wealthLevel: newLevel, wealthXp: newCumulative },
-                update: { wealthLevel: newLevel, wealthXp: newCumulative }
-            });
-        }
-    } catch (syncErr) {
-        console.error("UserLevel Lvl sync err: -------->", syncErr.message);
+    // Legacy `user_levels` mirror (display fallback only). Atomic ON CONFLICT
+    // upsert: a Prisma upsert races on the first row (P2002), and any failed
+    // statement aborts the whole Postgres transaction - so a try/catch here could
+    // never save the send, it only hid why it failed.
+    if (levelType === LevelType.LIVESTREAM) {
+        await tx.$executeRaw`
+            INSERT INTO user_levels (id, user_id, livestream_level, livestream_xp, updated_at)
+            VALUES (${crypto.randomUUID()}, ${userId}::uuid, ${newLevel}, ${newCumulative}, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET livestream_level = EXCLUDED.livestream_level,
+                livestream_xp = EXCLUDED.livestream_xp,
+                updated_at = NOW()
+        `;
+    } else if (levelType === LevelType.WEALTH) {
+        await tx.$executeRaw`
+            INSERT INTO user_levels (id, user_id, wealth_level, wealth_xp, updated_at)
+            VALUES (${crypto.randomUUID()}, ${userId}::uuid, ${newLevel}, ${newCumulative}, NOW())
+            ON CONFLICT (user_id) DO UPDATE
+            SET wealth_level = EXCLUDED.wealth_level,
+                wealth_xp = EXCLUDED.wealth_xp,
+                updated_at = NOW()
+        `;
     }
 
     return { newLevel, previousLevel: current.currentLevel, newCumulative };
@@ -462,7 +476,12 @@ export const acceptCall = async (sessionId, receiverId) => {
         const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
         const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
 
-        const callerCoins = await getFastCoinBalance(callerWallet.id, tx);
+        // Same guard as per-minute billing: lock both wallets before reading, so a
+        // concurrent gift from the caller cannot spend against the same balance.
+        await lockWalletsForUpdate(tx, [callerWallet.id, hostWallet.id]);
+        await assertCoinsNotFrozenInTx(tx, session.callerId);
+
+        const callerCoins = await getCoinBalanceInTx(tx, callerWallet.id);
         if (callerCoins < coinRate) {
             throw new Error("Insufficient balance to accept call.");
         }
@@ -482,7 +501,7 @@ export const acceptCall = async (sessionId, receiverId) => {
             }
         });
 
-        const hostPoints = await getFastPointBalance(hostWallet.id, tx);
+        const hostPoints = await getPointBalanceInTx(tx, hostWallet.id);
         const balanceAfterPoints = hostPoints + pointRate;
         const hostLedger = await tx.pointLedgerEntry.create({
             data: {
@@ -498,6 +517,10 @@ export const acceptCall = async (sessionId, receiverId) => {
             }
         });
 
+        // Minute-1 XP settles with the minute-1 debit, like every later minute.
+        await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
+        await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
+
         const updated = await tx.videoCallSession.update({
             where: { id: sessionId },
             data: {
@@ -511,6 +534,10 @@ export const acceptCall = async (sessionId, receiverId) => {
 
         return { updatedSession: updated, hostLedgerId: hostLedger.id };
     }, { timeout: 10000 });
+
+    // Committed: drop balance + level caches now. The background task below
+    // repeats this with the agency id, but only if every step before it succeeds.
+    await invalidateCaches(session.callerId, session.creatorId);
 
     // Generate LiveKit tokens (In-memory, very fast!)
     const receiverToken = await generateLivekitToken(session.livekitRoom, receiverId, true);
@@ -628,11 +655,7 @@ export const acceptCall = async (sessionId, receiverId) => {
             const commRes = await processAgencyCommission(prisma, session.creatorId, pointRate, hostLedgerId);
             const agencyUserId = commRes ? commRes.agencyUserId : null;
 
-            // 3. Update User Levels
-            await updateUserLevel(prisma, session.callerId, LevelType.WEALTH, coinRate);
-            await updateUserLevel(prisma, session.creatorId, LevelType.LIVESTREAM, pointRate);
-
-            // 4. Cache Invalidation + tier recompute (ol-node afterCommissionCreditCommit)
+            // 3. Cache Invalidation (levels were updated in the accept transaction) + tier recompute (ol-node afterCommissionCreditCommit)
             await invalidateCaches(session.callerId, session.creatorId, agencyUserId);
             if (agencyUserId) {
                 await afterCommissionCreditCommit(agencyUserId);
@@ -1251,28 +1274,6 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
         }
         const balanceAfterCoins = senderCoins - coinCost;
 
-        const userLevel = await tx.walletUserLevel.findUnique({
-            where: {
-                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
-            }
-        });
-        const currentLevel = userLevel ? userLevel.currentLevel : 1;
-        const cumulativeTotal = userLevel ? userLevel.cumulativeTotal : 0n;
-        const newCumulativeTotal = cumulativeTotal + coinCost;
-
-        const nextLevelConfig = await tx.walletLevelConfig.findUnique({
-            where: {
-                levelType_level: { levelType: LevelType.WEALTH, level: currentLevel + 1 }
-            }
-        });
-
-        let finalLevel = currentLevel;
-        let isLevelUp = false;
-        if (nextLevelConfig && newCumulativeTotal >= nextLevelConfig.threshold) {
-            finalLevel = nextLevelConfig.level;
-            isLevelUp = true;
-        }
-
         const receiverPoints = await getPointBalanceInTx(tx, receiverWallet.id);
         const balanceAfterPoints = receiverPoints + pointsAwarded;
 
@@ -1336,21 +1337,9 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
             }
         });
 
-        await tx.walletUserLevel.upsert({
-            where: {
-                userId_levelType: { userId: senderId, levelType: LevelType.WEALTH }
-            },
-            create: {
-                userId: senderId,
-                levelType: LevelType.WEALTH,
-                currentLevel: finalLevel,
-                cumulativeTotal: newCumulativeTotal
-            },
-            update: {
-                currentLevel: finalLevel,
-                cumulativeTotal: newCumulativeTotal
-            }
-        });
+        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, coinCost);
+        const finalLevel = wealth.newLevel;
+        const isLevelUp = wealth.newLevel > wealth.previousLevel;
 
         await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
 
@@ -1393,7 +1382,7 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
         gift: {
             id: gift.id,
             name: gift.name,
-            displayImageUrl: gift.displayImageUrl,
+            ...giftImageFields(gift),
             effectUrl: gift.effectUrl,
             vapUrl: gift.vapUrl,
             isVap: Boolean(gift.vapUrl)
@@ -1415,7 +1404,7 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
         gift: {
             id: gift.id,
             name: gift.name,
-            displayImageUrl: gift.displayImageUrl,
+            ...giftImageFields(gift),
             count: giftCount
         },
         timestamp: new Date().toISOString()

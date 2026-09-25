@@ -2,6 +2,7 @@ import { initiateCallSchema, acceptCallSchema, rejectCallSchema, endCallSchema, 
 import * as videoCallService from "./service.js";
 import prisma from "../../config/prisma.js";
 import jwt from "jsonwebtoken";
+import { withGiftThumbnail } from "../../utils/giftImage.js";
 
 export const initiateCall = async (req, res) => {
     try {
@@ -286,7 +287,7 @@ export const getGifts = async (req, res) => {
 
         return res.status(200).json({
             success: true,
-            data: gifts,
+            data: gifts.map(withGiftThumbnail),
             pagination: {
                 page,
                 limit,

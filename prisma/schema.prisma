@@ -1306,6 +1306,9 @@ model Gift {
   name                 String                   @db.VarChar(255)
   coinCost             Int                      @map("coin_cost")
   displayImageUrl      String                   @map("display_image_url")
+  /// 192px WebP derived by ol-node-rest (gift-thumbnail.service). Column is owned by
+  /// ol-node-rest's migration 20260910160000; Live-server only reads it.
+  thumbnailUrl         String?                  @map("thumbnail_url")
   effectUrl            String?                  @map("effect_url")
   vapUrl               String?                  @map("vap_url")
   isLucky              Boolean                  @default(false) @map("is_lucky")

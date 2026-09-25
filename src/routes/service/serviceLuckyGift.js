@@ -8,9 +8,10 @@
 import prisma from '../../config/prisma.js';
 import crypto from 'crypto';
 import { client as redisClient } from '../../config/redis.js';
-import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType } from '@prisma/client';
+import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from '@prisma/client';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
-import { getOrCreateWallet } from '../../modules/videoCall/service.js';
+import { getOrCreateWallet, updateUserLevel } from '../../modules/videoCall/service.js';
+import { giftImageFields } from '../../utils/giftImage.js';
 import { processLiveStreamAgencyCommission } from './serviceLive.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
@@ -141,6 +142,10 @@ export const sendLuckyGiftService = async ({
             }
         });
 
+        // Wealth XP tracks coin SPEND: the full gift cost, like every other gift.
+        // The lucky reward is a separate PLATFORM_REWARD credit and does not reduce it.
+        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, totalCost);
+
         let finalBalanceCoins = coinsAfterDebit;
         if (luckyResult.totalReward > 0n) {
             const coinsAfterCredit = coinsAfterDebit + luckyResult.totalReward;
@@ -229,10 +234,12 @@ export const sendLuckyGiftService = async ({
             }
         });
 
-        return { log, hostLedgerId, agencyUserId, finalBalanceCoins, pointsAfterHost, effectiveReceiverId };
+        return { log, hostLedgerId, agencyUserId, finalBalanceCoins, pointsAfterHost, effectiveReceiverId, wealth };
     });
 
     const finalBalanceCoins = txRecord.finalBalanceCoins;
+    const wealthLevel = txRecord.wealth.newLevel;
+    const isLevelUp = txRecord.wealth.newLevel > txRecord.wealth.previousLevel;
 
     // Committed. Everything below is best-effort and must not fail the send.
     await writeCoinBalanceCache(senderId, finalBalanceCoins);
@@ -273,7 +280,7 @@ export const sendLuckyGiftService = async ({
         gift: {
             id: gift.id,
             name: gift.name,
-            displayImageUrl: gift.displayImageUrl,
+            ...giftImageFields(gift),
             coinCost: gift.coinCost,
             effectLuckyGift: true
         },
@@ -284,6 +291,8 @@ export const sendLuckyGiftService = async ({
         breakdownArray: luckyResult.breakdownArray,
         category: luckyResult.category,
         senderRemainingCoins: Number(finalBalanceCoins),
+        currentLevel: wealthLevel,
+        isLevelUp,
         socketPayload: {
             success: true,
             streamId,
@@ -293,13 +302,15 @@ export const sendLuckyGiftService = async ({
             gift: {
                 id: gift.id,
                 name: gift.name,
-                displayImageUrl: gift.displayImageUrl,
+                ...giftImageFields(gift),
                 coinCost: gift.coinCost,
                 effectLuckyGift: true
             },
             count,
             totalCost: Number(totalCost),
             pointsAwarded: Number(hostPoints),
+            wealthLevel,
+            isLevelUp,
             isLucky: true
         },
         luckyWin: luckyResult.totalReward > 0n ? {
@@ -307,7 +318,7 @@ export const sendLuckyGiftService = async ({
             receiverId,
             giftId: gift.id,
             giftName: gift.name,
-            giftDisplayImageUrl: gift.displayImageUrl,
+            giftDisplayImageUrl: giftImageFields(gift).displayImageUrl,
             unitCoinCost: gift.coinCost,
             rewardCoins: Number(luckyResult.totalReward),
             category: luckyResult.category,
