@@ -200,3 +200,18 @@ jobs:
             --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
             --tunnel-through-iap --quiet \
             --command "for i in \$(seq 1 20); do if (exec 3<>/dev/tcp/127.0.0.1/5000) 2>/dev/null; then echo 'ol-live listening on 5000'; exit 0; fi; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; pm2 list; pm2 logs ol-live --lines 50 --nostream; exit 1"
+
+      # Keeps <bucket>/live-server/latest.tgz equal to what is actually running, so a
+      # VM the MIG (re)creates via ol-node-rest's .github/deploy/gce-bootstrap.sh boots
+      # this build instead of a stale one. Runs only after the health check passed.
+      # Opt-in: skipped until vars.GCP_RELEASE_BUCKET (e.g. gs://ol-node-rest-releases)
+      # is set, because the deploy service account also needs roles/storage.objectUser
+      # on that bucket.
+      - name: Publish release for the MIG bootstrap
+        if: vars.GCP_RELEASE_BUCKET != ''
+        env:
+          RELEASE_BUCKET: ${{ vars.GCP_RELEASE_BUCKET }}
+        run: |
+          gcloud storage cp live-server-artifact.tgz "$RELEASE_BUCKET/live-server/$GITHUB_SHA.tgz" --quiet
+          gcloud storage cp live-server-artifact.tgz "$RELEASE_BUCKET/live-server/latest.tgz" --quiet
+          gcloud storage ls -l "$RELEASE_BUCKET/live-server/latest.tgz"
