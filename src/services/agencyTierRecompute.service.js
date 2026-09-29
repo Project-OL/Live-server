@@ -185,9 +185,19 @@ async function readAgencyLockRow(agencyUserId) {
   return rows[0] ?? null
 }
 
+const utcDay = (d) => new Date(d).toISOString().slice(0, 10)
+
+/** Midnight UTC for the given instant's calendar date. */
+function utcStartOfDay(d) {
+  return new Date(Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()))
+}
+
 /**
- * Refresh `currentLevel` + `currentWindowTotalPoints` from the rolling-window
- * metric, respecting an active admin tier lock (cannot drop below lock level).
+ * Evaluate the agency's level for the UTC day (parity with ol-node
+ * `agencyCommissionService.recomputeAgencyLevel`). The level — and so the commission
+ * rate — is matched against the rolling-window metric ending at **today's 00:00 UTC**
+ * and held for the whole day, respecting an admin tier lock active at 00:00 (cannot drop
+ * below lock level). `currentWindowTotalPoints` stores the live total (progress).
  */
 export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
   if (!agencyUserId) return
@@ -195,17 +205,17 @@ export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
 
   for (let attempt = 1; attempt <= MAX_CAS_ATTEMPTS; attempt++) {
     const now = new Date()
+    const evaluatedAt = utcStartOfDay(now)
     const cur = await readAgencyLockRow(agencyUserId)
 
     if (!opts.skipDailyDedupe) {
-      if (cur?.lastLevelRecomputedAt) {
-        const a = new Date(cur.lastLevelRecomputedAt).toISOString().slice(0, 10)
-        const b = now.toISOString().slice(0, 10)
-        if (a === b) return
-      }
+      if (cur?.lastLevelRecomputedAt && utcDay(cur.lastLevelRecomputedAt) === utcDay(now)) return
     }
 
-    const { total: actual } = await resolveTierWindowTotal(agencyUserId, { now })
+    const [{ total: atDayStart }, { total: actual }] = await Promise.all([
+      resolveTierWindowTotal(agencyUserId, { now: evaluatedAt }),
+      resolveTierWindowTotal(agencyUserId, { now }),
+    ])
     const levels = await prisma.agencyCommissionLevel.findMany({
       orderBy: { minWindowPoints: 'asc' },
     })
@@ -213,14 +223,14 @@ export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
       ? levels.find((l) => l.level === cur.tierLockLevel) ?? null
       : null
     const { effective, lockActive } = effectiveTierWindowTotal({
-      actual,
+      actual: atDayStart,
       lock: {
         tierLockLevel: cur?.tierLockLevel ?? null,
         tierLockUntil: cur?.tierLockUntil ?? null,
         tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
       },
       lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
-      now,
+      now: evaluatedAt,
     })
     const newLevel = matchAgencyLevel(effective, levels)
 
@@ -294,13 +304,36 @@ export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
 }
 
 /**
- * Post-commit after agency commission credit: recompute tier (skip same-day
- * dedupe) and always bust commission caches.
+ * Refresh `current_window_total_points` (live progress) without touching the day's
+ * level. If the level hasn't been evaluated yet today (nightly job late/disabled), run
+ * the daily evaluation instead so levels still move once a day.
+ */
+export async function refreshWindowProgress(agencyUserId) {
+  if (!agencyUserId) return
+  const now = new Date()
+  const cur = await readAgencyLockRow(agencyUserId)
+  if (!cur) return
+  if (!cur.lastLevelRecomputedAt || utcDay(cur.lastLevelRecomputedAt) !== utcDay(now)) {
+    await recomputeAgencyLevel(agencyUserId)
+    return
+  }
+  const { total } = await resolveTierWindowTotal(agencyUserId, { now })
+  await prisma.$executeRaw`
+    UPDATE agencies
+    SET current_window_total_points = ${total},
+        updated_at = ${now}
+    WHERE user_id = ${agencyUserId}::uuid
+  `
+}
+
+/**
+ * Post-commit after agency commission credit: refresh the live window total (the
+ * level stays fixed for the UTC day) and always bust commission caches.
  */
 export async function afterCommissionCreditCommit(agencyUserId) {
   if (!agencyUserId) return
   try {
-    await recomputeAgencyLevel(agencyUserId, { skipDailyDedupe: true })
+    await refreshWindowProgress(agencyUserId)
   } finally {
     await bustCaches(agencyUserId)
   }
