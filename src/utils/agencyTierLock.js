@@ -32,6 +32,18 @@ export function effectiveTierWindowTotal({ actual, lock, lockLevelMinWindowPoint
   return { effective, lockActive: true }
 }
 
+/**
+ * Whichever of two levels has the higher `minWindowPoints` (parity with ol-node
+ * `higherLevel`). A level missing from the ladder ranks lowest; on a tie `a` wins.
+ */
+export function higherLevel(a, b, levels) {
+  const rank = (lvl) => {
+    const row = levels.find((l) => l.level === lvl)
+    return row ? BigInt(row.minWindowPoints) : -1n
+  }
+  return rank(b) > rank(a) ? b : a
+}
+
 export function matchAgencyLevel(total, levels) {
   const totalBig = BigInt(total)
   let newLevel = levels[0]?.level ?? 'D'

@@ -12,6 +12,7 @@
 import prisma from '../config/prisma.js'
 import {
   effectiveTierWindowTotal,
+  higherLevel,
   matchAgencyLevel,
 } from '../utils/agencyTierLock.js'
 
@@ -50,8 +51,12 @@ async function resolveRollingWindowBounds(now = new Date()) {
     console.warn('[AgencyTier] agency_commission_config read failed, using 30d default:', e.message)
   }
   const totalMinutes = Math.max(1, windowDays * 24 * 60 + windowHours * 60 + windowMinutes)
+  // Parity with ol-node resolveAgencyCommissionRollingWindowBounds: whole-day windows are
+  // anchored to UTC midnight (start only moves at 00:00 UTC, so within a day the total only
+  // grows); windows with an hours/minutes part (short QA windows) stay exact [now − d, now).
   const toExclusive = now
-  const from = new Date(now.getTime() - totalMinutes * 60_000)
+  const anchor = totalMinutes % (24 * 60) === 0 ? utcStartOfDay(now) : now
+  const from = new Date(anchor.getTime() - totalMinutes * 60_000)
   return { from, toExclusive, totalMinutes }
 }
 
@@ -174,6 +179,7 @@ export async function resolveTierWindowTotal(agencyUserId, opts = {}) {
 async function readAgencyLockRow(agencyUserId) {
   const rows = await prisma.$queryRaw`
     SELECT
+      current_level AS "currentLevel",
       last_level_recomputed_at AS "lastLevelRecomputedAt",
       tier_lock_level AS "tierLockLevel",
       tier_lock_until AS "tierLockUntil",
@@ -193,11 +199,12 @@ function utcStartOfDay(d) {
 }
 
 /**
- * Evaluate the agency's level for the UTC day (parity with ol-node
- * `agencyCommissionService.recomputeAgencyLevel`). The level — and so the commission
- * rate — is matched against the rolling-window metric ending at **today's 00:00 UTC**
- * and held for the whole day, respecting an admin tier lock active at 00:00 (cannot drop
- * below lock level). `currentWindowTotalPoints` stores the live total (progress).
+ * Daily level evaluation (parity with ol-node `agencyCommissionService.recomputeAgencyLevel`).
+ * The tier window starts at 00:00 UTC `duration` back and runs to now, so within a day it
+ * only grows: the level can rise mid-day ({@link refreshWindowProgress}) and only falls
+ * here, when the oldest day leaves the window. Result = higher of the level on the
+ * completed-days window (ending today 00:00 UTC) and on the window so far, respecting an
+ * admin tier lock active at 00:00. `currentWindowTotalPoints` stores the window-so-far total.
  */
 export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
   if (!agencyUserId) return
@@ -222,17 +229,25 @@ export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
     const lockLevelRow = cur?.tierLockLevel
       ? levels.find((l) => l.level === cur.tierLockLevel) ?? null
       : null
-    const { effective, lockActive } = effectiveTierWindowTotal({
+    const lock = {
+      tierLockLevel: cur?.tierLockLevel ?? null,
+      tierLockUntil: cur?.tierLockUntil ?? null,
+      tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
+    }
+    const lockLevelMinWindowPoints = lockLevelRow?.minWindowPoints ?? null
+    const atDayStartEff = effectiveTierWindowTotal({
       actual: atDayStart,
-      lock: {
-        tierLockLevel: cur?.tierLockLevel ?? null,
-        tierLockUntil: cur?.tierLockUntil ?? null,
-        tierLockBonusPoints: cur?.tierLockBonusPoints ?? null,
-      },
-      lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
+      lock,
+      lockLevelMinWindowPoints,
       now: evaluatedAt,
     })
-    const newLevel = matchAgencyLevel(effective, levels)
+    const liveEff = effectiveTierWindowTotal({ actual, lock, lockLevelMinWindowPoints, now })
+    const lockActive = atDayStartEff.lockActive
+    const newLevel = higherLevel(
+      matchAgencyLevel(atDayStartEff.effective, levels),
+      matchAgencyLevel(liveEff.effective, levels),
+      levels,
+    )
 
     // CAS on last_level_recomputed_at (NULL-safe)
     let count = 0
@@ -304,9 +319,10 @@ export async function recomputeAgencyLevel(agencyUserId, opts = {}) {
 }
 
 /**
- * Refresh `current_window_total_points` (live progress) without touching the day's
- * level. If the level hasn't been evaluated yet today (nightly job late/disabled), run
- * the daily evaluation instead so levels still move once a day.
+ * After a credit: refresh `current_window_total_points` and **raise** the level if the
+ * window so far now reaches a higher tier (parity with ol-node `refreshWindowProgress`).
+ * Never lowers it. If the level hasn't been evaluated yet today (nightly job
+ * late/disabled), run the daily evaluation instead.
  */
 export async function refreshWindowProgress(agencyUserId) {
   if (!agencyUserId) return
@@ -318,6 +334,35 @@ export async function refreshWindowProgress(agencyUserId) {
     return
   }
   const { total } = await resolveTierWindowTotal(agencyUserId, { now })
+  const levels = await prisma.agencyCommissionLevel.findMany({
+    orderBy: { minWindowPoints: 'asc' },
+  })
+  const lockLevelRow = cur.tierLockLevel
+    ? levels.find((l) => l.level === cur.tierLockLevel) ?? null
+    : null
+  const { effective } = effectiveTierWindowTotal({
+    actual: total,
+    lock: {
+      tierLockLevel: cur.tierLockLevel ?? null,
+      tierLockUntil: cur.tierLockUntil ?? null,
+      tierLockBonusPoints: cur.tierLockBonusPoints ?? null,
+    },
+    lockLevelMinWindowPoints: lockLevelRow?.minWindowPoints ?? null,
+    now,
+  })
+  const reached = matchAgencyLevel(effective, levels)
+  if (higherLevel(reached, cur.currentLevel, levels) !== cur.currentLevel) {
+    // Conditional on the level we read, so a concurrent upgrade/evaluation isn't overwritten.
+    const r = await prisma.$executeRaw`
+      UPDATE agencies
+      SET current_level = ${reached},
+          current_window_total_points = ${total},
+          updated_at = ${now}
+      WHERE user_id = ${agencyUserId}::uuid
+        AND current_level = ${cur.currentLevel}
+    `
+    if (Number(r) === 1) return
+  }
   await prisma.$executeRaw`
     UPDATE agencies
     SET current_window_total_points = ${total},
@@ -327,8 +372,8 @@ export async function refreshWindowProgress(agencyUserId) {
 }
 
 /**
- * Post-commit after agency commission credit: refresh the live window total (the
- * level stays fixed for the UTC day) and always bust commission caches.
+ * Post-commit after agency commission credit: refresh the window total, raise the
+ * level if a higher tier was reached (never lower mid-day), and always bust caches.
  */
 export async function afterCommissionCreditCommit(agencyUserId) {
   if (!agencyUserId) return

@@ -6,6 +6,7 @@ import test from 'node:test'
 import {
   computeTierLockBonus,
   effectiveTierWindowTotal,
+  higherLevel,
   isAgencyTierLockActive,
   matchAgencyLevel,
 } from './agencyTierLock.js'
@@ -62,4 +63,11 @@ test('expired lock uses actual only', () => {
   assert.equal(lockActive, false)
   assert.equal(effective, 2544n)
   assert.equal(matchAgencyLevel(effective, levels), 'D')
+})
+
+test('higherLevel ranks by minWindowPoints; unknown levels rank lowest', () => {
+  assert.equal(higherLevel('C', 'B', levels), 'B')
+  assert.equal(higherLevel('A', 'B', levels), 'A')
+  assert.equal(higherLevel('B', 'B', levels), 'B')
+  assert.equal(higherLevel('X', 'D', levels), 'D')
 })
