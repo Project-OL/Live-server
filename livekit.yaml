@@ -32,8 +32,13 @@ turn:
   udp_port: 3478
   tls_port: 5349
   external_tls: false
-  cert_file: /etc/letsencrypt/live/turn.offoolive.com/fullchain.pem
-  key_file: /etc/letsencrypt/live/turn.offoolive.com/privkey.pem
+  # The TURN cert must NOT come from Let's Encrypt. The app's WebRTC (libwebrtc) checks TURN/TLS
+  # certs against its own built-in roots (rtc_base/ssl_roots.h), which have no ISRG root, so an LE
+  # cert is always rejected ("unknown certificate authority") and UDP-blocking WiFi cannot connect.
+  # It is issued by Google Trust Services (chain WR1 -> GTS Root R1), cert-name `turn-gts`.
+  # See deploy/LIVEKIT_VPS_CHECKLIST.md.
+  cert_file: /etc/letsencrypt/live/turn-gts/fullchain.pem
+  key_file: /etc/letsencrypt/live/turn-gts/privkey.pem
 
 redis:
   address: 127.0.0.1:6379
