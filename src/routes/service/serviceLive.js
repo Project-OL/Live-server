@@ -1261,7 +1261,26 @@ export const getGiftGalleryTargetsService = async (hostId) => {
         currentProgress,
         gifts: resultGifts
     };
-};export const getGiftInfoService = async ({ giftId }) => {
+};
+
+/**
+ * A gift goes through the lucky (RTP draw) path when its `is_lucky` flag is set, or,
+ * as a legacy fallback, when its category is named/slugged "lucky". Prod relied on the
+ * category alone until 2026-10-08, so renaming that category silently turned lucky
+ * draws off; the flag is now backfilled and editable in admin.
+ */
+export const isLuckyGift = (gift) => {
+    if (!gift) return false;
+    if (gift.isLucky) return true;
+    const cat = gift.gift_categories;
+    return cat?.name?.toLowerCase() === "lucky" || cat?.slug?.toLowerCase() === "lucky";
+};
+
+// ol-node-rest deletes `gift:info:<giftId>` on every admin gift/category edit
+// (gift.service.ts), so this TTL is only a safety net.
+const GIFT_INFO_CACHE_TTL_SECONDS = 3600;
+
+export const getGiftInfoService = async ({ giftId }) => {
     if (!giftId) return null;
     const cacheKey = `gift:info:${giftId}`;
     if (redisClient.isOpen) {
@@ -1284,7 +1303,7 @@ export const getGiftGalleryTargetsService = async (hostId) => {
         }
     });
     if (gift && redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(gift), { EX: 86400 });
+        await redisClient.set(cacheKey, JSON.stringify(gift), { EX: GIFT_INFO_CACHE_TTL_SECONDS });
     }
     return gift;
 };
@@ -1331,9 +1350,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const senderName = isStealth ? (stealthAlias || "Mystery Gifter") : (senderPrivacy.name || senderPrivacy.username || "User");
     const receiverName = receiverPrivacy ? (receiverPrivacy.name || receiverPrivacy.username || "Host") : "Host";
 
-    const isCategoryLucky = gift.gift_categories?.name?.toLowerCase() === "lucky" || gift.gift_categories?.slug?.toLowerCase() === "lucky";
-
-    if (gift.isLucky || gift.effectLuckyGift || isCategoryLucky) {
+    if (isLuckyGift(gift)) {
         const luckyResult = await sendLuckyGiftService({
             senderId,
             receiverId,

@@ -20,10 +20,105 @@ import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
 import { recordStreamHeartbeat, startStreamHeartbeatMonitor, HOST_DISCONNECT_TIMEOUT_MS } from './serviceHeartbeat.js';
+import {
+    isShuttingDown,
+    registerDurableHandler,
+    scheduleDurable,
+    cancelDurable
+} from '../../services/cluster.service.js';
 
 
 let ioInstance = null;
-const autoUnmuteTimers = new Map();
+
+/**
+ * Durable timers (LIVE-09 L4, cluster.service.js): deadlines live in Redis so a
+ * restart or another node still fires them. Keys are "<streamId>:<userId>".
+ *   host_disconnect  end the stream if the host's socket stays gone (HOST_DISCONNECT_TIMEOUT_MS)
+ *   sheet_unmute     lift a host-applied seat mute after 30 minutes
+ */
+const HOST_DISCONNECT_TIMER = "host_disconnect";
+const SHEET_UNMUTE_TIMER = "sheet_unmute";
+const SHEET_UNMUTE_MS = 30 * 60 * 1000;
+
+const splitStreamUserKey = (key) => {
+    const i = key.lastIndexOf(":");
+    return { streamId: key.slice(0, i), userId: key.slice(i + 1) };
+};
+
+registerDurableHandler(HOST_DISCONNECT_TIMER, async (key, payload) => {
+    const { streamId, userId } = splitStreamUserKey(key);
+    const dbStreamId = payload?.dbStreamId || null;
+    const timerKey = `host:disconnect_timer:${streamId}`;
+
+    let isStillPending = true;
+    if (redisClient.isOpen) {
+        const val = await redisClient.get(timerKey);
+        isStillPending = (val === "pending");
+    }
+
+    if (!isStillPending) {
+        console.log(`[Socket Host Disconnect Cancelled] Host reconnected within grace period for stream ${streamId}.`);
+        return;
+    }
+
+    console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within ${HOST_DISCONNECT_TIMEOUT_MS}ms grace period. Auto-ending live stream...`);
+    if (redisClient.isOpen) {
+        await redisClient.del(timerKey).catch(() => { });
+    }
+
+    // Verify stream is still live before auto-ending
+    const activeStream = await prisma.liveStream.findFirst({
+        where: {
+            OR: [{ streamId }, { id: dbStreamId || streamId }],
+            isLive: true
+        }
+    });
+    if (!activeStream) return;
+
+    // Check 1: Is host in an active Video Call?
+    const activeCall = await prisma.videoCallSession.findFirst({
+        where: {
+            OR: [{ creatorId: userId }, { callerId: userId }],
+            status: "ACTIVE"
+        }
+    });
+
+    // Check 2: Is host in 2-minute Video Call Return Grace Period?
+    let isReturnGraceActive = false;
+    if (redisClient.isOpen) {
+        const val1 = await redisClient.get(`host:return_timer:${streamId}:${userId}`);
+        const val2 = await redisClient.get(`host:return_timer:${userId}`);
+        isReturnGraceActive = (val1 === "pending" || val2 === "pending");
+    }
+
+    if (activeCall || isReturnGraceActive) {
+        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping auto-end for stream ${streamId}.`);
+        return;
+    }
+
+    broadcastToStream(streamId, "stream_ended", {
+        streamId,
+        reason: "HOST_DISCONNECTED_TIMEOUT",
+        message: "Live stream ended due to host network disconnection."
+    });
+    await endLiveStreamService({ id: activeStream.id, userId, reason: "HOST_DISCONNECTED_TIMEOUT" });
+    console.log(`[Socket Host Disconnect Timeout] Successfully auto-ended live stream ${streamId} after network loss timeout.`);
+});
+
+registerDurableHandler(SHEET_UNMUTE_TIMER, async (key) => {
+    const { streamId, userId: targetUserId } = splitStreamUserKey(key);
+    const rawUser = await redisClient.hGet(`stream:sheet:${streamId}`, targetUserId);
+    if (!rawUser) return;
+    const userObj = JSON.parse(rawUser);
+    if (userObj.mutedByHost) {
+        await toggleUserSheetMuteService({ streamId, userId: targetUserId, muteState: false, mutedByHost: false });
+        broadcastToStream(streamId, "sheet_mute_changed", {
+            userId: targetUserId,
+            isMuted: false
+        });
+        console.log(`[Socket] 30-minute auto-unmute triggered for user ${targetUserId} in stream ${streamId}`);
+    }
+});
 
 const checkUserRestriction = async (userId, type) => {
     try {
@@ -268,6 +363,11 @@ export const setupLiveSockets = (io) => {
         });
 
         socket.on("disconnect", async () => {
+            // Server shutdown/deploy (LIVE-09 L6): the close is ours. Keep seats, viewer
+            // sets and the stream as they are; clients reconnect and re-join. This is
+            // what an abrupt pm2 restart always did (no disconnect handlers ran).
+            if (isShuttingDown()) return;
+
             console.log(`[Socket] User ${userId || 'unknown'} disconnected`);
             if (socket.data && socket.data.streamId && socket.data.userId) {
                 const { streamId, userId, isStealth, isHost, dbStreamId } = socket.data;
@@ -281,66 +381,13 @@ export const setupLiveSockets = (io) => {
                         await redisClient.set(timerKey, "pending", { EX: Math.ceil(HOST_DISCONNECT_TIMEOUT_MS / 1000) }).catch(() => { });
                     }
 
-                    // Background worker check
-                    setTimeout(async () => {
-                        try {
-                            let isStillPending = true;
-                            if (redisClient.isOpen) {
-                                const val = await redisClient.get(timerKey);
-                                isStillPending = (val === "pending");
-                            }
-
-                            if (isStillPending) {
-                                console.log(`[Socket Host Disconnect Timeout] Host ${userId} did NOT reconnect to stream ${streamId} within ${HOST_DISCONNECT_TIMEOUT_MS}ms grace period. Auto-ending live stream...`);
-                                if (redisClient.isOpen) {
-                                    await redisClient.del(timerKey).catch(() => { });
-                                }
-
-                                // Verify stream is still live before auto-ending
-                                const activeStream = await prisma.liveStream.findFirst({
-                                    where: {
-                                        OR: [{ streamId }, { id: dbStreamId || streamId }],
-                                        isLive: true
-                                    }
-                                });
-
-                                if (activeStream) {
-                                    // Check 1: Is host in an active Video Call?
-                                    const activeCall = await prisma.videoCallSession.findFirst({
-                                        where: {
-                                            OR: [{ creatorId: userId }, { callerId: userId }],
-                                            status: "ACTIVE"
-                                        }
-                                    });
-
-                                    // Check 2: Is host in 2-minute Video Call Return Grace Period?
-                                    let isReturnGraceActive = false;
-                                    if (redisClient.isOpen) {
-                                        const val1 = await redisClient.get(`host:return_timer:${streamId}:${userId}`);
-                                        const val2 = await redisClient.get(`host:return_timer:${userId}`);
-                                        isReturnGraceActive = (val1 === "pending" || val2 === "pending");
-                                    }
-
-                                    if (activeCall || isReturnGraceActive) {
-                                        console.log(`[Socket Host Disconnect Timeout] Host ${userId} is currently on active Video Call or in 2-min Return window. Skipping auto-end for stream ${streamId}.`);
-                                        return;
-                                    }
-
-                                    broadcastToStream(streamId, "stream_ended", {
-                                        streamId,
-                                        reason: "HOST_DISCONNECTED_TIMEOUT",
-                                        message: "Live stream ended due to host network disconnection."
-                                    });
-                                    await endLiveStreamService({ id: activeStream.id, userId, reason: "HOST_DISCONNECTED_TIMEOUT" });
-                                    console.log(`[Socket Host Disconnect Timeout] Successfully auto-ended live stream ${streamId} after network loss timeout! ✅`);
-                                }
-                            } else {
-                                console.log(`[Socket Host Disconnect Cancelled] Host reconnected within grace period for stream ${streamId}.`);
-                            }
-                        } catch (timeoutErr) {
-                            console.error("[Socket Host Disconnect Timeout Error]:", timeoutErr.message);
-                        }
-                    }, HOST_DISCONNECT_TIMEOUT_MS);
+                    // Durable (LIVE-09 L4): fires on any node, even after a restart.
+                    await scheduleDurable(
+                        HOST_DISCONNECT_TIMER,
+                        `${streamId}:${userId}`,
+                        Date.now() + HOST_DISCONNECT_TIMEOUT_MS,
+                        { dbStreamId: dbStreamId || null }
+                    );
                 }
 
                 try {
@@ -690,38 +737,11 @@ export const setupLiveSockets = (io) => {
 
                     const timerKey = `${streamId}:${targetUserId}`;
                     if (muteState) {
-                        // Clear existing timer if any
-                        if (autoUnmuteTimers.has(timerKey)) {
-                            clearTimeout(autoUnmuteTimers.get(timerKey));
-                        }
-                        // Schedule 30-minute (1,800,000 ms) auto-unmute
-                        const timer = setTimeout(async () => {
-                            autoUnmuteTimers.delete(timerKey);
-                            try {
-                                const rawUser = await redisClient.hGet(`stream:sheet:${streamId}`, targetUserId);
-                                if (rawUser) {
-                                    const userObj = JSON.parse(rawUser);
-                                    if (userObj.mutedByHost) {
-                                        await toggleUserSheetMuteService({ streamId, userId: targetUserId, muteState: false, mutedByHost: false });
-                                        broadcastToStream(streamId, "sheet_mute_changed", {
-                                            userId: targetUserId,
-                                            isMuted: false
-                                        });
-                                        console.log(`[Socket] 30-minute auto-unmute triggered for user ${targetUserId} in stream ${streamId}`);
-                                    }
-                                }
-                            } catch (autoErr) {
-                                console.error(`[Socket] Auto-unmute timer error for user ${targetUserId}:`, autoErr.message);
-                            }
-                        }, 30 * 60 * 1000);
-
-                        autoUnmuteTimers.set(timerKey, timer);
+                        // (Re)schedule the 30-minute auto-unmute; replaces any earlier one.
+                        await scheduleDurable(SHEET_UNMUTE_TIMER, timerKey, Date.now() + SHEET_UNMUTE_MS);
                     } else {
                         // Host manually unmuted - clear timer
-                        if (autoUnmuteTimers.has(timerKey)) {
-                            clearTimeout(autoUnmuteTimers.get(timerKey));
-                            autoUnmuteTimers.delete(timerKey);
-                        }
+                        await cancelDurable(SHEET_UNMUTE_TIMER, timerKey);
                     }
                 }
             } catch (err) {

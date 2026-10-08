@@ -22,10 +22,25 @@ import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
 import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
 import { giftImageFields } from "../../utils/giftImage.js";
+import {
+    isLeader,
+    onShutdown,
+    registerDurableHandler,
+    scheduleDurable,
+    cancelDurable,
+    hasDurable
+} from "../../services/cluster.service.js";
 // Heartbeat disabled
 
 
+/**
+ * L2 (LIVE-09): call heartbeats are mirrored to Redis (`vc:hb:<sessionId>`), so
+ * the sweep and the stale-call check see pings that reached another node. The
+ * local Map stays as a fast path; reads take the newer of the two.
+ */
 export const heartbeatCache = new Map();
+const HEARTBEAT_REDIS_TTL_SEC = 120;
+const callHeartbeatKey = (sessionId) => `vc:hb:${sessionId}`;
 
 export const recordHeartbeat = (sessionId, userId) => {
     if (!sessionId) return;
@@ -34,19 +49,113 @@ export const recordHeartbeat = (sessionId, userId) => {
     if (userId) {
         heartbeatCache.set(`${sessionId}:${userId}`, now);
     }
-};
-
-export const scheduledDisconnects = new Map();
-
-export const activeReturnTimeouts = new Map();
-
-export const clearHostReturnTimeout = (hostId) => {
-    if (activeReturnTimeouts.has(hostId)) {
-        console.log(`[Return Grace Timer] Clearing stale background return timeout for host ${hostId}`);
-        clearTimeout(activeReturnTimeouts.get(hostId));
-        activeReturnTimeouts.delete(hostId);
+    if (redisClient.isOpen) {
+        redisClient
+            .set(callHeartbeatKey(sessionId), String(now), { EX: HEARTBEAT_REDIS_TTL_SEC })
+            .catch((err) => console.error("[VideoCall] heartbeat redis set failed:", err.message));
     }
 };
+
+/** Latest heartbeat for a call from any node (epoch ms), or null. */
+export const getCallHeartbeat = async (sessionId) => {
+    const local = heartbeatCache.get(sessionId) || null;
+    if (!redisClient.isOpen) return local;
+    try {
+        const raw = await redisClient.get(callHeartbeatKey(sessionId));
+        const remote = raw ? Number(raw) : null;
+        if (!remote || Number.isNaN(remote)) return local;
+        return local && local > remote ? local : remote;
+    } catch {
+        return local;
+    }
+};
+
+const clearCallHeartbeat = (sessionId, ...userIds) => {
+    heartbeatCache.delete(sessionId);
+    for (const u of userIds) if (u) heartbeatCache.delete(`${sessionId}:${u}`);
+    if (redisClient.isOpen) redisClient.del(callHeartbeatKey(sessionId)).catch(() => { });
+};
+
+/**
+ * L4 (LIVE-09): the two in-memory timers below are durable deadlines now
+ * (cluster.service.js). A restart or another node still fires them, and the
+ * handlers re-check state before acting.
+ *   vc_lowcoin   end the call at the minute boundary the caller can't pay for
+ *   host_return  end the host's paused live stream if they don't return in 2 min
+ */
+const LOWCOIN_TIMER = "vc_lowcoin";
+const HOST_RETURN_TIMER = "host_return";
+
+/** True when a low-balance disconnect is already pending for the call (any node). */
+const lowCoinDisconnectPending = (sessionId) => hasDurable(LOWCOIN_TIMER, sessionId);
+
+const scheduleLowCoinDisconnect = (sessionId, callerId, coinRate, disconnectAtMs, minute) =>
+    scheduleDurable(LOWCOIN_TIMER, sessionId, disconnectAtMs, {
+        callerId,
+        coinRate: String(coinRate),
+        disconnectAtMs,
+        minute
+    });
+
+registerDurableHandler(LOWCOIN_TIMER, async (sessionId, payload) => {
+    if (!payload?.callerId) return;
+    const coinRate = BigInt(payload.coinRate);
+    const fresh = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
+    if (!fresh || fresh.status !== "ACTIVE") return;
+    const w = await getOrCreateWallet(payload.callerId, WalletCurrencyType.COIN);
+    const c = await getFastCoinBalance(w.id);
+    if (c < coinRate) {
+        console.log(`[VideoCall] Precision disconnect at minute ${payload.minute} boundary for session ${sessionId}`);
+        await endCall(sessionId, payload.callerId, "INSUFFICIENT_BALANCE", new Date(payload.disconnectAtMs));
+    }
+});
+
+export const clearHostReturnTimeout = (hostId) => {
+    console.log(`[Return Grace Timer] Clearing background return timeout for host ${hostId}`);
+    cancelDurable(HOST_RETURN_TIMER, hostId).catch(() => { });
+};
+
+registerDurableHandler(HOST_RETURN_TIMER, async (hostId, payload) => {
+    const { streamId, sessionId } = payload || {};
+    if (!streamId) return;
+    const returnTimerKey1 = `host:return_timer:${streamId}:${hostId}`;
+    const returnTimerKey2 = `host:return_timer:${hostId}`;
+    let isStillPending = true;
+    if (redisClient.isOpen) {
+        const val1 = await redisClient.get(returnTimerKey1);
+        const val2 = await redisClient.get(returnTimerKey2);
+        isStillPending = (val1 === "pending" || val2 === "pending");
+    }
+    if (!isStillPending) return;
+
+    console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} did NOT return to live stream ${streamId} within 2 minutes. Auto-ending live stream...`);
+    if (redisClient.isOpen) {
+        await Promise.all([
+            redisClient.del(returnTimerKey1),
+            redisClient.del(returnTimerKey2),
+            sessionId ? redisClient.del(`video_call:stream_pause:${sessionId}`) : Promise.resolve()
+        ]).catch(() => { });
+    }
+
+    const activeStream = await prisma.liveStream.findFirst({
+        where: {
+            OR: [{ streamId }, { userId: hostId }],
+            isLive: true
+        }
+    });
+
+    if (activeStream) {
+        broadcastToStream(streamId, "stream_ended", {
+            streamId,
+            reason: "HOST_NOT_RETURNED_2MIN",
+            message: "Live stream ended because host did not return within 2 minutes after video call."
+        });
+
+        const { endLiveStreamService } = await import("../../routes/service/serviceLive.js");
+        await endLiveStreamService({ id: activeStream.id, userId: hostId, reason: "HOST_NOT_RETURNED_2MIN" });
+        console.log(`[VideoCall 2-Min Return Timeout] Auto-ended live stream ${streamId} successfully.`);
+    }
+});
 
 export const getOrCreateWallet = async (userId, currencyType, tx = prisma) => {
     let wallet = await tx.wallet.findUnique({
@@ -378,7 +487,7 @@ export const initiateCall = async ({ callerId, creatorId }) => {
                 isStale = true;
             }
         } else if (callerBusy.status === "ACTIVE") {
-            const lastPing = heartbeatCache.get(callerBusy.id);
+            const lastPing = await getCallHeartbeat(callerBusy.id);
             if (!lastPing || (Date.now() - lastPing > 30000)) {
                 isStale = true;
             }
@@ -409,7 +518,7 @@ export const initiateCall = async ({ callerId, creatorId }) => {
                 isStale = true;
             }
         } else if (creatorBusy.status === "ACTIVE") {
-            const lastPing = heartbeatCache.get(creatorBusy.id);
+            const lastPing = await getCallHeartbeat(creatorBusy.id);
             if (!lastPing || (Date.now() - lastPing > 30000)) {
                 isStale = true;
             }
@@ -583,29 +692,13 @@ export const acceptCall = async (sessionId, receiverId) => {
         try {
             const w = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
             const c = await getFastCoinBalance(w.id);
-            if (c < coinRate && !scheduledDisconnects.has(sessionId)) {
+            if (c < coinRate && !(await lowCoinDisconnectPending(sessionId))) {
                 const startedAtMs = new Date(updatedSession.startedAt).getTime();
                 const disconnectAtMs = startedAtMs + 60000; // end of 1st minute
                 const msUntilDisconnect = disconnectAtMs - Date.now();
                 if (msUntilDisconnect > 0) {
                     console.log(`[VideoCall] Caller cannot afford minute 2. Scheduling disconnect in ${msUntilDisconnect}ms for session ${sessionId}`);
-                    const tid = setTimeout(async () => {
-                        try {
-                            const fresh = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
-                            if (!fresh || fresh.status !== "ACTIVE") return;
-                            const freshW = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
-                            const freshC = await getFastCoinBalance(freshW.id);
-                            if (freshC < coinRate) {
-                                console.log(`[VideoCall] Precision disconnect at minute boundary for session ${sessionId}`);
-                                await endCall(sessionId, session.callerId, "INSUFFICIENT_BALANCE", new Date(disconnectAtMs));
-                            }
-                        } catch (e) {
-                            console.error("[VideoCall] Precision disconnect error:", e);
-                        } finally {
-                            scheduledDisconnects.delete(sessionId);
-                        }
-                    }, msUntilDisconnect);
-                    scheduledDisconnects.set(sessionId, tid);
+                    await scheduleLowCoinDisconnect(sessionId, session.callerId, coinRate, disconnectAtMs, 1);
                 }
             }
         } catch (e) {
@@ -730,18 +823,16 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
     closeLivekitRoom(session.livekitRoom).catch(err => {
         console.error(`[LiveKit] Background close room ${session.livekitRoom} failed:`, err);
     });
-    heartbeatCache.delete(sessionId);
-    if (session.callerId) heartbeatCache.delete(`${sessionId}:${session.callerId}`);
-    if (session.creatorId) heartbeatCache.delete(`${sessionId}:${session.creatorId}`);
+    clearCallHeartbeat(sessionId, session.callerId, session.creatorId);
     if (redisClient.isOpen) {
         if (session.callerId) redisClient.del(`call:disconnect:${sessionId}:${session.callerId}`).catch(() => { });
         if (session.creatorId) redisClient.del(`call:disconnect:${sessionId}:${session.creatorId}`).catch(() => { });
     }
 
-    if (scheduledDisconnects.has(sessionId)) {
-        clearTimeout(scheduledDisconnects.get(sessionId));
-        scheduledDisconnects.delete(sessionId);
-    }
+    cancelDurable(LOWCOIN_TIMER, sessionId).catch(() => { });
+    // The 15s socket-disconnect grace (videoCall/socket.js) for either participant.
+    if (session.callerId) cancelDurable("vc_disconnect", `${sessionId}:${session.callerId}`).catch(() => { });
+    if (session.creatorId) cancelDurable("vc_disconnect", `${sessionId}:${session.creatorId}`).catch(() => { });
 
     // 2-Minute Host Return Grace Period for Live Stream
     (async () => {
@@ -774,55 +865,9 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
 
                 console.log(`[VideoCall End] Host ${hostId} has 2 minutes (120s) to return to live stream ${streamId} from Home screen.`);
 
-                // Clear any previous stale 2-minute return timeout for this host
-                clearHostReturnTimeout(hostId);
-
-                // 2-minute (120,000 ms) background worker
-                const returnHandle = setTimeout(async () => {
-                    activeReturnTimeouts.delete(hostId);
-                    try {
-                        let isStillPending = true;
-                        if (redisClient.isOpen) {
-                            const val1 = await redisClient.get(returnTimerKey1);
-                            const val2 = await redisClient.get(returnTimerKey2);
-                            isStillPending = (val1 === "pending" || val2 === "pending");
-                        }
-
-                        if (isStillPending) {
-                            console.log(`[VideoCall 2-Min Return Timeout] Host ${hostId} did NOT return to live stream ${streamId} within 2 minutes. Auto-ending live stream...`);
-                            if (redisClient.isOpen) {
-                                await Promise.all([
-                                    redisClient.del(returnTimerKey1),
-                                    redisClient.del(returnTimerKey2),
-                                    redisClient.del(`video_call:stream_pause:${sessionId}`)
-                                ]).catch(() => { });
-                            }
-
-                            const activeStream = await prisma.liveStream.findFirst({
-                                where: {
-                                    OR: [{ streamId }, { userId: hostId }],
-                                    isLive: true
-                                }
-                            });
-
-                            if (activeStream) {
-                                broadcastToStream(streamId, "stream_ended", {
-                                    streamId,
-                                    reason: "HOST_NOT_RETURNED_2MIN",
-                                    message: "Live stream ended because host did not return within 2 minutes after video call."
-                                });
-
-                                const { endLiveStreamService } = await import("../../routes/service/serviceLive.js");
-                                await endLiveStreamService({ id: activeStream.id, userId: hostId, reason: "HOST_NOT_RETURNED_2MIN" });
-                                console.log(`[VideoCall 2-Min Return Timeout] Auto-ended live stream ${streamId} successfully! âœ…`);
-                            }
-                        }
-                    } catch (timeoutErr) {
-                        console.error("[VideoCall 2-Min Return Timeout Error]:", timeoutErr.message);
-                    }
-                }, 120000);
-
-                activeReturnTimeouts.set(hostId, returnHandle);
+                // 2-minute background deadline (replaces any earlier one for this host);
+                // handled by HOST_RETURN_TIMER above.
+                await scheduleDurable(HOST_RETURN_TIMER, hostId, Date.now() + 120000, { streamId, sessionId });
             }
         } catch (resumeErr) {
             console.error("[VideoCall] Live Stream 2-min return setup error:", resumeErr);
@@ -907,7 +952,13 @@ export const getCallSettingsForCaller = async ({ callerId, creatorId }) => {
 };
 
 if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
-    setInterval(async () => {
+    const videoCallSweep = setInterval(async () => {
+        // L5 (LIVE-09): billing, ringing timeouts and heartbeat ends run on one node only.
+        try {
+            if (!(await isLeader("videocall-sweep"))) return;
+        } catch {
+            return;
+        }
         const now = Date.now();
 
         try {
@@ -918,7 +969,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
             for (const session of activeSessionsForHeartbeat) {
                 const sessionAge = now - new Date(session.startedAt).getTime();
                 if (sessionAge > 45000) {
-                    const sessionPing = heartbeatCache.get(session.id) || new Date(session.startedAt).getTime();
+                    const sessionPing = (await getCallHeartbeat(session.id)) || new Date(session.startedAt).getTime();
                     if (now - sessionPing > 60000) {
                         console.log(`[VideoCall Protection] Global heartbeat lost for session ${session.id}. Auto-ending call.`);
                         heartbeatCache.delete(session.id);
@@ -1052,7 +1103,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                                 await afterCommissionCreditCommit(txAgencyUserId);
                             }
 
-                            if (!scheduledDisconnects.has(session.id)) {
+                            if (!(await lowCoinDisconnectPending(session.id))) {
                                 const wAfter = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
                                 const coinsAfter = await getFastCoinBalance(wAfter.id);
                                 if (coinsAfter < coinRate) {
@@ -1061,23 +1112,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                                     const msUntil = disconnectAtMs - Date.now();
                                     if (msUntil > 0) {
                                         console.log(`[VideoCall] Caller cannot afford minute ${m + 1}. Scheduling disconnect in ${msUntil}ms for session ${session.id}`);
-                                        const tid = setTimeout(async () => {
-                                            try {
-                                                const fs = await prisma.videoCallSession.findUnique({ where: { id: session.id } });
-                                                if (!fs || fs.status !== "ACTIVE") return;
-                                                const wCheck = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
-                                                const cCheck = await getFastCoinBalance(wCheck.id);
-                                                if (cCheck < coinRate) {
-                                                    console.log(`[VideoCall] Precision disconnect at minute ${m} boundary for session ${session.id}`);
-                                                    await endCall(session.id, session.callerId, "INSUFFICIENT_BALANCE", new Date(disconnectAtMs));
-                                                }
-                                            } catch (e) {
-                                                console.error("[VideoCall] Precision disconnect error:", e);
-                                            } finally {
-                                                scheduledDisconnects.delete(session.id);
-                                            }
-                                        }, msUntil);
-                                        scheduledDisconnects.set(session.id, tid);
+                                        await scheduleLowCoinDisconnect(session.id, session.callerId, coinRate, disconnectAtMs, m);
                                     }
                                 }
                             }
@@ -1112,6 +1147,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
             console.error("[VideoCall] Error during active session billing:", err);
         }
     }, 5000);
+    onShutdown("videocall-sweep", () => clearInterval(videoCallSweep));
 }
 
 export const verifyCallFrame = async (sessionId, base64Image) => {

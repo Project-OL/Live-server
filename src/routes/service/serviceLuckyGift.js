@@ -12,7 +12,7 @@ import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
 import { getOrCreateWallet, updateUserLevel } from '../../modules/videoCall/service.js';
 import { giftImageFields } from '../../utils/giftImage.js';
-import { processLiveStreamAgencyCommission } from './serviceLive.js';
+import { processLiveStreamAgencyCommission, getGiftInfoService, isLuckyGift } from './serviceLive.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
@@ -59,7 +59,16 @@ export const sendLuckyGiftService = async ({
 
     let gift = preFetchedGift;
     if (!gift) {
-        gift = await prisma.gift.findUnique({ where: { id: giftId } });
+        // Direct POST /lucky-gift/send: the caller picks the gift, so it must be an
+        // active lucky gift (sendStreamGiftService already checked this before
+        // passing preFetchedGift).
+        gift = await getGiftInfoService({ giftId });
+        if (!gift || !gift.isActive) {
+            throw new Error("Gift not found or is inactive.");
+        }
+        if (!isLuckyGift(gift)) {
+            throw new Error("This gift is not a lucky gift.");
+        }
     }
 
     if (!gift) {

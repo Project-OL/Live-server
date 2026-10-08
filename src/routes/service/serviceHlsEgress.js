@@ -11,6 +11,16 @@ const livekitHost = process.env.LIVEKIT_URL || 'http://localhost:7880';
 
 const egressClient = new EgressClient(livekitHost, apiKey, apiSecret);
 
+/**
+ * LIVE-09 L7: LiveKit egress writes HLS on the LiveKit host (the Hostinger VPS, where
+ * nginx serves /hls/ and /etc/cron.d/livekit-hls-cleanup prunes it), not on the
+ * Live-server VM. The local cleaner below only does anything when this machine has
+ * the HLS directory (a co-located dev setup); elsewhere it would be a per-room
+ * interval that never finds files and leaks when another node stops the egress.
+ */
+const HLS_ROOT = '/var/www/hls';
+const HLS_IS_LOCAL = fs.existsSync(HLS_ROOT);
+
 export const cleanOldHlsSegmentsService = (roomName, maxAgeSeconds = 20) => {
     const dir = `/var/www/hls/streams/${roomName}`;
     if (!fs.existsSync(dir)) return;
@@ -57,13 +67,16 @@ export const startLocalHlsEgressService = async (roomName) => {
         console.log(`[LiveKit LL-HLS Egress] Started local LL-HLS egress ${egressInfo.egressId} for room ${roomName}`);
 
         // 🟢 Auto-cleaner: Runs every 10s to remove .m4s files older than 20 seconds
-        const intervalId = setInterval(() => {
-            cleanOldHlsSegmentsService(roomName, 20);
-        }, 10000);
+        // (only when the HLS output is on this machine; see HLS_IS_LOCAL).
+        if (HLS_IS_LOCAL) {
+            const intervalId = setInterval(() => {
+                cleanOldHlsSegmentsService(roomName, 20);
+            }, 10000);
 
-        // Store interval ID in global map for cleanup
-        if (!global.hlsCleanerIntervals) global.hlsCleanerIntervals = new Map();
-        global.hlsCleanerIntervals.set(roomName, intervalId);
+            // Store interval ID in global map for cleanup
+            if (!global.hlsCleanerIntervals) global.hlsCleanerIntervals = new Map();
+            global.hlsCleanerIntervals.set(roomName, intervalId);
+        }
 
         return egressInfo.egressId;
     } catch (err) {

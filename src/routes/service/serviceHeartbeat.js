@@ -4,6 +4,8 @@ import {
     endLiveStreamService,
 } from './serviceLive.js';
 import { livekitHostIsPresent } from './livekitPresence.js';
+import { LIVE_FAILURE_KINDS, recordLiveFailure } from '../../services/liveFailureLog.service.js';
+import { isLeader, onShutdown } from '../../services/cluster.service.js';
 
 /**
  * How long a host may go silent (no heartbeat) before the stream is auto-ended.
@@ -152,6 +154,9 @@ export const startStreamHeartbeatMonitor = (io) => {
 
     heartbeatMonitorInterval = setInterval(async () => {
         try {
+            // L5 (LIVE-09): one node sweeps; the others would race to end the same streams.
+            if (!(await isLeader('stream-heartbeat-monitor'))) return;
+
             const activeStreams = await prisma.liveStream.findMany({
                 where: { isLive: true, endedAt: null },
                 select: { id: true, streamId: true, userId: true, createdAt: true, startedAt: true }
@@ -189,6 +194,14 @@ export const startStreamHeartbeatMonitor = (io) => {
                                 console.warn(
                                     `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}, never confirmed. Auto-ending.`
                                 );
+                                recordLiveFailure({
+                                    kind: LIVE_FAILURE_KINDS.GHOST_STREAM_ENDED,
+                                    userId: hostUserId,
+                                    streamId: streamIdKey,
+                                    code: 'NO_LIVEKIT_HOST',
+                                    message: 'Host never appeared in the LiveKit room; stream auto-ended.',
+                                    meta: { ageMs }
+                                });
                                 emitStreamEnded(
                                     io,
                                     stream,
@@ -247,6 +260,14 @@ export const startStreamHeartbeatMonitor = (io) => {
                     console.warn(
                         `[Heartbeat Monitor] Stream ${streamIdKey} lost heartbeat (last ping ${durationSinceLastPing}ms ago). Auto-ending stream!`
                     );
+                    recordLiveFailure({
+                        kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
+                        userId: hostUserId,
+                        streamId: streamIdKey,
+                        code: lastHeartbeatTime ? 'HEARTBEAT_LOST' : 'NO_HEARTBEAT_EVER',
+                        message: `No host heartbeat for ${durationSinceLastPing}ms; stream auto-ended.`,
+                        meta: { ageMs, sinceLastPingMs: durationSinceLastPing }
+                    });
 
                     emitStreamEnded(
                         io,
@@ -273,6 +294,7 @@ export const startStreamHeartbeatMonitor = (io) => {
             console.error("[Heartbeat Monitor] Loop error:", loopErr.message);
         }
     }, 5000);
+    onShutdown('stream-heartbeat-monitor', stopStreamHeartbeatMonitor);
 };
 
 export const stopStreamHeartbeatMonitor = () => {

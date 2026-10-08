@@ -4,6 +4,11 @@ import auth from '../../middlewares/authMiddleware.js';
 import prisma from '../../config/prisma.js';
 import { createLiveSchema, sendMessageSchema } from '../../validations/validationLive.js';
 import { recordStreamHeartbeat } from '../service/serviceHeartbeat.js';
+import {
+    LIVE_FAILURE_KINDS,
+    recordLiveFailure,
+    allowClientFailureReport
+} from '../../services/liveFailureLog.service.js';
 
 import {
     fastGoLiveStreamService,
@@ -105,10 +110,26 @@ const syncAndGetActiveViewerIds = async (streamId) => {
     return activeUserIds;
 };
 
+/** Client context the app sends with go-live / join, kept on failure events. */
+const clientMeta = (req) => ({
+    network: req.body?.network,
+    platform: req.body?.platform,
+    appVersion: req.body?.appVersion || req.headers['x-app-version'],
+    ua: req.headers['user-agent']
+});
+
 const fastGoLiveStream = async (req, res) => {
     try {
         const banRestriction = await isUserRestrictedFast(req.userId, 'LIVE_STREAM_START_BAN');
         if (banRestriction) {
+            recordLiveFailure({
+                kind: LIVE_FAILURE_KINDS.GO_LIVE_REJECTED,
+                userId: req.userId,
+                status: 403,
+                code: 'LIVE_STREAM_START_BANNED',
+                message: `Banned until ${new Date(banRestriction.restrictedUntil).toISOString()}`,
+                meta: clientMeta(req)
+            });
             const untilIso = new Date(banRestriction.restrictedUntil).toISOString();
             const formattedTime = new Date(banRestriction.restrictedUntil).toLocaleString('en-IN', {
                 timeZone: 'Asia/Kolkata',
@@ -143,6 +164,14 @@ const fastGoLiveStream = async (req, res) => {
             token: result.token
         });
     } catch (error) {
+        recordLiveFailure({
+            kind: LIVE_FAILURE_KINDS.GO_LIVE_REJECTED,
+            userId: req.userId,
+            status: 400,
+            code: error.isJoi ? 'VALIDATION' : 'GO_LIVE_ERROR',
+            message: error.message,
+            meta: clientMeta(req)
+        });
         return res.status(400).json({
             success: false,
             message: error.message
@@ -177,6 +206,16 @@ const endLiveStream = async (req, res) => {
 };
 
 const joinLiveStream = async (req, res) => {
+    const joinFailed = (status, code, message, streamId = req.params.id) =>
+        recordLiveFailure({
+            kind: LIVE_FAILURE_KINDS.JOIN_REJECTED,
+            userId: req.userId,
+            streamId,
+            status,
+            code,
+            message,
+            meta: clientMeta(req)
+        });
     try {
         const targetId = req.params.id;
 
@@ -189,14 +228,17 @@ const joinLiveStream = async (req, res) => {
         ]);
 
         if (!stream) {
+            joinFailed(404, 'STREAM_NOT_FOUND', 'Stream not found');
             return res.status(404).json({ success: false, message: "Stream not found" });
         }
         if (!stream.isLive) {
+            joinFailed(400, 'STREAM_NOT_LIVE', 'Stream is not live', stream.streamId);
             return res.status(400).json({ success: false, message: "Stream is not live" });
         }
 
         if (kickTtl !== null) {
             const minutesLeft = Math.ceil(kickTtl / 60);
+            joinFailed(403, 'KICKED', `Kicked; ${minutesLeft} minute(s) left`, stream.streamId);
             return res.status(403).json({
                 success: false,
                 message: `You have been kicked from this stream and cannot join. Try again in ${minutesLeft} minute(s).`
@@ -206,6 +248,7 @@ const joinLiveStream = async (req, res) => {
         if (req.userId !== stream.userId && streamPassword) {
             const { password } = req.body || {};
             if (!password || password !== streamPassword) {
+                joinFailed(401, 'BAD_PASSWORD', 'Incorrect stream password', stream.streamId);
                 return res.status(401).json({ success: false, message: "Incorrect stream password" });
             }
         }
@@ -283,6 +326,7 @@ const joinLiveStream = async (req, res) => {
             chatPermissionMode
         });
     } catch (error) {
+        joinFailed(400, 'JOIN_ERROR', error.message);
         return res.status(400).json({
             success: false,
             message: error.message
@@ -1450,7 +1494,45 @@ router.get('/fans-ranking/:hostId', auth, getFansRanking);
 router.get('/my-photo', auth, getMyLivePhoto);
 router.get('/gift-gallery/targets', auth, getGiftGalleryTargets);
 
+/**
+ * POST /live-stream/connect-failure — the app reports that LiveKit Room.connect (or a
+ * reconnect) failed, so a failed go-live/join has a reason attached (LIVE-06b).
+ * Always 202 for a well-formed report; rate-limited per user. Never affects the stream.
+ */
+const reportConnectFailure = async (req, res) => {
+    const b = req.body || {};
+    const role = b.role === 'host' || b.role === 'viewer' ? b.role : null;
+    if (!role) {
+        return res.status(400).json({ success: false, message: "role must be 'host' or 'viewer'." });
+    }
+    if (!(await allowClientFailureReport(req.userId))) {
+        return res.status(429).json({ success: false, message: 'Too many failure reports; try again later.' });
+    }
+    recordLiveFailure({
+        kind: LIVE_FAILURE_KINDS.CLIENT_CONNECT_FAILED,
+        userId: req.userId,
+        streamId: typeof b.streamId === 'string' ? b.streamId : null,
+        code: typeof b.errorType === 'string' ? b.errorType : 'CONNECT_FAILED',
+        message: typeof b.errorMessage === 'string' ? b.errorMessage : null,
+        meta: {
+            role,
+            phase: b.phase,
+            attempt: Number.isFinite(Number(b.attempt)) ? Number(b.attempt) : undefined,
+            durationMs: Number.isFinite(Number(b.durationMs)) ? Number(b.durationMs) : undefined,
+            network: b.network,
+            platform: b.platform,
+            osVersion: b.osVersion,
+            deviceModel: b.deviceModel,
+            appVersion: b.appVersion || req.headers['x-app-version'],
+            sdkVersion: b.sdkVersion,
+            livekitUrl: b.livekitUrl
+        }
+    });
+    return res.status(202).json({ success: true });
+};
+
 router.post('/heartbeat', auth, streamHeartbeat);
+router.post('/connect-failure', auth, reportConnectFailure);
 router.post('/go-live', auth, fastGoLiveStream);
 router.post('/end/:id', auth, endLiveStream);
 router.post('/join/:id', auth, joinLiveStream);

@@ -1,6 +1,7 @@
 import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
+import { runAsLeader, onShutdown } from '../../services/cluster.service.js';
 
 const SPENT_KEY = "lucky:reserve:total_spent";
 const REWARDED_KEY = "lucky:reserve:total_rewarded";
@@ -166,9 +167,12 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
         console.error("[ReservePool Engine] Restore failed:", e.message)
     );
 
-    setInterval(() => {
-        snapshotReservePool().catch((e) =>
+    // L5 (LIVE-09): one node writes the snapshot; the counters themselves are shared Redis.
+    const snapshotTimer = setInterval(() => {
+        runAsLeader("reserve-pool-snapshot", snapshotReservePool).catch((e) =>
             console.error("[ReservePool Engine] Snapshot failed:", e.message)
         );
-    }, SNAPSHOT_INTERVAL_MS).unref?.();
+    }, SNAPSHOT_INTERVAL_MS);
+    snapshotTimer.unref?.();
+    onShutdown("reserve-pool-snapshot", () => clearInterval(snapshotTimer));
 }

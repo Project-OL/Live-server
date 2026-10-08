@@ -39,10 +39,15 @@ test('live stream gifts mint a shared giftTransactionId and tag GIFT_RECEIVE', (
 test('lucky combo commission uses host ledger id + LIVESTREAM_GIFT, not gift tx id as processed key', () => {
   const src = read('src/routes/service/serviceLuckyGift.js')
   assert.match(src, /hostTxType: PointTxType\.LIVESTREAM_GIFT/)
-  assert.match(src, /txRecord\.hostLedgerId/)
+  // Commission settles inside the same money transaction as the host credit, keyed
+  // on the host ledger entry id (not the gift tx id).
+  assert.match(
+    src,
+    /processLiveStreamAgencyCommission\(\s*tx,\s*effectiveReceiverId,\s*hostPoints,\s*hostLedgerId,/,
+  )
   assert.doesNotMatch(
     src,
-    /processLiveStreamAgencyCommission\(\s*prisma,\s*effectiveReceiverId,\s*hostPoints,\s*txRecord\.id\s*\)/,
+    /processLiveStreamAgencyCommission\(\s*(prisma|tx),\s*effectiveReceiverId,\s*hostPoints,\s*(txRecord\.id|giftTransactionId)\s*[,)]/,
   )
   assert.match(src, /transactionId: txRecord\.log\.id/)
 })

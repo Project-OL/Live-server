@@ -8,6 +8,7 @@ import {
   clearRestrictionsByTypeService,
   VALID_RESTRICTION_TYPES
 } from '../service/serviceAdmin.js';
+import { listLiveFailures } from '../../services/liveFailureLog.service.js';
 
 const router = express.Router();
 
@@ -169,7 +170,31 @@ export const getMyRestrictions = async (req, res, next) => {
   }
 };
 
+/**
+ * Recent go-live / join / connect failures (LIVE-06), newest first.
+ * GET /api/v1/admin/live/failures?kind=&userId=&streamId=&code=&page=&limit=
+ */
+export const getLiveFailures = async (req, res) => {
+  try {
+    const data = await listLiveFailures({
+      kind: req.query.kind,
+      userId: req.query.userId,
+      streamId: req.query.streamId,
+      code: req.query.code,
+      page: req.query.page,
+      limit: req.query.limit
+    });
+    return res.status(200).json({ success: true, data });
+  } catch (err) {
+    return res.status(500).json({
+      success: false,
+      message: err.message || 'Failed to load live failures'
+    });
+  }
+};
+
 // Admin Endpoints
+router.get('/live/failures', authenticateAdmin, getLiveFailures);
 router.post('/users/:userId/restrictions', authenticateAdmin, applyUserRestriction);
 router.get('/users/:userId/restrictions', authenticateAdmin, getUserRestrictions);
 router.delete('/users/:userId/restrictions/:restrictionId', authenticateAdmin, clearUserRestrictionById);
