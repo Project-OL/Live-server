@@ -6,6 +6,7 @@ import {
 import { livekitHostIsPresent } from './livekitPresence.js';
 import { LIVE_FAILURE_KINDS, recordLiveFailure } from '../../services/liveFailureLog.service.js';
 import { isLeader, onShutdown } from '../../services/cluster.service.js';
+import { heartbeatVerdict } from './heartbeatPolicy.js';
 
 /**
  * How long a host may go silent (no heartbeat) before the stream is auto-ended.
@@ -104,6 +105,19 @@ const isHostConfirmed = async (streamIdKey) => {
     }
 };
 
+/** One keepalive log line per stream per minute (the monitor ticks every 5 s). */
+const keepaliveLoggedAt = new Map();
+const logKeepalive = (streamIdKey, hostUserId, sinceLastPingMs, lastHeartbeatTime) => {
+    const now = Date.now();
+    if (now - (keepaliveLoggedAt.get(streamIdKey) || 0) < 60000) return;
+    keepaliveLoggedAt.set(streamIdKey, now);
+    if (keepaliveLoggedAt.size > 5000) keepaliveLoggedAt.clear();
+    console.log(
+        `[Heartbeat Monitor] Stream ${streamIdKey} host ${hostUserId} sent no heartbeat for ${sinceLastPingMs}ms` +
+        `${lastHeartbeatTime ? '' : ' (never)'} but is still in the LiveKit room; kept alive (LIVE-19).`
+    );
+};
+
 const emitStreamEnded = (io, stream, streamIdKey, reason, message) => {
     const payload = {
         streamId: streamIdKey,
@@ -172,10 +186,12 @@ export const startStreamHeartbeatMonitor = (io) => {
                     const hostUserId = stream.userId;
                     const startTime = (stream.startedAt || stream.createdAt || new Date()).getTime();
                     const ageMs = now - startTime;
+                    // LiveKit presence of the host, looked up at most once per tick per stream.
+                    let hostInLk = null;
 
                     // --- Ghost / Wi-Fi: go-live created DB row but host never joined LiveKit ---
                     if (GHOST_SWEEP_ENABLED && ageMs >= LIVEKIT_HOST_GRACE_MS) {
-                        const hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
+                        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
                         if (hostInLk) {
                             // Host confirmed present at least once — remember it so a later
                             // drop (network blip, backgrounded app) isn't mistaken for a
@@ -251,8 +267,32 @@ export const startStreamHeartbeatMonitor = (io) => {
                         continue;
                     }
 
-                    const pause = await hostPausedForCallOrReturn(hostUserId, streamIdKey);
-                    if (pause.paused) {
+                    // LIVE-19: the app's heartbeat timer lives on the live room screen, so a
+                    // minimized room or a dead socket stops it while the host keeps publishing.
+                    // While the host is in the LiveKit room the stream is alive: refresh the
+                    // heartbeat ourselves instead of ending a stream viewers are watching.
+                    if (hostInLk === null) {
+                        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
+                    }
+                    const pause = hostInLk
+                        ? { paused: false }
+                        : await hostPausedForCallOrReturn(hostUserId, streamIdKey);
+                    const verdict = heartbeatVerdict({
+                        now,
+                        ageMs,
+                        lastHeartbeatTime,
+                        timeoutMs: HEARTBEAT_TIMEOUT_MS,
+                        startGraceMs: HEARTBEAT_START_GRACE_MS,
+                        paused: pause.paused,
+                        hostInLiveKit: hostInLk,
+                    });
+                    if (verdict === 'keepalive') {
+                        await recordStreamHeartbeat(streamIdKey, hostUserId);
+                        markHostConfirmed(streamIdKey).catch(() => { });
+                        logKeepalive(streamIdKey, hostUserId, durationSinceLastPing, lastHeartbeatTime);
+                        continue;
+                    }
+                    if (verdict === 'paused') {
                         console.log(`[Heartbeat Monitor] Host ${hostUserId} paused (${pause.why}).`);
                         continue;
                     }

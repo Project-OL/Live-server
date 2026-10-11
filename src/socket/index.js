@@ -4,6 +4,7 @@ import { setupVideoCallSockets } from "../modules/videoCall/socket.js";
 import { setupLiveSockets } from "../routes/service/socket-live-service.js";
 import { client as redisClient } from "../config/redis.js";
 import { onShutdown } from "../services/cluster.service.js";
+import { socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
 
 let io;
 
@@ -46,6 +47,10 @@ export const initSocket = async (server) => {
     });
 
     await attachRedisAdapter(io);
+
+    // SEC-05: verify the access token before any handler reads handshake.userId.
+    io.use(socketAuthMiddleware);
+    console.log(`[Socket Auth] mode=${socketAuthMode()} (LIVE_SOCKET_AUTH_MODE: off | log | enforce)`);
 
     setupVideoCallSockets(io);
     setupLiveSockets(io);
