@@ -1377,6 +1377,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             luckyResult.luckyWin.senderLastName = isStealth ? null : (senderPrivacy?.lastName || null);
             luckyResult.luckyWin.senderAvatarUrl = isStealth ? null : (senderPrivacy?.avatarUrl || null);
             luckyResult.luckyWin.senderPublicId = isStealth ? null : senderPublicId;
+            // The app's lucky-won chat row reads `publicId` for its user card.
+            luckyResult.luckyWin.publicId = luckyResult.luckyWin.senderPublicId;
             luckyResult.luckyWin.receiverName = receiverName;
             luckyResult.luckyWin.receiverPublicId = receiverPublicId;
         }

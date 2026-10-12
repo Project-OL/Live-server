@@ -44,6 +44,7 @@ import {
     getHostStatsService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
+import { withSheetPublicIds } from '../service/roomPublicId.js';
 import { withGiftThumbnail } from '../../utils/giftImage.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
 import {
@@ -516,7 +517,9 @@ const getLiveStream = async (req, res) => {
             syncAndGetActiveViewerIds(stream.streamId),
             getHostProfileService({ hostUserId: stream.userId }),
             getStreamPasswordService({ streamId: stream.streamId }),
-            getSheetUsersService({ streamId: stream.streamId }),
+            // publicId lets the app's seat user card open a DM.
+            getSheetUsersService({ streamId: stream.streamId })
+                .then((users) => withSheetPublicIds(users, getUserPrivacyService)),
             getMicPermissionService({ streamId: stream.streamId }),
             getChatPermissionService({ streamId: stream.streamId })
         ]);

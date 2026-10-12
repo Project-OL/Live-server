@@ -16,6 +16,7 @@ import {
     endLiveStreamService
 } from './serviceLive.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
+import { roomPublicId } from './roomPublicId.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
@@ -484,13 +485,14 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { publicId: true, username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
                 await addUserToSheetService({ streamId, userId, username: displayUsername });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : userId,
+                    publicId: roomPublicId(user),
                     name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
@@ -548,7 +550,7 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: userId },
-                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { publicId: true, username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const realUsername = user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest";
@@ -565,6 +567,7 @@ export const setupLiveSockets = (io) => {
                         ioInstance.to(`user:${userId}`).emit("sheet_request_accepted", { streamId });
                         broadcastToStream(streamId, "user_joined_sheet", {
                             userId: isStealth ? null : userId,
+                            publicId: roomPublicId(user),
                             name: displayUsername,
                             username: displayUsername,
                             isMuted: false,
@@ -646,7 +649,7 @@ export const setupLiveSockets = (io) => {
 
                 const user = await prisma.user.findUnique({
                     where: { id: targetUserId },
-                    select: { username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
+                    select: { publicId: true, username: true, firstName: true, lastName: true, privacyMysteryLive: true, vipSubscriptionActive: true }
                 });
                 const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
                 const displayUsername = isStealth ? (await getOrCreateSessionAlias(streamId, targetUserId) || "Mystery User") : (user ? (`${user.firstName || ""} ${user.lastName || ""}`.trim() || user.username || "Guest") : "Guest");
@@ -654,6 +657,7 @@ export const setupLiveSockets = (io) => {
                 ioInstance.to(`user:${targetUserId}`).emit("sheet_request_accepted", { streamId });
                 broadcastToStream(streamId, "user_joined_sheet", {
                     userId: isStealth ? null : targetUserId,
+                    publicId: roomPublicId(user),
                     name: displayUsername,
                     username: displayUsername,
                     isMuted: false,
