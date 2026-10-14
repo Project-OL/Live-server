@@ -1,0 +1,31 @@
+# LIVE-52 part 2: throwaway Postgres + Redis for the money concurrency tests.
+# Own project name and ports, so it never collides with a dev stack on 5432/6379.
+#   docker compose -p live-money-test -f tests/money/docker-compose.yml up -d
+name: live-money-test
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: money
+      POSTGRES_PASSWORD: money
+      POSTGRES_DB: money_test
+    ports:
+      - "127.0.0.1:55432:5432"
+    # Tests only: no durability needed, faster commits.
+    command: ["postgres", "-c", "fsync=off", "-c", "synchronous_commit=off", "-c", "max_connections=200"]
+    tmpfs:
+      - /var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U money -d money_test"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "127.0.0.1:56379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 2s
+      timeout: 3s
+      retries: 30

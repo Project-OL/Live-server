@@ -1,0 +1,46 @@
+# Unit + money concurrency tests (LIVE-52 part 2). Runs on every push to master and on PRs.
+# Never deploys; the throwaway Postgres/Redis are CI service containers.
+name: Tests
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: money
+          POSTGRES_PASSWORD: money
+          POSTGRES_DB: money_test
+        ports: ["55432:5432"]
+        options: >-
+          --health-cmd "pg_isready -U money -d money_test"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+      redis:
+        image: redis:7-alpine
+        ports: ["56379:6379"]
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 2s --health-timeout 3s --health-retries 30
+    env:
+      # postinstall runs `prisma generate`; the money tests pin their own URLs in tests/money/helpers.mjs.
+      DATABASE_URL: postgresql://money:money@127.0.0.1:55432/money_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: npm
+      - run: npm ci
+      - name: Unit tests
+        run: npm run test:unit
+      - name: Push schema to the throwaway database
+        run: npx prisma db push --skip-generate --accept-data-loss
+      - name: Money concurrency tests
+        run: npm run test:money
