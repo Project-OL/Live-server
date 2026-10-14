@@ -13,8 +13,13 @@ import {
     setChatPermissionService,
     sendStreamGiftService,
     handleCameraStateChangeService,
-    endLiveStreamService
+    endLiveStreamService,
+    // Aliased on purpose: `clear_chat` below calls a bare `getLiveStreamService` that was never
+    // imported, so its system message has never been sent. Importing the bare name would change
+    // what rooms see; that is a separate decision (see HARDENING_SCALE_PLAN LIVE-55).
+    getLiveStreamService as getStreamForOwnerCheck
 } from './serviceLive.js';
+import { rejectNotOwner } from '../../utils/ownershipCheck.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { roomPublicId } from './roomPublicId.js';
 import { client as redisClient } from '../../config/redis.js';
@@ -813,6 +818,15 @@ export const setupLiveSockets = (io) => {
         // Host toggles their camera ON/OFF state
         socket.on("toggle_camera_state", async ({ streamId, isCameraOn }) => {
             try {
+                // SEC-09: camera-off time is subtracted from the host's counted duration, so only
+                // the host may toggle it (ol_app only emits this from the host screens).
+                const streamObj = await getStreamForOwnerCheck({ id: streamId });
+                if (
+                    (!streamObj || streamObj.userId !== userId) &&
+                    rejectNotOwner("camera_toggle", `user=${userId} stream=${streamId} host=${streamObj?.userId ?? 'unknown'}`)
+                ) {
+                    return;
+                }
                 await handleCameraStateChangeService({ streamId, isCameraOn, userId });
                 broadcastToStream(streamId, "camera_state_changed", {
                     userId,

@@ -2,7 +2,15 @@ import { initiateCallSchema, acceptCallSchema, rejectCallSchema, endCallSchema, 
 import * as videoCallService from "./service.js";
 import prisma from "../../config/prisma.js";
 import jwt from "jsonwebtoken";
+import { WebhookReceiver } from "livekit-server-sdk";
 import { withGiftThumbnail } from "../../utils/giftImage.js";
+import { rejectNotOwner } from "../../utils/ownershipCheck.js";
+
+// SEC-07: LiveKit signs every webhook with the API key/secret (Authorization header).
+const webhookReceiver = new WebhookReceiver(
+    process.env.LIVEKIT_API_KEY || "devkey",
+    process.env.LIVEKIT_API_SECRET || "secret"
+);
 
 export const initiateCall = async (req, res) => {
     try {
@@ -52,6 +60,13 @@ export const getStatus = async (req, res) => {
         const sessionId = req.params.sessionId;
         const session = await videoCallService.getCallStatus(sessionId);
         if (!session) throw new Error("Session not found");
+        // SEC-10: only a participant may read a call's status (same 400 as an unknown id).
+        if (
+            !videoCallService.isCallParticipant(session, req.userId) &&
+            rejectNotOwner("call_status", `user=${req.userId} session=${sessionId}`)
+        ) {
+            throw new Error("Session not found");
+        }
         return res.status(200).json({ success: true, data: session });
     } catch (error) {
         return res.status(400).json({ success: false, message: error.message });
@@ -75,8 +90,16 @@ export const getCallSettings = async (req, res) => {
 export const heartbeat = async (req, res) => {
     try {
         const body = await heartbeatSchema.validateAsync(req.body);
-        const userId = req.user?.id || req.body?.userId;
-        videoCallService.recordHeartbeat(body.sessionId, userId);
+        // SEC-10: the user comes from the token (the old `req.user.id` never existed on the JWT
+        // payload, and the schema rejects a body userId), and must be in the call.
+        const participants = await videoCallService.getCallParticipants(body.sessionId);
+        if (
+            !videoCallService.isCallParticipant(participants, req.userId) &&
+            rejectNotOwner("call_heartbeat", `user=${req.userId} session=${body.sessionId}`)
+        ) {
+            return res.status(403).json({ success: false, message: "Not a participant of this call." });
+        }
+        videoCallService.recordHeartbeat(body.sessionId, req.userId);
         return res.status(200).json({ success: true, message: "Heartbeat received" });
     } catch (error) {
         return res.status(400).json({ success: false, message: error.message });
@@ -84,8 +107,17 @@ export const heartbeat = async (req, res) => {
 };
 
 export const livekitWebhook = async (req, res) => {
+    // SEC-07: verify LiveKit's signature over the raw body. The route mounts a raw parser; a
+    // body some other parser already consumed (e.g. application/json) can't be verified.
+    let event;
     try {
-        const event = req.body;
+        if (!Buffer.isBuffer(req.body)) throw new Error("raw body required");
+        event = await webhookReceiver.receive(req.body.toString("utf8"), req.get("Authorization"));
+    } catch (authErr) {
+        console.warn(`[LiveKit Webhook] rejected unsigned/invalid webhook: ${authErr.message}`);
+        return res.status(401).send("Unauthorized");
+    }
+    try {
         if (event && event.event === 'room_finished' && event.room?.name) {
             const session = await prisma.videoCallSession.findUnique({
                 where: { livekitRoom: event.room.name }
@@ -184,6 +216,14 @@ export const verifyFrame = async (req, res) => {
         const { sessionId, image } = req.body;
         if (!sessionId || !image) {
             return res.status(400).json({ success: false, message: "sessionId and image fields are required." });
+        }
+        // SEC-10: only a participant may submit frames (a BLOCK verdict ends the call).
+        const participants = await videoCallService.getCallParticipants(sessionId);
+        if (
+            !videoCallService.isCallParticipant(participants, req.userId) &&
+            rejectNotOwner("call_verify_frame", `user=${req.userId} session=${sessionId}`)
+        ) {
+            return res.status(403).json({ success: false, message: "Not a participant of this call." });
         }
 
         const result = await videoCallService.verifyCallFrame(sessionId, image);

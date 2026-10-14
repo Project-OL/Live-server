@@ -877,6 +877,29 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
     return updatedSession;
 };
 
+/**
+ * SEC-10: participants of a call, cached in-process. They never change after initiate, and the
+ * heartbeat (every few seconds per participant) must not cost a DB read each time.
+ */
+const participantCache = new Map();
+const PARTICIPANT_CACHE_MS = 60000;
+
+export const getCallParticipants = async (sessionId) => {
+    if (!sessionId) return null;
+    const hit = participantCache.get(sessionId);
+    if (hit && hit.exp > Date.now()) return hit.value;
+    const value = await prisma.videoCallSession.findUnique({
+        where: { id: sessionId },
+        select: { callerId: true, creatorId: true }
+    });
+    if (participantCache.size > 20000) participantCache.clear();
+    participantCache.set(sessionId, { value, exp: Date.now() + PARTICIPANT_CACHE_MS });
+    return value;
+};
+
+export const isCallParticipant = (participants, userId) =>
+    Boolean(participants && userId && (participants.callerId === userId || participants.creatorId === userId));
+
 export const getCallStatus = async (sessionId) => {
     return await prisma.videoCallSession.findUnique({
         where: { id: sessionId },

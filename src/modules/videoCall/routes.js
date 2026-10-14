@@ -1,4 +1,4 @@
-import { Router } from "express";
+import express, { Router } from "express";
 import * as controller from "./controller.js";
 import auth from "../../middlewares/authMiddleware.js";
 
@@ -32,6 +32,7 @@ router.post("/send-gift", auth, controller.sendGift);
 router.post("/translate", auth, controller.translateText);
 router.get("/gifts", auth, controller.getGifts);
 
-router.post("/webhook", controller.livekitWebhook);
+// SEC-07: raw body so the LiveKit signature can be checked (LiveKit sends application/webhook+json).
+router.post("/webhook", express.raw({ type: () => true, limit: "1mb" }), controller.livekitWebhook);
 
 export default router;

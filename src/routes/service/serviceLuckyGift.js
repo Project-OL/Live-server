@@ -47,8 +47,10 @@ export const sendLuckyGiftService = async ({
 }) => {
     // Fast pre-check only; re-checked under the wallet lock inside the tx.
     await checkCoinsFrozenFast(senderId);
-    if (clientTxId) {
-        const cachedTx = await redisClient.get(`lucky:idempotency:${clientTxId}`);
+    // SEC-11: scoped to the sender, so one user's clientTxId can never replay another's result.
+    const idemKey = clientTxId ? `lucky:idempotency:${senderId}:${clientTxId}` : null;
+    if (idemKey) {
+        const cachedTx = await redisClient.get(idemKey);
         if (cachedTx) {
             console.log(`[LuckyGift Service] Idempotent request hit for txId: ${clientTxId}`);
             return JSON.parse(cachedTx);
@@ -335,10 +337,10 @@ export const sendLuckyGiftService = async ({
         } : null
     };
 
-    if (clientTxId) {
+    if (idemKey) {
         // node-redis takes options as an object; the positional ioredis form
         // ('EX', 86400) silently left these replay snapshots without a TTL.
-        await redisClient.set(`lucky:idempotency:${clientTxId}`, JSON.stringify(resultPayload), { EX: 86400 });
+        await redisClient.set(idemKey, JSON.stringify(resultPayload), { EX: 86400 });
     }
 
     return resultPayload;
