@@ -14,10 +14,9 @@ import {
     sendStreamGiftService,
     handleCameraStateChangeService,
     endLiveStreamService,
-    // Aliased on purpose: `clear_chat` below calls a bare `getLiveStreamService` that was never
-    // imported, so its system message has never been sent. Importing the bare name would change
-    // what rooms see; that is a separate decision (see HARDENING_SCALE_PLAN LIVE-55).
-    getLiveStreamService as getStreamForOwnerCheck
+    // LIVE-55: `clear_chat` used this without importing it, so its "cleared all room messages"
+    // system message threw a ReferenceError and was never sent.
+    getLiveStreamService
 } from './serviceLive.js';
 import { rejectNotOwner } from '../../utils/ownershipCheck.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
@@ -820,7 +819,7 @@ export const setupLiveSockets = (io) => {
             try {
                 // SEC-09: camera-off time is subtracted from the host's counted duration, so only
                 // the host may toggle it (ol_app only emits this from the host screens).
-                const streamObj = await getStreamForOwnerCheck({ id: streamId });
+                const streamObj = await getLiveStreamService({ id: streamId });
                 if (
                     (!streamObj || streamObj.userId !== userId) &&
                     rejectNotOwner("camera_toggle", `user=${userId} stream=${streamId} host=${streamObj?.userId ?? 'unknown'}`)

@@ -1,8 +1,10 @@
 import jwt from "jsonwebtoken";
 import { AppError } from "./errorHandler.js";
 import {
-    resolveUserTokenVersion,
-    sessionService,
+    checkAccessPayload,
+    recordSessionCheck,
+    sessionCheckMode,
+    shouldLogRejection,
 } from "../services/session.service.js";
 
 export const authenticate = async (req, res, next) => {
@@ -28,13 +30,22 @@ export const authenticate = async (req, res, next) => {
         }
 
 
-        if (payload.sessionId) {
-            const sessionTokenVersion = payload.sessionTokenVersion || 0;
-            await sessionService.validateAccessSession(
-                payload.sessionId,
-                sessionTokenVersion,
-                userId
-            );
+        // SEC-14: tokens ol-node-rest revoked (ban, logout, password reset, device ban).
+        // A failure to check (DB/Redis error) never locks users out; it is counted instead.
+        let verdict;
+        try {
+            verdict = await checkAccessPayload(payload);
+        } catch (checkErr) {
+            verdict = { ok: true };
+            recordSessionCheck("rest", { ok: false, code: "CHECK_ERROR" });
+            console.error(`[Session Check] error for user ${userId}: ${checkErr.message}`);
+        }
+        recordSessionCheck("rest", verdict);
+        if (!verdict.ok) {
+            if (shouldLogRejection(userId)) console.warn(`[Session Check] would reject user ${userId} ${verdict.code} (mode=${sessionCheckMode()}) ${req.method} ${req.originalUrl}`);
+            if (sessionCheckMode() === "enforce") {
+                return next(new AppError(verdict.statusCode, verdict.message, verdict.code));
+            }
         }
 
         req.user = payload;

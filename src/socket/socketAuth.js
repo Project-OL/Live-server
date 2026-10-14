@@ -1,4 +1,10 @@
 import jwt from "jsonwebtoken";
+import {
+    checkAccessPayload,
+    recordSessionCheck,
+    sessionCheckMode,
+    shouldLogRejection
+} from "../services/session.service.js";
 
 /**
  * Socket.io authentication (SEC-05).
@@ -98,8 +104,14 @@ const bump = (key) => {
     }
 };
 
+// Swappable in unit tests (the real check reads Redis / Postgres).
+let sessionChecker = checkAccessPayload;
+export const setSessionCheckerForTests = (fn) => {
+    sessionChecker = fn || checkAccessPayload;
+};
+
 /** socket.io middleware: io.use(socketAuthMiddleware) before any connection handler. */
-export const socketAuthMiddleware = (socket, next) => {
+export const socketAuthMiddleware = async (socket, next) => {
     const mode = socketAuthMode();
     if (mode === "off") return next();
 
@@ -114,6 +126,28 @@ export const socketAuthMiddleware = (socket, next) => {
     }
     socket.data = socket.data || {};
     socket.data.authUserId = userId;
+
+    // SEC-14: a signature-valid token may still be revoked by ol-node-rest (ban, logout,
+    // password reset). Rejected only when both this mode and LIVE_SESSION_CHECK_MODE enforce.
+    if (userId) {
+        try {
+            const payload = jwt.decode(extractSocketToken(hs));
+            const verdict = await sessionChecker(payload);
+            recordSessionCheck("socket", verdict);
+            if (!verdict.ok) {
+                if (shouldLogRejection(userId)) {
+                    console.warn(`[Session Check] socket for user ${userId} ${verdict.code} (mode=${sessionCheckMode()})`);
+                }
+                if (mode === "enforce" && sessionCheckMode() === "enforce") {
+                    const err = new Error("unauthorized");
+                    err.data = { code: "SOCKET_UNAUTHORIZED", reason: verdict.code };
+                    return next(err);
+                }
+            }
+        } catch (checkErr) {
+            recordSessionCheck("socket", { ok: false, code: "CHECK_ERROR" });
+        }
+    }
 
     if (mode === "log") return next();
 

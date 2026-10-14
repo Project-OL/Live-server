@@ -5,6 +5,7 @@ import {
     EXPIRED_GRACE_SEC,
     extractSocketToken,
     socketAuthMiddleware,
+    setSessionCheckerForTests,
     verifySocketToken,
 } from "./socketAuth.js";
 
@@ -45,45 +46,92 @@ test("forged token is invalid", () => {
     assert.equal(verifySocketToken({ auth: { token: t } }, SECRET, NOW).outcome, "invalid");
 });
 
-const run = (handshake) => {
+// The session-revocation check (SEC-14) reads Redis/Postgres; stub it per test.
+setSessionCheckerForTests(async () => ({ ok: true }));
+
+const run = async (handshake) => {
     const socket = { handshake, data: {} };
     let err = "not-called";
-    socketAuthMiddleware(socket, (e) => { err = e; });
+    await socketAuthMiddleware(socket, (e) => { err = e; });
     return { socket, err };
 };
 
-test("log mode never rejects and keeps the claimed userId", () => {
+test("log mode never rejects and keeps the claimed userId", async () => {
     const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
-    const { socket, err } = run({ auth: { token: t, userId: "claimed" }, query: { userId: "claimed" } });
+    const { socket, err } = await run({ auth: { token: t, userId: "claimed" }, query: { userId: "claimed" } });
     assert.equal(err, undefined);
     assert.equal(socket.handshake.query.userId, "claimed");
     assert.equal(socket.data.authUserId, "real");
 });
 
-test("log mode lets a socket without a token through", () => {
-    const { err } = run({ query: { userId: "x" } });
+test("log mode lets a socket without a token through", async () => {
+    const { err } = await run({ query: { userId: "x" } });
     assert.equal(err, undefined);
 });
 
-test("enforce mode rejects a socket without a valid token", () => {
+test("enforce mode rejects a socket without a valid token", async () => {
     process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
-    const { err } = run({ query: { userId: "x" } });
+    const { err } = await run({ query: { userId: "x" } });
     assert.ok(err instanceof Error);
     assert.equal(err.data.code, "SOCKET_UNAUTHORIZED");
 });
 
-test("enforce mode replaces the claimed userId with the token's", () => {
+test("enforce mode replaces the claimed userId with the token's", async () => {
     process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
     const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
-    const { socket, err } = run({ auth: { token: t, userId: "victim" }, query: { userId: "victim" } });
+    const { socket, err } = await run({ auth: { token: t, userId: "victim" }, query: { userId: "victim" } });
     assert.equal(err, undefined);
     assert.equal(socket.handshake.auth.userId, "real");
     assert.equal(socket.handshake.query.userId, "real");
 });
 
-test("off mode does nothing", () => {
+test("off mode does nothing", async () => {
     process.env.LIVE_SOCKET_AUTH_MODE = "off";
-    const { socket, err } = run({ query: { userId: "x" } });
+    const { socket, err } = await run({ query: { userId: "x" } });
     assert.equal(err, undefined);
     assert.equal(socket.data.authUserId, undefined);
+});
+
+const revoked = async () => ({ ok: false, statusCode: 401, code: "SESSION_INVALID", message: "Session revoked." });
+
+test("SEC-14: a revoked token is let through while LIVE_SESSION_CHECK_MODE=log", async () => {
+    process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
+    delete process.env.LIVE_SESSION_CHECK_MODE;
+    setSessionCheckerForTests(revoked);
+    try {
+        const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
+        const { err } = await run({ auth: { token: t } });
+        assert.equal(err, undefined);
+    } finally {
+        setSessionCheckerForTests(async () => ({ ok: true }));
+    }
+});
+
+test("SEC-14: a revoked token is rejected when both modes enforce", async () => {
+    process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
+    process.env.LIVE_SESSION_CHECK_MODE = "enforce";
+    setSessionCheckerForTests(revoked);
+    try {
+        const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
+        const { err } = await run({ auth: { token: t } });
+        assert.ok(err instanceof Error);
+        assert.equal(err.data.reason, "SESSION_INVALID");
+    } finally {
+        delete process.env.LIVE_SESSION_CHECK_MODE;
+        setSessionCheckerForTests(async () => ({ ok: true }));
+    }
+});
+
+test("SEC-14: a checker error never rejects the socket", async () => {
+    process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
+    process.env.LIVE_SESSION_CHECK_MODE = "enforce";
+    setSessionCheckerForTests(async () => { throw new Error("redis down"); });
+    try {
+        const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
+        const { err } = await run({ auth: { token: t } });
+        assert.equal(err, undefined);
+    } finally {
+        delete process.env.LIVE_SESSION_CHECK_MODE;
+        setSessionCheckerForTests(async () => ({ ok: true }));
+    }
 });
