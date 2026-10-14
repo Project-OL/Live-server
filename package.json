@@ -7,7 +7,9 @@
   "scripts": {
     "dev": "nodemon server.js",
     "test": "nodemon server.js",
-    "test:unit": "node --test \"src/**/*.test.js\"",
+    "test:unit": "node --test \"src/**/*.test.js\" \"scripts/**/*.test.js\"",
+    "contract:record": "node scripts/contract/run.mjs record",
+    "contract:check": "node scripts/contract/run.mjs check",
     "kill-port": "kill-port $PORT",
     "start": "node server.js",
     "postinstall": "prisma generate",

@@ -1,0 +1,2801 @@
+{
+  "recordedAt": "2026-10-14T10:17:50.930Z",
+  "against": "https://live-staging.offoolive.com",
+  "contracts": {
+    "GET /live-stream/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "title": {
+                "types": [
+                  "string"
+                ]
+              },
+              "heading": {
+                "types": [
+                  "string"
+                ]
+              },
+              "coverImageUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamKey": {
+                "types": [
+                  "string"
+                ]
+              },
+              "isLive": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "updatedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "acceptVideoCalls": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isVideoCallEnabled": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "videoCallPricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "videoCallCoinsPerMin": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          },
+          "viewerCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "viewers": {
+            "types": [
+              "array"
+            ]
+          },
+          "host": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "publicId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "name": {
+                "types": [
+                  "string"
+                ]
+              },
+              "username": {
+                "types": [
+                  "string"
+                ]
+              },
+              "avatarUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "wealthLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "livestreamLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "acceptVideoCalls": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isVideoCallEnabled": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "videoCallPricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "videoCallCoinsPerMin": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          },
+          "acceptVideoCalls": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "isVideoCallEnabled": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "videoCallPricePerMin": {
+            "types": [
+              "number"
+            ]
+          },
+          "videoCallCoinsPerMin": {
+            "types": [
+              "number"
+            ]
+          },
+          "isPasswordProtected": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "micPermissionRequired": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "chatPermissionMode": {
+            "types": [
+              "string"
+            ]
+          },
+          "sheetUsers": {
+            "types": [
+              "array"
+            ]
+          }
+        }
+      }
+    },
+    "GET /live-stream/:id/messages": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "array"
+            ],
+            "items": {
+              "types": [
+                "object"
+              ],
+              "props": {
+                "id": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "streamId": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "senderId": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "message": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "replyToMessageId": {
+                  "types": [
+                    "null"
+                  ]
+                },
+                "replyToUserId": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "replyToUsername": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "messageType": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "isLuckyGift": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "giftId": {
+                  "types": [
+                    "null"
+                  ]
+                },
+                "giftCount": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "createdAt": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "sender": {
+                  "types": [
+                    "object"
+                  ],
+                  "props": {
+                    "id": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "publicId": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "username": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "avatarUrl": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "wealthLevel": {
+                      "types": [
+                        "number"
+                      ]
+                    },
+                    "livestreamLevel": {
+                      "types": [
+                        "number"
+                      ]
+                    },
+                    "isMystery": {
+                      "types": [
+                        "boolean"
+                      ],
+                      "optional": true
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/fans-ranking/:hostId": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "period": {
+            "types": [
+              "string"
+            ]
+          },
+          "hostId": {
+            "types": [
+              "string"
+            ]
+          },
+          "rankings": {
+            "types": [
+              "array"
+            ]
+          },
+          "myRank": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "rank": {
+                "types": [
+                  "null"
+                ]
+              },
+              "coins": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/follow-check/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "isFollowing": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "GET /live-stream/gift-gallery/targets": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "year": {
+                "types": [
+                  "number"
+                ]
+              },
+              "month": {
+                "types": [
+                  "number"
+                ]
+              },
+              "totalTarget": {
+                "types": [
+                  "number"
+                ]
+              },
+              "currentProgress": {
+                "types": [
+                  "number"
+                ]
+              },
+              "gifts": {
+                "types": [
+                  "array"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/gifts": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "array"
+            ],
+            "items": {
+              "types": [
+                "object"
+              ],
+              "props": {
+                "id": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "name": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "coinCost": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "displayImageUrl": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "thumbnailUrl": {
+                  "types": [
+                    "null"
+                  ]
+                },
+                "effectUrl": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "vapUrl": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "isLucky": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "isActive": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "createdAt": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "updatedAt": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "code": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "category_id": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "display_order": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "vip_only": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "gift_categories": {
+                  "types": [
+                    "null",
+                    "object"
+                  ],
+                  "props": {
+                    "id": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "slug": {
+                      "types": [
+                        "string"
+                      ]
+                    }
+                  }
+                },
+                "fullImageUrl": {
+                  "types": [
+                    "string"
+                  ]
+                }
+              }
+            }
+          },
+          "pagination": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "page": {
+                "types": [
+                  "number"
+                ]
+              },
+              "limit": {
+                "types": [
+                  "number"
+                ]
+              },
+              "total": {
+                "types": [
+                  "number"
+                ]
+              },
+              "totalPages": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/host-stats": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "todayData": {
+                "types": [
+                  "object"
+                ],
+                "props": {
+                  "hostPublicId": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "liveHoursSeconds": {
+                    "types": [
+                      "number"
+                    ]
+                  },
+                  "liveHoursFormatted": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "wonPoints": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "newFollowers": {
+                    "types": [
+                      "number"
+                    ]
+                  },
+                  "pkWon": {
+                    "types": [
+                      "number"
+                    ]
+                  },
+                  "lastLive": {
+                    "types": [
+                      "object"
+                    ],
+                    "props": {
+                      "streamId": {
+                        "types": [
+                          "string"
+                        ]
+                      },
+                      "liveHoursSeconds": {
+                        "types": [
+                          "number"
+                        ]
+                      },
+                      "liveHoursFormatted": {
+                        "types": [
+                          "string"
+                        ]
+                      },
+                      "wonPoints": {
+                        "types": [
+                          "string"
+                        ]
+                      },
+                      "newFollowers": {
+                        "types": [
+                          "number"
+                        ]
+                      },
+                      "pkWon": {
+                        "types": [
+                          "number"
+                        ]
+                      },
+                      "endedAt": {
+                        "types": [
+                          "string"
+                        ]
+                      }
+                    }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/list": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "array"
+            ]
+          },
+          "pagination": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "page": {
+                "types": [
+                  "number"
+                ]
+              },
+              "limit": {
+                "types": [
+                  "number"
+                ]
+              },
+              "totalPages": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/list (no auth)": {
+      "status": 401,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "statusCode": {
+            "types": [
+              "number"
+            ]
+          },
+          "error": {
+            "types": [
+              "string"
+            ]
+          },
+          "code": {
+            "types": [
+              "string"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "GET /live-stream/my-photo": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "imageUrl": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "GET /live-stream/user/effect-settings": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "effectTopRunway": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "effectGift": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "effectLuckyGift": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "effectEntry": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "effectGlobal": {
+                "types": [
+                  "boolean"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /live-stream/wallet/balance": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "balance": {
+            "types": [
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "GET /users/me/restrictions": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "array"
+            ]
+          }
+        }
+      }
+    },
+    "GET /video-call/gifts": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "array"
+            ],
+            "items": {
+              "types": [
+                "object"
+              ],
+              "props": {
+                "id": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "name": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "coinCost": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "displayImageUrl": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "thumbnailUrl": {
+                  "types": [
+                    "null"
+                  ]
+                },
+                "effectUrl": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "vapUrl": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "isLucky": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "isActive": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "createdAt": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "updatedAt": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "code": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "category_id": {
+                  "types": [
+                    "null",
+                    "string"
+                  ]
+                },
+                "display_order": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "vip_only": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "gift_categories": {
+                  "types": [
+                    "null",
+                    "object"
+                  ],
+                  "props": {
+                    "id": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "name": {
+                      "types": [
+                        "string"
+                      ]
+                    },
+                    "slug": {
+                      "types": [
+                        "string"
+                      ]
+                    }
+                  }
+                },
+                "fullImageUrl": {
+                  "types": [
+                    "string"
+                  ]
+                }
+              }
+            }
+          },
+          "pagination": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "page": {
+                "types": [
+                  "number"
+                ]
+              },
+              "limit": {
+                "types": [
+                  "number"
+                ]
+              },
+              "total": {
+                "types": [
+                  "number"
+                ]
+              },
+              "totalPages": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /video-call/settings/:creatorId": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "pricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "callerRatePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "acceptVideoCalls": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isVideoCallEnabled": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isEligible": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "reason": {
+                "types": [
+                  "null"
+                ]
+              },
+              "callerWealthLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "callerCoins": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "GET /video-call/status/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "status": {
+                "types": [
+                  "string"
+                ]
+              },
+              "callerId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "creatorId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /live-stream/:id/message": {
+      "status": 201,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "senderId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "message": {
+                "types": [
+                  "string"
+                ]
+              },
+              "replyToMessageId": {
+                "types": [
+                  "null"
+                ]
+              },
+              "replyToUserId": {
+                "types": [
+                  "null"
+                ]
+              },
+              "replyToUsername": {
+                "types": [
+                  "null"
+                ]
+              },
+              "messageType": {
+                "types": [
+                  "string"
+                ]
+              },
+              "isLuckyGift": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "giftId": {
+                "types": [
+                  "null"
+                ]
+              },
+              "giftCount": {
+                "types": [
+                  "number"
+                ]
+              },
+              "createdAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "sender": {
+                "types": [
+                  "object"
+                ],
+                "props": {
+                  "id": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "publicId": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "username": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "avatarUrl": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "wealthLevel": {
+                    "types": [
+                      "number"
+                    ]
+                  },
+                  "livestreamLevel": {
+                    "types": [
+                      "number"
+                    ]
+                  },
+                  "isMystery": {
+                    "types": [
+                      "boolean"
+                    ]
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /live-stream/end/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "title": {
+                "types": [
+                  "string"
+                ]
+              },
+              "heading": {
+                "types": [
+                  "string"
+                ]
+              },
+              "coverImageUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamKey": {
+                "types": [
+                  "string"
+                ]
+              },
+              "playbackId": {
+                "types": [
+                  "null"
+                ]
+              },
+              "isLive": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "effectiveDurationSeconds": {
+                "types": [
+                  "number"
+                ]
+              },
+              "createdAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "updatedAt": {
+                "types": [
+                  "string"
+                ]
+              }
+            }
+          },
+          "summary": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "host": {
+                "types": [
+                  "object"
+                ],
+                "props": {
+                  "id": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "name": {
+                    "types": [
+                      "string"
+                    ]
+                  },
+                  "avatarUrl": {
+                    "types": [
+                      "string"
+                    ]
+                  }
+                }
+              },
+              "durationSeconds": {
+                "types": [
+                  "number"
+                ]
+              },
+              "durationFormatted": {
+                "types": [
+                  "string"
+                ]
+              },
+              "wonPoints": {
+                "types": [
+                  "number"
+                ]
+              },
+              "newFollowersCount": {
+                "types": [
+                  "number"
+                ]
+              },
+              "totalAudiencesCount": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /live-stream/go-live": {
+      "status": 201,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "title": {
+                "types": [
+                  "string"
+                ]
+              },
+              "heading": {
+                "types": [
+                  "string"
+                ]
+              },
+              "coverImageUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamKey": {
+                "types": [
+                  "string"
+                ]
+              },
+              "isLive": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "updatedAt": {
+                "types": [
+                  "string"
+                ]
+              }
+            }
+          },
+          "token": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "POST /live-stream/heartbeat": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "timestamp": {
+            "types": [
+              "number"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "POST /live-stream/join/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "mode": {
+            "types": [
+              "string"
+            ]
+          },
+          "token": {
+            "types": [
+              "string"
+            ]
+          },
+          "hlsUrl": {
+            "types": [
+              "null"
+            ]
+          },
+          "stream": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "title": {
+                "types": [
+                  "string"
+                ]
+              },
+              "heading": {
+                "types": [
+                  "string"
+                ]
+              },
+              "coverImageUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "streamKey": {
+                "types": [
+                  "string"
+                ]
+              },
+              "isLive": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "null"
+                ]
+              },
+              "createdAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "updatedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "acceptVideoCalls": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isVideoCallEnabled": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "videoCallPricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "videoCallCoinsPerMin": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          },
+          "viewerCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "viewers": {
+            "types": [
+              "array"
+            ],
+            "items": {
+              "types": [
+                "object"
+              ],
+              "props": {
+                "id": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "publicId": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "name": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "username": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "avatarUrl": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "gender": {
+                  "types": [
+                    "string"
+                  ]
+                },
+                "age": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "isAdmin": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "isGuardian": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "isVip": {
+                  "types": [
+                    "boolean"
+                  ]
+                },
+                "coins7d": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "wealthLevel": {
+                  "types": [
+                    "number"
+                  ]
+                },
+                "livestreamLevel": {
+                  "types": [
+                    "number"
+                  ]
+                }
+              }
+            }
+          },
+          "host": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "userId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "publicId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "name": {
+                "types": [
+                  "string"
+                ]
+              },
+              "username": {
+                "types": [
+                  "string"
+                ]
+              },
+              "avatarUrl": {
+                "types": [
+                  "string"
+                ]
+              },
+              "wealthLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "livestreamLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "acceptVideoCalls": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "isVideoCallEnabled": {
+                "types": [
+                  "boolean"
+                ]
+              },
+              "videoCallPricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "videoCallCoinsPerMin": {
+                "types": [
+                  "number"
+                ]
+              }
+            }
+          },
+          "micPermissionRequired": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "chatPermissionMode": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "POST /live-stream/leave/:id": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "viewerCount": {
+            "types": [
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "POST /video-call/end": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "callerId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "creatorId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "livekitRoom": {
+                "types": [
+                  "string"
+                ]
+              },
+              "pricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "status": {
+                "types": [
+                  "string"
+                ]
+              },
+              "minsCharged": {
+                "types": [
+                  "number"
+                ]
+              },
+              "coinsDeducted": {
+                "types": [
+                  "number"
+                ]
+              },
+              "pointsAwarded": {
+                "types": [
+                  "number"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endReason": {
+                "types": [
+                  "string"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /video-call/heartbeat": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "POST /video-call/initiate": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "callerId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "creatorId": {
+                "types": [
+                  "string"
+                ]
+              },
+              "livekitRoom": {
+                "types": [
+                  "string"
+                ]
+              },
+              "pricePerMin": {
+                "types": [
+                  "number"
+                ]
+              },
+              "status": {
+                "types": [
+                  "string"
+                ]
+              },
+              "minsCharged": {
+                "types": [
+                  "number"
+                ]
+              },
+              "coinsDeducted": {
+                "types": [
+                  "number"
+                ]
+              },
+              "pointsAwarded": {
+                "types": [
+                  "number"
+                ]
+              },
+              "startedAt": {
+                "types": [
+                  "string"
+                ]
+              },
+              "endedAt": {
+                "types": [
+                  "null"
+                ]
+              },
+              "endReason": {
+                "types": [
+                  "null"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "POST /video-call/reject": {
+      "status": 200,
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "success": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          },
+          "data": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "success": {
+                "types": [
+                  "boolean"
+                ]
+              }
+            }
+          }
+        }
+      }
+    },
+    "socket:host:CALL_INCOMING": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "sessionId": {
+            "types": [
+              "string"
+            ]
+          },
+          "callerId": {
+            "types": [
+              "string"
+            ]
+          },
+          "callerPublicId": {
+            "types": [
+              "number"
+            ]
+          },
+          "livekitRoom": {
+            "types": [
+              "string"
+            ]
+          },
+          "callerName": {
+            "types": [
+              "string"
+            ]
+          },
+          "callerAvatar": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:CALL_MISSED": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "sessionId": {
+            "types": [
+              "string"
+            ]
+          },
+          "reason": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:camera_state_changed": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "isCameraOn": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:chat_cleared": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "clearedAt": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:new_message": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "id": {
+            "types": [
+              "string"
+            ]
+          },
+          "streamId": {
+            "types": [
+              "string"
+            ]
+          },
+          "senderId": {
+            "types": [
+              "string"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          },
+          "replyToMessageId": {
+            "types": [
+              "null"
+            ]
+          },
+          "replyToUserId": {
+            "types": [
+              "null",
+              "string"
+            ]
+          },
+          "replyToUsername": {
+            "types": [
+              "null",
+              "string"
+            ]
+          },
+          "messageType": {
+            "types": [
+              "string"
+            ]
+          },
+          "isLuckyGift": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "giftId": {
+            "types": [
+              "null"
+            ]
+          },
+          "giftCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "createdAt": {
+            "types": [
+              "string"
+            ]
+          },
+          "sender": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "publicId": {
+                "types": [
+                  "string"
+                ],
+                "optional": true
+              },
+              "username": {
+                "types": [
+                  "string"
+                ]
+              },
+              "name": {
+                "types": [
+                  "string"
+                ]
+              },
+              "avatarUrl": {
+                "types": [
+                  "null",
+                  "string"
+                ]
+              },
+              "wealthLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "livestreamLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "isMystery": {
+                "types": [
+                  "boolean"
+                ],
+                "optional": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "socket:host:sheet_mute_changed": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "isMuted": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:sheet_request_received": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "name": {
+            "types": [
+              "string"
+            ]
+          },
+          "username": {
+            "types": [
+              "string"
+            ]
+          },
+          "isAdminRequest": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "isMystery": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:stream_ended": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "streamId": {
+            "types": [
+              "string"
+            ]
+          },
+          "host": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "name": {
+                "types": [
+                  "string"
+                ]
+              },
+              "avatarUrl": {
+                "types": [
+                  "string"
+                ]
+              }
+            }
+          },
+          "durationSeconds": {
+            "types": [
+              "number"
+            ]
+          },
+          "durationFormatted": {
+            "types": [
+              "string"
+            ]
+          },
+          "wonPoints": {
+            "types": [
+              "number"
+            ]
+          },
+          "newFollowersCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "totalAudiencesCount": {
+            "types": [
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:user_joined": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "publicId": {
+            "types": [
+              "string"
+            ]
+          },
+          "name": {
+            "types": [
+              "string"
+            ]
+          },
+          "username": {
+            "types": [
+              "string"
+            ]
+          },
+          "viewerCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "ride": {
+            "types": [
+              "null"
+            ]
+          },
+          "wealthLevel": {
+            "types": [
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:user_joined_sheet": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "publicId": {
+            "types": [
+              "string"
+            ]
+          },
+          "name": {
+            "types": [
+              "string"
+            ]
+          },
+          "username": {
+            "types": [
+              "string"
+            ]
+          },
+          "isMuted": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "isMystery": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:host:user_left_sheet": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:CALL_REJECTED": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "sessionId": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:chat_cleared": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "clearedAt": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:new_message": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "id": {
+            "types": [
+              "string"
+            ]
+          },
+          "streamId": {
+            "types": [
+              "string"
+            ]
+          },
+          "senderId": {
+            "types": [
+              "string"
+            ]
+          },
+          "message": {
+            "types": [
+              "string"
+            ]
+          },
+          "replyToMessageId": {
+            "types": [
+              "null"
+            ]
+          },
+          "replyToUserId": {
+            "types": [
+              "null",
+              "string"
+            ]
+          },
+          "replyToUsername": {
+            "types": [
+              "null",
+              "string"
+            ]
+          },
+          "messageType": {
+            "types": [
+              "string"
+            ]
+          },
+          "isLuckyGift": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "giftId": {
+            "types": [
+              "null"
+            ]
+          },
+          "giftCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "createdAt": {
+            "types": [
+              "string"
+            ]
+          },
+          "sender": {
+            "types": [
+              "object"
+            ],
+            "props": {
+              "id": {
+                "types": [
+                  "string"
+                ]
+              },
+              "publicId": {
+                "types": [
+                  "string"
+                ],
+                "optional": true
+              },
+              "username": {
+                "types": [
+                  "string"
+                ]
+              },
+              "name": {
+                "types": [
+                  "string"
+                ]
+              },
+              "avatarUrl": {
+                "types": [
+                  "null",
+                  "string"
+                ]
+              },
+              "wealthLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "livestreamLevel": {
+                "types": [
+                  "number"
+                ]
+              },
+              "isMystery": {
+                "types": [
+                  "boolean"
+                ],
+                "optional": true
+              }
+            }
+          }
+        }
+      }
+    },
+    "socket:viewer:sheet_mute_changed": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "isMuted": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:sheet_request_accepted": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "streamId": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:user_joined": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "publicId": {
+            "types": [
+              "string"
+            ]
+          },
+          "name": {
+            "types": [
+              "string"
+            ]
+          },
+          "username": {
+            "types": [
+              "string"
+            ]
+          },
+          "viewerCount": {
+            "types": [
+              "number"
+            ]
+          },
+          "ride": {
+            "types": [
+              "null"
+            ]
+          },
+          "wealthLevel": {
+            "types": [
+              "number"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:user_joined_sheet": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          },
+          "publicId": {
+            "types": [
+              "string"
+            ]
+          },
+          "name": {
+            "types": [
+              "string"
+            ]
+          },
+          "username": {
+            "types": [
+              "string"
+            ]
+          },
+          "isMuted": {
+            "types": [
+              "boolean"
+            ]
+          },
+          "isMystery": {
+            "types": [
+              "boolean"
+            ]
+          }
+        }
+      }
+    },
+    "socket:viewer:user_left_sheet": {
+      "shape": {
+        "types": [
+          "object"
+        ],
+        "props": {
+          "userId": {
+            "types": [
+              "string"
+            ]
+          }
+        }
+      }
+    }
+  }
+}
