@@ -4,8 +4,20 @@ import auth from "../../middlewares/authMiddleware.js";
 
 const router = Router();
 
-router.get("/test-users", controller.getTestUsers);
-router.post("/reset", controller.resetActiveCalls);
+/**
+ * SEC-06: local test-page helpers. /test-users mints a signed access token for every user it
+ * lists and /reset ends every ringing/active call, both without auth, so they are only
+ * registered when LIVE_ENABLE_TEST_ROUTES=true and never in production. ol_app does not call them.
+ */
+const testRoutesEnabled =
+    process.env.NODE_ENV !== "production" &&
+    String(process.env.LIVE_ENABLE_TEST_ROUTES || "").toLowerCase() === "true";
+
+if (testRoutesEnabled) {
+    console.warn("[SEC-06] Test routes /video-call/test-users and /video-call/reset are ENABLED (non-production only).");
+    router.get("/test-users", controller.getTestUsers);
+    router.post("/reset", controller.resetActiveCalls);
+}
 
 router.post("/initiate", auth, controller.initiateCall);
 router.post("/accept", auth, controller.acceptCall);
