@@ -23,6 +23,7 @@ import { getSheetUsersService, removeUserFromSheetService } from "../../routes/s
 import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
 import { giftImageFields } from "../../utils/giftImage.js";
 import { callLedger, ledgerMode, toLocalError } from "../../services/ledgerClient.js";
+import { unlinkByPattern } from "../../utils/redisScan.js";
 import {
     isLeader,
     onShutdown,
@@ -334,11 +335,9 @@ export const bustAgencyCommissionCaches = async (agencyUserId) => {
             `agency:dashboard:hosts:${agencyUserId}:*`,
             `agency:host:breakdown:${agencyUserId}:*`
         ];
+        // LIVE-32: SCAN + UNLINK (the epoch INCR above already makes stale snapshots miss).
         for (const pattern of patterns) {
-            const keys = await redisClient.keys(pattern);
-            if (keys && keys.length > 0) {
-                await redisClient.del(keys);
-            }
+            await unlinkByPattern(pattern);
         }
     } catch (e) {
         console.error("[Agency] Cache invalidation error:", e);
@@ -1654,7 +1653,19 @@ export const translateText = async (text, targetLanguage) => {
         };
         const target = langMap[targetLanguage.toLowerCase().trim()] || targetLanguage.trim();
 
+        // LIVE-39: chat repeats the same lines; cache Google's answer per (target, text) for 24 h
+        // (latency and per-character cost). A Redis failure just calls Google as before.
+        const cacheKey = `translate:${target}:${crypto.createHash("sha1").update(String(text)).digest("hex")}`;
+        if (redisClient.isOpen) {
+            try {
+                const hit = await redisClient.get(cacheKey);
+                if (hit !== null) return { translatedText: hit };
+            } catch { }
+        }
         const [translation] = await translateClient.translate(text, target);
+        if (redisClient.isOpen && typeof translation === "string") {
+            redisClient.set(cacheKey, translation, { EX: 86400 }).catch(() => { });
+        }
         return { translatedText: translation };
     } catch (error) {
         console.error("[Google Translate Error]:", error);

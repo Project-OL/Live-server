@@ -38,6 +38,8 @@ jobs:
           node-version: '22'
           cache: npm
       - run: npm ci
+      - name: Static checks (no Redis KEYS, wallet cache keys confined)
+        run: npm run check:redis-keys && npm run check:wallet-cache
       - name: Unit tests
         run: npm run test:unit
       - name: Push schema to the throwaway database

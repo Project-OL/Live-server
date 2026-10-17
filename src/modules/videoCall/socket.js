@@ -32,6 +32,8 @@ return 0`;
 /** 15s grace before a dropped participant's call is ended (durable: survives restarts). */
 const DISCONNECT_TIMER = "vc_disconnect";
 const DISCONNECT_GRACE_MS = 15000;
+/** user -> session of their pending disconnect grace (same 30 s TTL as `call:disconnect:<sid>:<uid>`). */
+const disconnectPointerKey = (userId) => `call:disconnect:user:${userId}`;
 
 registerDurableHandler(DISCONNECT_TIMER, async (key, payload) => {
     const sep = key.indexOf(":");
@@ -77,14 +79,14 @@ export const setupVideoCallSockets = (io) => {
                     .catch((err) => console.error("[VideoCall] user socket map set failed:", err.message));
             }
 
-            // Clear any pending video call disconnect timer on reconnect
+            // Clear any pending video call disconnect timer on reconnect.
+            // LIVE-32: read the per-user pointer instead of `KEYS call:disconnect:*:<uid>` on every
+            // socket connection (a user is in at most one active call).
             try {
                 if (redisClient.isOpen) {
-                    const keys = await redisClient.keys(`call:disconnect:*:${userId}`);
-                    if (keys && keys.length > 0) {
-                        for (const k of keys) {
-                            await redisClient.del(k).catch(() => { });
-                        }
+                    const sessionId = await redisClient.get(disconnectPointerKey(userId));
+                    if (sessionId) {
+                        await redisClient.del([`call:disconnect:${sessionId}:${userId}`, disconnectPointerKey(userId)]);
                         console.log(`[VideoCall Disconnect] User ${userId} reconnected. Cleared disconnect timer.`);
                     }
                 }
@@ -149,7 +151,10 @@ export const setupVideoCallSockets = (io) => {
                         console.warn(`[VideoCall Disconnect] Participant ${userId} disconnected from call ${sessionId}. Starting 15s grace timer.`);
 
                         if (redisClient.isOpen) {
-                            await redisClient.set(disconnectKey, disconnectedAt.toString(), { EX: 30 }).catch(() => { });
+                            await Promise.all([
+                                redisClient.set(disconnectKey, disconnectedAt.toString(), { EX: 30 }),
+                                redisClient.set(disconnectPointerKey(userId), sessionId, { EX: 30 })
+                            ]).catch(() => { });
                         }
 
                         await scheduleDurable(

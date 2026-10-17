@@ -4,6 +4,7 @@ import prisma from "../../config/prisma.js";
 import jwt from "jsonwebtoken";
 import { WebhookReceiver } from "livekit-server-sdk";
 import { withGiftThumbnail } from "../../utils/giftImage.js";
+import { getActiveGiftCatalogPage, GIFT_CATALOG_PAGE_SIZE } from "../../services/giftCatalog.service.js";
 import { rejectNotOwner } from "../../utils/ownershipCheck.js";
 
 // SEC-07: LiveKit signs every webhook with the API key/secret (Authorization header).
@@ -303,31 +304,13 @@ export const translateText = async (req, res) => {
 export const getGifts = async (req, res) => {
     try {
         const page = parseInt(req.query.page, 10) || 1;
-        const limit = 500;
-        const skip = (page - 1) * limit;
-
-        const [gifts, total] = await Promise.all([
-            prisma.gift.findMany({
-                where: { isActive: true },
-                include: {
-                    gift_categories: {
-                        select: {
-                            id: true,
-                            name: true,
-                            slug: true
-                        }
-                    }
-                },
-                orderBy: { coinCost: "asc" },
-                skip,
-                take: limit
-            }),
-            prisma.gift.count({ where: { isActive: true } })
-        ]);
+        const limit = GIFT_CATALOG_PAGE_SIZE;
+        // LIVE-37: cached catalogue (busted by ol-node-rest's gift edits).
+        const { data, total } = await getActiveGiftCatalogPage(page);
 
         return res.status(200).json({
             success: true,
-            data: gifts.map(withGiftThumbnail),
+            data,
             pagination: {
                 page,
                 limit,

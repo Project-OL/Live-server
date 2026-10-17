@@ -86,30 +86,65 @@ const SAFE_WORDS = new Set([
     "shut", "beach", "sheet", "came", "duck", "puck", "push", "dock", "much", "such", "rich"
 ]);
 
+/**
+ * LIVE-33: the fuzzy censor runs synchronously on the event loop for every chat and call message,
+ * comparing each word against every banned word with Levenshtein. Same verdicts as before, cheaper:
+ *  - banned words are lowercased once per word list (not per comparison);
+ *  - a pair is skipped when it can't reach the threshold: distance >= |len1 - len2|, so
+ *    similarity <= shorter / longer; if that bound is below the threshold the result is "no";
+ *  - verdicts are memoized per (word list, threshold, word), bounded, since chat repeats words.
+ */
+const preparedLists = new WeakMap();
+const VERDICT_CACHE_MAX = 5000;
+
+const prepareList = (bannedWords, threshold) => {
+    let prepared = preparedLists.get(bannedWords);
+    if (!prepared) {
+        prepared = { words: bannedWords.map((b) => String(b.word ?? "").toLowerCase()), verdicts: new Map() };
+        preparedLists.set(bannedWords, prepared);
+    }
+    let byThreshold = prepared.verdicts.get(threshold);
+    if (!byThreshold) {
+        byThreshold = new Map();
+        prepared.verdicts.set(threshold, byThreshold);
+    }
+    return { words: prepared.words, verdicts: byThreshold };
+};
+
+const isBannedWord = (lowerPart, words, threshold) => {
+    for (const w of words) {
+        const longer = Math.max(lowerPart.length, w.length);
+        if (longer === 0) return 1.0 >= threshold;
+        // Upper bound of getSimilarity for this pair; exact pruning, never changes a verdict.
+        if (Math.min(lowerPart.length, w.length) / longer < threshold) continue;
+        if (getSimilarity(lowerPart, w) >= threshold) return true;
+    }
+    return false;
+};
+
 export function censorTextWithFuzzyMatch(text, bannedWords, threshold = 0.7) {
     if (!text || typeof text !== "string") return text;
+    if (!Array.isArray(bannedWords) || bannedWords.length === 0) return text;
 
+    const { words, verdicts } = prepareList(bannedWords, threshold);
     const parts = text.split(/(\b)/g);
-    
+
     const processedParts = parts.map(part => {
         if (!/^[a-zA-Z0-9\u0900-\u097F]+$/.test(part)) {
             return part;
         }
 
         const lowerPart = part.toLowerCase();
-        
+
         if (SAFE_WORDS.has(lowerPart)) {
             return part;
         }
-        
-        let isBanned = false;
-        
-        for (const banned of bannedWords) {
-            const similarity = getSimilarity(lowerPart, banned.word.toLowerCase());
-            if (similarity >= threshold) {
-                isBanned = true;
-                break;
-            }
+
+        let isBanned = verdicts.get(lowerPart);
+        if (isBanned === undefined) {
+            isBanned = isBannedWord(lowerPart, words, threshold);
+            if (verdicts.size >= VERDICT_CACHE_MAX) verdicts.clear();
+            verdicts.set(lowerPart, isBanned);
         }
 
         if (isBanned) {

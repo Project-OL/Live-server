@@ -46,6 +46,7 @@ import {
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
 import { withSheetPublicIds } from '../service/roomPublicId.js';
 import { withGiftThumbnail } from '../../utils/giftImage.js';
+import { getActiveGiftCatalogPage, GIFT_CATALOG_PAGE_SIZE } from '../../services/giftCatalog.service.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
 import {
     sendMessageService,
@@ -919,31 +920,13 @@ const setChatPermission = async (req, res) => {
 const getGifts = async (req, res) => {
     try {
         const page = parseInt(req.query.page, 10) || 1;
-        const limit = 500;
-        const skip = (page - 1) * limit;
-
-        const [gifts, total] = await Promise.all([
-            prisma.gift.findMany({
-                where: { isActive: true },
-                include: {
-                    gift_categories: {
-                        select: {
-                            id: true,
-                            name: true,
-                            slug: true
-                        }
-                    }
-                },
-                orderBy: { coinCost: "asc" },
-                skip,
-                take: limit
-            }),
-            prisma.gift.count({ where: { isActive: true } })
-        ]);
+        const limit = GIFT_CATALOG_PAGE_SIZE;
+        // LIVE-37: cached catalogue (busted by ol-node-rest's gift edits).
+        const { data, total } = await getActiveGiftCatalogPage(page);
 
         return res.status(200).json({
             success: true,
-            data: gifts.map(withGiftThumbnail),
+            data,
             pagination: {
                 page,
                 limit,

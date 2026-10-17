@@ -11,6 +11,7 @@ import {
     updateUserLevel,
 } from '../../modules/videoCall/service.js';
 import { callLedger, ledgerMode, toLocalError } from '../../services/ledgerClient.js';
+import { scanKeys } from '../../utils/redisScan.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
@@ -635,9 +636,10 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
             };
         }
 
+        // Only hosts that are live right now (bounded by live streams, one query).
         const hostUserIds = [...new Set(allActiveStreams.map(s => s.userId).filter(Boolean))];
         const hostUsers = await prisma.user.findMany({
-            where: { id: { in: hostUserIds } },
+            where: { id: { in: hostUserIds }, lastLatitude: { not: null }, lastLongitude: { not: null } },
             select: { id: true, lastLatitude: true, lastLongitude: true }
         });
 
@@ -702,27 +704,31 @@ export const getLiveStreamsService = async ({ page = 1, limit = 20, country = nu
         }
         whereClause.userId = { in: followingIds };
     } else if (normCountry && !isGlobalOrRandom) {
-        const countryUsers = await prisma.user.findMany({
-            where: {
-                country: {
-                    equals: country.trim(),
-                    mode: 'insensitive'
-                }
-            },
-            select: { id: true }
-        });
-
-        const userIds = countryUsers.map(u => u.id);
-        if (userIds.length === 0) {
-            return {
-                streams: [],
-                total: 0,
-                page: pageNum,
-                limit: limitNum,
-                totalPages: 0
-            };
-        }
-        whereClause.userId = { in: userIds };
+        // LIVE-36: the old path loaded every user of the country into an IN (...) list. Join live
+        // streams to their hosts instead: work is bounded by live streams, not by country size.
+        // Ids come from the join (same filter, order and paging); rows come from Prisma so the
+        // response objects are exactly as before.
+        const c = country.trim();
+        const [idRows, countRows] = await Promise.all([
+            prisma.$queryRaw`
+                SELECT ls.id FROM live_streams ls JOIN users u ON u.id::text = ls.user_id::text
+                WHERE ls.is_live = true AND lower(u.country) = lower(${c})
+                ORDER BY ls.started_at DESC OFFSET ${skip} LIMIT ${limitNum}`,
+            prisma.$queryRaw`
+                SELECT count(*)::int AS n FROM live_streams ls JOIN users u ON u.id::text = ls.user_id::text
+                WHERE ls.is_live = true AND lower(u.country) = lower(${c})`
+        ]);
+        const total = countRows[0]?.n ?? 0;
+        const ids = idRows.map((r) => r.id);
+        const rows = ids.length ? await prisma.liveStream.findMany({ where: { id: { in: ids } } }) : [];
+        const byId = new Map(rows.map((r) => [r.id, r]));
+        return {
+            streams: ids.map((id) => byId.get(id)).filter(Boolean),
+            total,
+            page: pageNum,
+            limit: limitNum,
+            totalPages: Math.ceil(total / limitNum)
+        };
     }
 
     const [streams, total] = await Promise.all([
@@ -863,16 +869,8 @@ export const promoteDemoteAdminService = async ({ streamId, hostUserId = null, t
         resultStatus = true;
     }
 
-    if (redisClient.isOpen && streamId) {
-        try {
-            const keys = await redisClient.keys(`stream:viewers_sorted:${streamId}:*`);
-            if (keys && keys.length > 0) {
-                await redisClient.del(keys);
-            }
-        } catch (err) {
-            console.error("[Promote/Demote Admin Cache Clear Error]:", err.message);
-        }
-    }
+    // LIVE-32/40: retire the stream's cached viewer cards (isAdmin changed): one INCR, no KEYS.
+    await bumpViewerCardsEpoch(streamId);
 
     return resultStatus;
 };
@@ -1543,16 +1541,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         );
     }
 
-    if (redisClient.isOpen) {
-        try {
-            const keys = await redisClient.keys(`stream:viewers_sorted:${stream.streamId}:*`);
-            if (keys && keys.length > 0) {
-                await redisClient.del(keys);
-            }
-        } catch (err) {
-            console.error("[Stream Gift] viewer cache bust failed:", err.message);
-        }
-    }
+    // LIVE-32/40: the sender's 7-day total and level changed: retire the stream's viewer cards.
+    await bumpViewerCardsEpoch(stream.streamId);
 
     // Gift Gallery Progress for Receiver (Host)
     const galleryProgressUpdate = await processGiftGalleryProgress(gift.id, receiverId, senderId);
@@ -2464,17 +2454,87 @@ export const getFansRankingService = async ({ hostId, period = "today", currentU
     };
 };
 
+/**
+ * LIVE-40 / LIVE-32: viewer cards are cached per stream and per viewer, so a join or leave only
+ * fetches the newcomers (the old key was the full sorted id list: it almost never hit, and busting
+ * it needed `KEYS`). Each card is at most VIEWER_CARD_MAX_AGE_MS old, the same 60 s as before.
+ * Gifts and admin changes bump the stream's epoch (one INCR), which retires every cached card.
+ */
+const VIEWER_CARD_MAX_AGE_MS = 60_000;
+const viewerCardsEpochKey = (streamId) => `stream:viewer_cards_epoch:${streamId}`;
+const viewerCardsKey = (streamId, epoch) => `stream:viewer_cards:${streamId}:e${epoch}`;
+
+export const bumpViewerCardsEpoch = async (streamId) => {
+    if (!redisClient.isOpen || !streamId) return;
+    try {
+        const key = viewerCardsEpochKey(streamId);
+        await redisClient.incr(key);
+        await redisClient.expire(key, 86400);
+    } catch (err) {
+        console.error("[Viewer cards] epoch bump failed:", err.message);
+    }
+};
+
+const sortViewers = (viewers) =>
+    viewers.sort((a, b) => {
+        // Tier 1: 7-Day Top Gifters Coins (Highest first)
+        if (a.coins7d !== b.coins7d) return b.coins7d - a.coins7d;
+        // Tier 2: Host Guardian Status (Guardians first)
+        if (a.isGuardian !== b.isGuardian) return b.isGuardian ? 1 : -1;
+        // Tier 3: VIP Subscribed Status (VIPs first)
+        if (a.isVip !== b.isVip) return b.isVip ? 1 : -1;
+        // Tier 4: Wealth Level (Highest level first)
+        return b.wealthLevel - a.wealthLevel;
+    });
+
 export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds = [] }) => {
     if (!viewerIds || viewerIds.length === 0) return [];
+    const ids = [...new Set(viewerIds)];
 
-    const cacheKey = `stream:viewers_sorted:${streamId}:${[...viewerIds].sort().join(',')}`;
-    if (redisClient.isOpen) {
-        const cached = await redisClient.get(cacheKey);
-        if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
+    // Cached cards (fresh ones only); `hidden` marks stealth viewers so they aren't refetched.
+    const cards = new Map();
+    let cacheKey = null;
+    if (redisClient.isOpen && streamId) {
+        try {
+            const epoch = (await redisClient.get(viewerCardsEpochKey(streamId))) || "0";
+            cacheKey = viewerCardsKey(streamId, epoch);
+            const raw = await redisClient.hmGet(cacheKey, ids);
+            const now = Date.now();
+            raw.forEach((v, i) => {
+                if (!v) return;
+                try {
+                    const entry = JSON.parse(v);
+                    if (now - entry.at <= VIEWER_CARD_MAX_AGE_MS) cards.set(ids[i], entry.card);
+                } catch { }
+            });
+        } catch (err) {
+            console.error("[Viewer cards] cache read failed:", err.message);
+            cacheKey = null;
+        }
+    }
+    const missing = ids.filter((id) => !cards.has(id));
+    if (missing.length) {
+        const fetched = await buildViewerCards({ hostUserId, streamId, viewerIds: missing });
+        for (const id of missing) cards.set(id, fetched.get(id) ?? { hidden: true });
+        if (cacheKey) {
+            const at = Date.now();
+            const payload = {};
+            for (const id of missing) payload[id] = JSON.stringify({ at, card: cards.get(id) });
+            redisClient
+                .multi()
+                .hSet(cacheKey, payload)
+                .expire(cacheKey, 120)
+                .exec()
+                .catch((err) => console.error("[Viewer cards] cache write failed:", err.message));
         }
     }
 
+    // Same output as before: visible viewers, in viewerIds order, then sorted.
+    return sortViewers(ids.map((id) => cards.get(id)).filter((c) => c && !c.hidden));
+};
+
+/** DB read for the given viewers: Map(userId -> card); stealth viewers are left out. */
+const buildViewerCards = async ({ hostUserId, streamId, viewerIds }) => {
     const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
     const now = new Date();
 
@@ -2581,25 +2641,7 @@ export const sortRoomViewersService = async ({ hostUserId, streamId, viewerIds =
         };
     });
 
-    viewers.sort((a, b) => {
-        // Tier 1: 7-Day Top Gifters Coins (Highest first)
-        if (a.coins7d !== b.coins7d) return b.coins7d - a.coins7d;
-
-        // Tier 2: Host Guardian Status (Guardians first)
-        if (a.isGuardian !== b.isGuardian) return b.isGuardian ? 1 : -1;
-
-        // Tier 3: VIP Subscribed Status (VIPs first)
-        if (a.isVip !== b.isVip) return b.isVip ? 1 : -1;
-
-        // Tier 4: Wealth Level (Highest level first)
-        return b.wealthLevel - a.wealthLevel;
-    });
-
-    if (redisClient.isOpen && viewers.length > 0) {
-        await redisClient.set(cacheKey, JSON.stringify(viewers), { EX: 60 });
-    }
-
-    return viewers;
+    return new Map(viewers.map((v) => [v.id, v]));
 };
 
 export const getHostProfileService = async ({ hostUserId }) => {
@@ -2724,7 +2766,9 @@ export const getUserPrivacyService = async ({ userId }) => {
 export const cleanupStaleLiveStreamRedisKeys = async () => {
     if (!redisClient.isOpen) return { cleanedCount: 0 };
     try {
-        const activeUserKeys = await redisClient.keys("user:active_stream:*");
+        // LIVE-32: SCAN, not KEYS (non-blocking on the shared Redis).
+        const activeUserKeys = [];
+        for await (const key of scanKeys("user:active_stream:*")) activeUserKeys.push(key);
         let cleanedCount = 0;
 
         for (const key of activeUserKeys) {

@@ -1049,10 +1049,9 @@ export const broadcastToStream = (streamId, eventName, data) => {
         console.warn("[Socket] Socket.IO instance not initialized for live streaming!");
         return;
     }
+    // LIVE-34: sockets only ever join `user:<id>` and the bare stream id (join_stream), so the old
+    // second emit to `stream:<id>` reached no one and cost an extra Redis-adapter publish.
     ioInstance.to(streamId).emit(eventName, data);
-    if (!streamId.startsWith("stream:")) {
-        ioInstance.to(`stream:${streamId}`).emit(eventName, data);
-    }
 };
 
 export const broadcastGlobalMessage = async (eventName, data) => {

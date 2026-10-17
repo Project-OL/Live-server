@@ -79,6 +79,21 @@ export const removeSessionAlias = async (streamId, userId) => {
     }
 };
 
+/**
+ * The banned list plus "curve" (always censored, even before it is added in the DB). Memoized per
+ * list instance so the censor's per-list caches (LIVE-33) keep hitting across messages.
+ */
+const curveLists = new WeakMap();
+const withCurve = (bannedList) => {
+    let list = curveLists.get(bannedList);
+    if (!list) {
+        list = [...bannedList];
+        if (!list.some((b) => String(b.word ?? "").toLowerCase() === "curve")) list.push({ word: "curve" });
+        curveLists.set(bannedList, list);
+    }
+    return list;
+};
+
 export const sendMessageService = async ({
     streamId,
     senderId,
@@ -102,7 +117,14 @@ export const sendMessageService = async ({
     let targetLivestreamLevel = 0;
 
     if (senderId !== SYSTEM_SENDER_ID) {
-        const chatMute = await isUserRestrictedFast(senderId, 'LIVE_CHAT_MUTE');
+        // LIVE-35: the independent lookups run in two parallel rounds instead of ~8 serial awaits.
+        // Round 1 (gates): both restrictions + the room's chat mode; evaluated in the old order,
+        // so the same error wins when several apply.
+        const [chatMute, msgDisable, mode] = await Promise.all([
+            isUserRestrictedFast(senderId, 'LIVE_CHAT_MUTE'),
+            isUserRestrictedFast(senderId, 'MESSAGING_DISABLE'),
+            getChatPermissionService({ streamId })
+        ]);
         if (chatMute) {
             const formattedTime = new Date(chatMute.restrictedUntil).toLocaleString('en-IN', {
                 timeZone: 'Asia/Kolkata',
@@ -116,7 +138,6 @@ export const sendMessageService = async ({
             });
             throw new Error(`You are muted from sending chat messages until ${formattedTime}`);
         }
-        const msgDisable = await isUserRestrictedFast(senderId, 'MESSAGING_DISABLE');
         if (msgDisable) {
             const formattedTime = new Date(msgDisable.restrictedUntil).toLocaleString('en-IN', {
                 timeZone: 'Asia/Kolkata',
@@ -132,14 +153,15 @@ export const sendMessageService = async ({
         }
 
         // Validate chat permission
-        const mode = await getChatPermissionService({ streamId });
         if (mode !== "EVERYONE") {
-            const stream = await prisma.liveStream.findUnique({
-                where: { streamId },
-                select: { userId: true }
-            });
+            const [stream, isAdmin] = await Promise.all([
+                prisma.liveStream.findUnique({
+                    where: { streamId },
+                    select: { userId: true }
+                }),
+                isStreamAdminService({ streamId, userId: senderId })
+            ]);
             const isHost = stream && stream.userId === senderId;
-            const isAdmin = await isStreamAdminService({ streamId, userId: senderId });
 
             if (mode === "ALL_MUTED") {
                 if (!isHost) {
@@ -164,6 +186,29 @@ export const sendMessageService = async ({
             }
         }
 
+        // Round 2: sender card, levels, active bubble and the banned-word list, together.
+        const bubblePromise = prisma.userActiveStoreItems.findUnique({
+            where: {
+                userId_category: {
+                    userId: senderId,
+                    category: "CHAT_BUBBLE"
+                }
+            },
+            include: {
+                userStoreItem: {
+                    include: {
+                        storeItem: true
+                    }
+                }
+            }
+        }).catch((err) => {
+            console.error("[ChatBubble] Failed to load active chat bubble:", err);
+            return null;
+        });
+        const bannedPromise = getBannedWords().catch((err) => {
+            console.error("[Censor] Live chat message censoring failed:", err);
+            return null;
+        });
         const [dbUser, walletLevels] = await Promise.all([
             prisma.user.findUnique({
                 where: { id: senderId },
@@ -197,34 +242,17 @@ export const sendMessageService = async ({
 
         // Apply fuzzy censorship with 60% threshold
         try {
-            const bannedList = await getBannedWords();
-            // Guarantee "curve" is in the search list even if not in DB yet
-            const searchList = [...bannedList];
-            if (!searchList.some(b => b.word.toLowerCase() === 'curve')) {
-                searchList.push({ word: 'curve' });
+            const bannedList = await bannedPromise;
+            if (bannedList) {
+                filteredMessage = censorTextWithFuzzyMatch(message, withCurve(bannedList), 0.6);
             }
-            filteredMessage = censorTextWithFuzzyMatch(message, searchList, 0.6);
         } catch (err) {
             console.error("[Censor] Live chat message censoring failed:", err);
         }
 
-        // Fetch active CHAT_BUBBLE
+        // Active CHAT_BUBBLE (fetched in round 2)
         try {
-            const activeBubble = await prisma.userActiveStoreItems.findUnique({
-                where: {
-                    userId_category: {
-                        userId: senderId,
-                        category: "CHAT_BUBBLE"
-                    }
-                },
-                include: {
-                    userStoreItem: {
-                        include: {
-                            storeItem: true
-                        }
-                    }
-                }
-            });
+            const activeBubble = await bubblePromise;
 
             if (activeBubble && activeBubble.userStoreItem && activeBubble.userStoreItem.isActive) {
                 const expiresAt = new Date(activeBubble.userStoreItem.expiresAt);
@@ -292,8 +320,8 @@ export const sendMessageService = async ({
     };
 
     const listKey = `stream:chats:${streamId}`;
-    await redisClient.rPush(listKey, JSON.stringify(messageData));
-    await redisClient.lTrim(listKey, -200, -1);
+    // One round trip (MULTI): append and keep the last 200.
+    await redisClient.multi().rPush(listKey, JSON.stringify(messageData)).lTrim(listKey, -200, -1).exec();
 
     const isStealth = Boolean(user?.privacyMysteryLive && user?.vipSubscriptionActive);
     let stealthAliasObj = null;
