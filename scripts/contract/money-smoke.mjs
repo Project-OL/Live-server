@@ -113,6 +113,7 @@ const connect = (who, { token, userId }) =>
     new Promise((resolve, reject) => {
         const s = io(LIVE, { transports: ["websocket"], auth: { token, userId }, query: { userId }, reconnection: false });
         s.onAny((event, payload) => note(`socket:${who}:${event}`, undefined, payload ?? null));
+        s.on("disconnect", (reason) => { (values.disconnects ||= []).push(`${who}:${reason}`); });
         s.once("connect", () => resolve(s));
         s.once("connect_error", reject);
     });
@@ -170,7 +171,11 @@ try {
     await http("POST /live-stream/global-message", "POST", `${LIVE}/api/live-stream/global-message`, { ...V, body: { message: "money smoke", streamId: dbId } });
     await wait(2000);
 } finally {
-    await http(null, "POST", `${LIVE}/api/live-stream/end/${dbId}`, { ...H, body: {} });
+    const endRes = await http(null, "POST", `${LIVE}/api/live-stream/end/${dbId}`, { ...H, body: {} });
+    values.end = { status: endRes.status, message: endRes.json?.message ?? null, alreadyEnded: Boolean(endRes.json?.alreadyEnded) };
+    // stream_ended and the HTTP end response travel on different connections and arrive within
+    // milliseconds of each other; give the sockets a moment before closing them.
+    await wait(1500);
     hs.close();
     vs.close();
 }
