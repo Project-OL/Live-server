@@ -431,7 +431,53 @@ export const updateUserLevel = async (tx, userId, levelType, increment) => {
     return { newLevel, previousLevel: current.currentLevel, newCumulative };
 };
 
+/**
+ * LIVE-28: a short Redis lock on both users around the busy checks + session create, so a double tap
+ * (or a client retry) can't create two RINGING sessions. Owner-checked release; the TTL bounds a
+ * crash. Without Redis the old behaviour applies (DB checks only).
+ */
+const INITIATE_LOCK_MS = 5000;
+const initiateLockKey = (userId) => `vc:initiate:lock:${userId}`;
+
+const releaseInitiateLocks = async (keys, token) => {
+    if (!redisClient.isOpen) return;
+    for (const key of keys) {
+        try {
+            await redisClient.eval(
+                "if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end",
+                { keys: [key], arguments: [token] }
+            );
+        } catch {
+            // TTL clears it
+        }
+    }
+};
+
 export const initiateCall = async ({ callerId, creatorId }) => {
+    if (callerId === creatorId) throw new Error("You can't call yourself.");
+    if (!redisClient.isOpen) return initiateCallUnlocked({ callerId, creatorId });
+
+    const token = crypto.randomUUID();
+    const keys = [initiateLockKey(callerId), initiateLockKey(creatorId)];
+    const held = [];
+    try {
+        for (const [i, key] of keys.entries()) {
+            const ok = await redisClient.set(key, token, { NX: true, PX: INITIATE_LOCK_MS });
+            if (ok !== "OK") {
+                // Same answers the DB busy checks give a second, slower tap.
+                if (i === 0) throw new Error("You are already in an active call.");
+                emitToUser(callerId, "USER_BUSY", { creatorId });
+                throw new Error("Receiver is currently busy.");
+            }
+            held.push(key);
+        }
+        return await initiateCallUnlocked({ callerId, creatorId });
+    } finally {
+        await releaseInitiateLocks(held, token);
+    }
+};
+
+const initiateCallUnlocked = async ({ callerId, creatorId }) => {
     await checkCoinsFrozenFast(callerId);
 
     if (callerId === creatorId) throw new Error("You can't call yourself.");
@@ -661,8 +707,10 @@ export const acceptCall = async (sessionId, receiverId) => {
         // this transaction, unlocked, so a crash in between dropped it).
         const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
 
-        const updated = await tx.videoCallSession.update({
-            where: { id: sessionId },
+        // Conditional on RINGING: if an end, reject or timeout won the race, the whole minute-1
+        // charge rolls back instead of resurrecting an ended call (LIVE-26).
+        const { count } = await tx.videoCallSession.updateMany({
+            where: { id: sessionId, status: "RINGING" },
             data: {
                 status: "ACTIVE",
                 startedAt: new Date(),
@@ -671,6 +719,8 @@ export const acceptCall = async (sessionId, receiverId) => {
                 pointsAwarded: pointRate
             }
         });
+        if (count === 0) throw new Error("Invalid session or unauthorized.");
+        const updated = await tx.videoCallSession.findUnique({ where: { id: sessionId } });
 
         return { updatedSession: updated, agencyUserId: commRes ? commRes.agencyUserId : null };
     }, { timeout: 10000 });
@@ -805,40 +855,59 @@ export const rejectCall = async (sessionId, receiverId) => {
         throw new Error("Invalid session or unauthorized.");
     }
 
-    await prisma.videoCallSession.update({
-        where: { id: sessionId },
+    // Conditional: a reject racing an accept or an end must not overwrite them (LIVE-26).
+    const { count } = await prisma.videoCallSession.updateMany({
+        where: { id: sessionId, status: "RINGING" },
         data: { status: "REJECTED", endedAt: new Date(), endReason: "REJECTED_BY_RECEIVER" }
     });
+    if (count === 0) {
+        throw new Error("Invalid session or unauthorized.");
+    }
 
     emitToUser(session.callerId, "CALL_REJECTED", { sessionId });
 
     return { success: true };
 };
 
+const SYSTEM_END_REASONS = ["HEARTBEAT_LOST", "INSUFFICIENT_BALANCE", "RINGING_TIMEOUT", "TEST_RESET", "SYSTEM_RESET", "ROOM_FINISHED_WEBHOOK", "VIOLATION_NUDITY"];
+
 export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtOverride = null) => {
-    const session = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
-    if (!session || !["RINGING", "ACTIVE"].includes(session.status)) return null;
+    // LIVE-26: the user, the heartbeat sweep, the low-coin timer, the LiveKit webhook and the
+    // disconnect grace can all end one call at the same moment. The status flip is conditional on
+    // the status we read, so exactly one caller wins; only the winner emits, closes the room and
+    // schedules the host-return timer. Losers get null, like a call that had already ended.
+    // If the status moved under us (an accept turned RINGING into ACTIVE), re-read once and end
+    // from the new state, so a billed call is never recorded as MISSED.
+    let session = null;
+    let updatedSession = null;
+    for (let attempt = 0; attempt < 2 && !updatedSession; attempt++) {
+        session = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
+        if (!session || !["RINGING", "ACTIVE"].includes(session.status)) return null;
 
-    if (session.callerId !== userId && session.creatorId !== userId) {
-        throw new Error("Unauthorized to end this call.");
+        // LIVE-27: system ends (e.g. a nudity block) pass no user; only user-initiated ends are
+        // limited to the call's participants.
+        const systemEnd = userId == null && SYSTEM_END_REASONS.includes(reason);
+        if (!systemEnd && session.callerId !== userId && session.creatorId !== userId) {
+            throw new Error("Unauthorized to end this call.");
+        }
+
+        const { count } = await prisma.videoCallSession.updateMany({
+            where: { id: sessionId, status: session.status },
+            data: {
+                status: session.status === "RINGING" ? "MISSED" : "ENDED",
+                endedAt: endedAtOverride || new Date(),
+                endReason: reason
+            }
+        });
+        if (count === 1) {
+            updatedSession = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
+        }
     }
+    if (!updatedSession) return null;
 
-    const endedAt = endedAtOverride || new Date();
-
-    const newStatus = session.status === "RINGING" ? "MISSED" : "ENDED";
     const socketEvent = session.status === "RINGING" ? "CALL_MISSED" : "CALL_ENDED";
 
-    const updatedSession = await prisma.videoCallSession.update({
-        where: { id: sessionId },
-        data: {
-            status: newStatus,
-            endedAt,
-            endReason: reason
-        }
-    });
-
-    const systemReasons = ["HEARTBEAT_LOST", "INSUFFICIENT_BALANCE", "RINGING_TIMEOUT", "TEST_RESET", "SYSTEM_RESET", "ROOM_FINISHED_WEBHOOK"];
-    if (systemReasons.includes(reason)) {
+    if (SYSTEM_END_REASONS.includes(reason) || userId == null) {
         emitToUser(session.callerId, socketEvent, { sessionId, reason });
         emitToUser(session.creatorId, socketEvent, { sessionId, reason });
     } else {
@@ -1094,6 +1163,14 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                                 }
                             } else {
                             await runMoneyTransaction(async (tx) => {
+                                // LIVE-26: lock the call row; never bill a call that ended since the
+                                // sweep's snapshot, nor a minute another node already billed.
+                                const [live] = await tx.$queryRaw`
+                                    SELECT status, mins_charged AS "minsCharged" FROM video_call_sessions
+                                    WHERE id = ${session.id} FOR UPDATE`;
+                                if (!live || live.status !== "ACTIVE") throw new Error("CALL_NOT_ACTIVE");
+                                if (live.minsCharged >= m) throw new Error("MINUTE_ALREADY_BILLED");
+
                                 const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
                                 const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
 
@@ -1182,11 +1259,19 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                                 await endCall(session.id, session.callerId, "INSUFFICIENT_BALANCE");
                                 hasFailed = true;
                                 break;
+                            } else if (err.message === "CALL_NOT_ACTIVE" || err.code === "CALL_NOT_ACTIVE") {
+                                // Ended since the snapshot (LIVE-26): nothing to bill.
+                                hasFailed = true;
+                                break;
+                            } else if (err.message === "MINUTE_ALREADY_BILLED" || err.code === "MINUTE_OUT_OF_ORDER") {
+                                // Another node billed it, or this snapshot is stale; the next tick re-reads.
+                                hasFailed = true;
+                                break;
                             } else {
                                 if (err.code === "P2002") {
                                     console.log(`[VideoCall] Idempotency key match for minute ${m}, assuming already billed. Error detail:`, err);
-                                    await prisma.videoCallSession.update({
-                                        where: { id: session.id },
+                                    await prisma.videoCallSession.updateMany({
+                                        where: { id: session.id, minsCharged: { lt: m } },
                                         data: { minsCharged: m }
                                     }).catch(() => { });
                                 } else {

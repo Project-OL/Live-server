@@ -206,27 +206,26 @@ export const fastGoLiveStreamService = async ({
 
     const token = await generateStreamHostToken(streamId, userId);
 
-    setImmediate(async () => {
+    // LIVE-30: the row is written before the response (one INSERT, a few ms). It used to be written
+    // in setImmediate, and when that failed the stream lived only in Redis: joins, gifts and the
+    // sweeps read the DB and treated it as missing. Retried once; on a second failure the Redis
+    // markers are cleared and go-live fails cleanly instead of leaving a half-created stream.
+    const row = { id: streamId, userId, title, heading, coverImageUrl, streamId, streamKey, isLive: true, startedAt: now, endedAt: null };
+    for (let attempt = 1; ; attempt++) {
         try {
-            await prisma.liveStream.create({
-                data: {
-                    id: streamId,
-                    userId,
-                    title,
-                    heading,
-                    coverImageUrl,
-                    streamId,
-                    streamKey,
-                    isLive: true,
-                    startedAt: now,
-                    endedAt: null
-                }
-            });
-            console.log(`[Async DB Write] LiveStream ${streamId} saved to PostgreSQL in background.`);
-        } catch (bgError) {
-            console.error(`[Background Task Error] Stream ${streamId}:`, bgError.message);
+            await prisma.liveStream.create({ data: row });
+            break;
+        } catch (dbError) {
+            if (dbError?.code === "P2002") break; // already written (unique id): fine
+            if (attempt < 2) {
+                await new Promise((r) => setTimeout(r, 100));
+                continue;
+            }
+            console.error(`[Go Live] DB write failed for stream ${streamId}:`, dbError.message);
+            await clearLiveStreamRedisKeys({ streamId, userId, id: streamId });
+            throw new Error("Could not start the live stream. Please try again.");
         }
-    });
+    }
 
     return {
         stream: createdStream,
@@ -336,14 +335,26 @@ export const endLiveStreamService = async ({
         throw new Error("Unauthorized to end this live stream.");
     }
 
-    if (!stream.isLive) {
+    // LIVE-29: the host, the heartbeat monitor, the ghost sweep, moderation and the 2-minute return
+    // timer can end one stream at the same moment. Claim the end with a conditional flip first;
+    // only the winner runs the side effects below (egress stop, camera-off accounting, summary,
+    // stream_ended). Losers take the already-ended path, as if they had arrived a second later.
+    const endedAt = new Date();
+    const claim = stream.isLive
+        ? await prisma.liveStream.updateMany({
+            where: { id: stream.id, isLive: true },
+            data: { isLive: false, endedAt }
+        })
+        : { count: 0 };
+    if (claim.count === 0) {
         console.log(`[Live Stream END] ⏭ Already ended, no-op. reason=${reason} dbId=${id} streamId=${stream.streamId} userId=${userId}`);
+        const fresh = stream.isLive ? await prisma.liveStream.findUnique({ where: { id: stream.id } }) : stream;
         await clearLiveStreamRedisKeys({
             streamId: stream.streamId,
             userId,
             id: stream.id
         });
-        return { stream, alreadyEnded: true };
+        return { stream: fresh || stream, alreadyEnded: true };
     }
 
     if (isProduction && stream.playbackId) {
@@ -366,7 +377,6 @@ export const endLiveStreamService = async ({
         }).catch(err => console.error("Egress cleanup error:", err.message));
     }
 
-    const endedAt = new Date();
     const keyOff = `stream:camera_off_at:${streamIdKey}`;
     const keyUncounted = `stream:uncounted_seconds:${streamIdKey}`;
 
@@ -397,8 +407,8 @@ export const endLiveStreamService = async ({
 
     const effectiveDurationSeconds = Math.max(0, grossDurationSeconds - uncountedSec);
 
-    // Persist billable duration on the same Prisma update (do not rely on a separate
-    // $executeRawUnsafe — that path was leaving effective_duration_seconds at 0 in prod).
+    // Billable duration, written by the winner right after its claim (Prisma update, not a raw
+    // statement: the raw path used to leave effective_duration_seconds at 0 in prod).
     const updatedStream = await prisma.liveStream.update({
         where: { id: stream.id },
         data: {

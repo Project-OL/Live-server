@@ -2710,3 +2710,16 @@ model HostRevenueShareConfig {
   @@map("host_revenue_share_config")
 }
 
+/// LIVE-31, owned by ol-node-rest's migrations (mirrored for the test DB): lucky reserve pool
+/// counters, 8 slots summed on read (src/modules/luckyGift/reservePool.engine.js).
+model LuckyReservePool {
+  slot          Int      @id
+  totalSpent    BigInt   @default(0) @map("total_spent")
+  totalRewarded BigInt   @default(0) @map("total_rewarded")
+  poolBalance   Decimal  @default(0) @map("pool_balance") @db.Decimal(24, 4)
+  seeded        Boolean  @default(false)
+  updatedAt     DateTime @default(now()) @updatedAt @map("updated_at")
+
+  @@map("lucky_reserve_pool")
+}
+

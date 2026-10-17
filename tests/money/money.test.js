@@ -133,7 +133,7 @@ test("LIVE-25: the minute-1 agency commission is committed together with the cal
     assert.ok(commission, "commission row must exist as soon as the accept has committed");
 });
 
-test("LIVE-26: concurrent endCall calls have exactly one winner", { todo: "LIVE-26" }, async () => {
+test("LIVE-26: concurrent endCall calls have exactly one winner", async () => {
     const caller = await makeUser({ coins: 10_000n });
     const hostUser = await makeUser();
     const call = await makeActiveCall(caller.id, hostUser.id);
@@ -143,7 +143,23 @@ test("LIVE-26: concurrent endCall calls have exactly one winner", { todo: "LIVE-
     assert.equal(winners.length, 1, `expected 1 winning end, got ${winners.length}`);
 });
 
-test("LIVE-28: a double-tapped call start creates one ringing session", { todo: "LIVE-28" }, async () => {
+test("LIVE-26: an accept racing an end never leaves a billed call MISSED, nor bills a missed call", async () => {
+    for (let i = 0; i < 8; i++) {
+        const caller = await makeUser({ coins: 1_000_000n });
+        const hostUser = await makeUser();
+        await ensureWallets(hostUser.id);
+        const session = await prisma.videoCallSession.create({
+            data: { callerId: caller.id, creatorId: hostUser.id, livekitRoom: `room_${crypto.randomUUID()}`, pricePerMin: 600, status: "RINGING" },
+        });
+        await settledAll([videoCall.acceptCall(session.id, hostUser.id), videoCall.endCall(session.id, caller.id, "USER_ENDED")]);
+        const s = await prisma.videoCallSession.findUnique({ where: { id: session.id } });
+        const charges = await prisma.coinLedgerEntry.count({ where: { refId: session.id, direction: "DEBIT" } });
+        if (s.status === "MISSED") assert.equal(charges, 0, "a missed call is never billed");
+        else assert.equal(charges, 1, `a ${s.status} call is billed minute 1 exactly once`);
+    }
+});
+
+test("LIVE-28: a double-tapped call start creates one ringing session", async () => {
     const caller = await makeUser({ coins: 1_000_000n });
     const hostUser = await makeUser();
     await prisma.videoCallSettings.create({ data: { userId: hostUser.id } });
@@ -153,7 +169,7 @@ test("LIVE-28: a double-tapped call start creates one ringing session", { todo: 
     assert.equal(ringing, 1, `expected 1 ringing session, got ${ringing}`);
 });
 
-test("LIVE-29: concurrent stream ends run the end path once", { todo: "LIVE-29" }, async () => {
+test("LIVE-29: concurrent stream ends run the end path once", async () => {
     const hostUser = await makeUser();
     const streamId = crypto.randomUUID();
     await prisma.liveStream.create({
@@ -205,6 +221,23 @@ test("LIVE-57: a lucky gift sent through the stream path with one clientTxId is 
         where: { walletId: await walletIdOf(sender.id, "COIN"), direction: "DEBIT", txType: "GIFT_SEND" },
     });
     assert.equal(debits, 1);
+});
+
+test("LIVE-31: parallel lucky gifts add exactly to the DB reserve-pool counters", async () => {
+    const pool = async () => {
+        const [r] = await prisma.$queryRaw`SELECT COALESCE(SUM(total_spent),0)::bigint AS spent FROM lucky_reserve_pool`;
+        return r.spent;
+    };
+    const hostUser = await makeUser();
+    const sender = await makeUser({ coins: 10_000_000n });
+    await ensureWallets(hostUser.id);
+    const gift = await makeGift(1_000, { isLucky: true });
+    await luckyGift.sendLuckyGiftService({ senderId: sender.id, receiverId: hostUser.id, streamId: "s", giftId: gift.id, comboCount: 1 }); // seeds
+    const before = await pool();
+    const rs = await settledAll(Array.from({ length: N }, () =>
+        luckyGift.sendLuckyGiftService({ senderId: sender.id, receiverId: hostUser.id, streamId: "s", giftId: gift.id, comboCount: 1 })));
+    assert.equal(rs.filter((r) => r.status === "rejected").length, 0, `rejected: ${reasons(rs)}`);
+    assert.equal(await pool() - before, BigInt(N * 1_000));
 });
 
 test("lucky host cut follows the admin setting (host_revenue_share_config.lucky_host_share_bp)", async () => {

@@ -132,6 +132,28 @@ const emitStreamEnded = (io, stream, streamIdKey, reason, message) => {
     }
 };
 
+/**
+ * LIVE-14: end first, then record the failure and tell viewers, only if this sweep's end won.
+ * The sweep works from a snapshot taken at the start of the tick; a host who ended the stream
+ * mid-tick used to get a false GHOST_STREAM_ENDED / HEARTBEAT_LOST plus a second stream_ended.
+ * endLiveStreamService claims the end atomically (LIVE-29) and reports alreadyEnded otherwise.
+ */
+const endFromSweep = async (io, stream, streamIdKey, { reason, message, failure, logTag }) => {
+    let result = null;
+    try {
+        result = await endLiveStreamService({ id: stream.id, userId: stream.userId, reason });
+    } catch (endErr) {
+        console.error(`[${logTag}] endLiveStreamService ${stream.id}:`, endErr.message);
+        return;
+    }
+    if (!result || result.alreadyEnded) {
+        console.log(`[${logTag}] Stream ${streamIdKey} was already ended; no failure recorded.`);
+        return;
+    }
+    recordLiveFailure(failure);
+    emitStreamEnded(io, stream, streamIdKey, reason, message);
+};
+
 const hostPausedForCallOrReturn = async (hostUserId, streamIdKey) => {
     const activeVideoCall = await prisma.videoCallSession.findFirst({
         where: {
@@ -210,30 +232,19 @@ export const startStreamHeartbeatMonitor = (io) => {
                                 console.warn(
                                     `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}, never confirmed. Auto-ending.`
                                 );
-                                recordLiveFailure({
-                                    kind: LIVE_FAILURE_KINDS.GHOST_STREAM_ENDED,
-                                    userId: hostUserId,
-                                    streamId: streamIdKey,
-                                    code: 'NO_LIVEKIT_HOST',
-                                    message: 'Host never appeared in the LiveKit room; stream auto-ended.',
-                                    meta: { ageMs }
-                                });
-                                emitStreamEnded(
-                                    io,
-                                    stream,
-                                    streamIdKey,
-                                    "NO_LIVEKIT_HOST",
-                                    "Live stream ended because the host never connected media."
-                                );
-                                try {
-                                    await endLiveStreamService({
-                                        id: stream.id,
+                                await endFromSweep(io, stream, streamIdKey, {
+                                    reason: "NO_LIVEKIT_HOST",
+                                    message: "Live stream ended because the host never connected media.",
+                                    logTag: "Ghost Sweep",
+                                    failure: {
+                                        kind: LIVE_FAILURE_KINDS.GHOST_STREAM_ENDED,
                                         userId: hostUserId,
-                                        reason: "NO_LIVEKIT_HOST"
-                                    });
-                                } catch (endErr) {
-                                    console.error(`[Ghost Sweep] endLiveStreamService ${stream.id}:`, endErr.message);
-                                }
+                                        streamId: streamIdKey,
+                                        code: 'NO_LIVEKIT_HOST',
+                                        message: 'Host never appeared in the LiveKit room; stream auto-ended.',
+                                        meta: { ageMs }
+                                    }
+                                });
                                 continue;
                             }
                         }
@@ -300,32 +311,19 @@ export const startStreamHeartbeatMonitor = (io) => {
                     console.warn(
                         `[Heartbeat Monitor] Stream ${streamIdKey} lost heartbeat (last ping ${durationSinceLastPing}ms ago). Auto-ending stream!`
                     );
-                    recordLiveFailure({
-                        kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
-                        userId: hostUserId,
-                        streamId: streamIdKey,
-                        code: lastHeartbeatTime ? 'HEARTBEAT_LOST' : 'NO_HEARTBEAT_EVER',
-                        message: `No host heartbeat for ${durationSinceLastPing}ms; stream auto-ended.`,
-                        meta: { ageMs, sinceLastPingMs: durationSinceLastPing }
-                    });
-
-                    emitStreamEnded(
-                        io,
-                        stream,
-                        streamIdKey,
-                        "HEARTBEAT_LOST",
-                        "Live stream ended due to host network loss."
-                    );
-
-                    try {
-                        await endLiveStreamService({
-                            id: stream.id,
+                    await endFromSweep(io, stream, streamIdKey, {
+                        reason: "HEARTBEAT_LOST",
+                        message: "Live stream ended due to host network loss.",
+                        logTag: "Heartbeat Monitor",
+                        failure: {
+                            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
                             userId: hostUserId,
-                            reason: "HEARTBEAT_LOST"
-                        });
-                    } catch (endErr) {
-                        console.error(`[Heartbeat Monitor] Error in endLiveStreamService for ${stream.id}:`, endErr.message);
-                    }
+                            streamId: streamIdKey,
+                            code: lastHeartbeatTime ? 'HEARTBEAT_LOST' : 'NO_HEARTBEAT_EVER',
+                            message: `No host heartbeat for ${durationSinceLastPing}ms; stream auto-ended.`,
+                            meta: { ageMs, sinceLastPingMs: durationSinceLastPing }
+                        }
+                    });
                 } catch (streamErr) {
                     console.error(`[Heartbeat Monitor] Error checking stream ${stream.id}:`, streamErr.message);
                 }

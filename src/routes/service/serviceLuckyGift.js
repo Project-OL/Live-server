@@ -14,7 +14,7 @@ import { getOrCreateWallet, updateUserLevel } from '../../modules/videoCall/serv
 import { giftImageFields } from '../../utils/giftImage.js';
 import { processLiveStreamAgencyCommission, getGiftInfoService, isLuckyGift } from './serviceLive.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
-import { getReservePoolStats, updateReservePool, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
+import { getReservePoolStats, addToReservePoolInTx, calculateSingleReward as calcSingle, calculateComboReward as calcCombo } from '../../modules/luckyGift/index.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
 import { callLedger, ledgerMode, toLocalError } from '../../services/ledgerClient.js';
 import { getLuckyShares } from '../../services/luckyShares.service.js';
@@ -291,6 +291,13 @@ export const sendLuckyGiftService = async ({
             }
         });
 
+        // LIVE-31: RTP counters commit with the gift (last statement: shortest row-lock hold).
+        await addToReservePoolInTx(tx, {
+            giftCost: totalCost,
+            rewardCoins: luckyResult.totalReward,
+            targetRtpBp: Math.round(poolStats.targetRtp * 100)
+        });
+
         return { log, hostLedgerId, agencyUserId, finalBalanceCoins, pointsAfterHost, effectiveReceiverId, wealth };
     });
 
@@ -315,17 +322,8 @@ export const sendLuckyGiftService = async ({
         );
     }
 
-    // Reserve pool counters drive payout odds, so a lost update skews RTP for
-    // every later draw. Awaited and logged against the transaction id rather
-    // than fired into a background task that swallows its own failure.
-    try {
-        await updateReservePool({ giftCost: totalCost, rewardCoins: luckyResult.totalReward });
-    } catch (poolErr) {
-        console.error(
-            `[LuckyGift] reserve pool update FAILED for giftTransactionId=${giftTransactionId} cost=${totalCost} reward=${luckyResult.totalReward}:`,
-            poolErr.message
-        );
-    }
+    // LIVE-31: the reserve-pool counters were updated inside the gift transaction (here in local
+    // mode, by ol-node-rest in remote mode), so there is no post-commit update to lose.
 
     if (!remoteLedger && redisClient.isOpen) {
         redisClient.del(`level:wealth:${senderId}`).catch(() => {});
