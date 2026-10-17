@@ -12,7 +12,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import {
     prisma, videoCall, live, makeUser, makeAgency, makeGift, makeActiveCall,
-    walletIdOf, ledgerProblems, olNodeStyleLockedCredit, closeAll, ensureWallets,
+    walletIdOf, ledgerProblems, olNodeStyleLockedCredit, closeAll, ensureWallets, luckyGift, levelXp,
 } from "./helpers.mjs";
 
 after(closeAll);
@@ -160,4 +160,42 @@ test("LIVE-29: concurrent stream ends run the end path once", { todo: "LIVE-29" 
     const rs = await settledAll(Array.from({ length: 5 }, () => live.endLiveStreamService({ id: streamId, userId: hostUser.id, reason: "TEST" })));
     const realEnds = fulfilled(rs).filter((v) => v && !v.alreadyEnded);
     assert.equal(realEnds.length, 1, `expected 1 real end, got ${realEnds.length}`);
+});
+
+// --- Lucky gift rules (confirmed 2026-10-17) ---------------------------------------------------------
+// Host gets 4% of the cost as points; the host's livestream XP grows by those points; the sender's
+// wealth XP grows by the full cost; only COMBO lucky gifts pay agency commission, single ones don't.
+
+const commissionRowsFor = async (giftTransactionId) =>
+    prisma.pointLedgerEntry.count({ where: { refId: giftTransactionId, txType: "AGENT_COMMISSION" } });
+
+test("lucky single: host gets 4% points + equal livestream XP, sender wealth XP = cost, no agency commission", async () => {
+    const agency = await makeAgency("A", 1600);
+    const hostUser = await makeUser({ agencyUserId: agency.id });
+    const sender = await makeUser({ coins: 1_000_000n });
+    for (const u of [hostUser, agency]) await ensureWallets(u.id);
+    const gift = await makeGift(1_000, { isLucky: true });
+
+    const r = await luckyGift.sendLuckyGiftService({ senderId: sender.id, receiverId: hostUser.id, streamId: "s", giftId: gift.id, comboCount: 1 });
+    assert.equal(r.hostEarningPoints, 40, "4% of 1,000");
+    assert.equal(await levelXp(hostUser.id, "LIVESTREAM"), 40n, "host livestream XP = host points");
+    assert.equal(await levelXp(sender.id, "WEALTH"), 1_000n, "sender wealth XP = full cost");
+    assert.equal(await commissionRowsFor(r.transactionId), 0, "single lucky gifts pay no agency commission");
+    assert.deepEqual(await ledgerProblems([await walletIdOf(sender.id, "COIN"), await walletIdOf(hostUser.id, "POINT")]), []);
+});
+
+test("lucky combo: host XP = host points, agency commission is paid", async () => {
+    const agency = await makeAgency("A", 1600);
+    const hostUser = await makeUser({ agencyUserId: agency.id });
+    const sender = await makeUser({ coins: 1_000_000n });
+    for (const u of [hostUser, agency]) await ensureWallets(u.id);
+    const gift = await makeGift(1_000, { isLucky: true });
+
+    const r = await luckyGift.sendLuckyGiftService({ senderId: sender.id, receiverId: hostUser.id, streamId: "s", giftId: gift.id, comboCount: 5 });
+    assert.equal(r.hostEarningPoints, 200, "4% of 5,000");
+    assert.equal(await levelXp(hostUser.id, "LIVESTREAM"), 200n);
+    assert.equal(await commissionRowsFor(r.transactionId), 1, "combo lucky gifts pay agency commission");
+    const commission = await prisma.pointLedgerEntry.findFirst({ where: { refId: r.transactionId, txType: "AGENT_COMMISSION" } });
+    assert.equal(commission.amount, 32n, "16% (level A live rate) of 200 host points");
+    assert.deepEqual(await ledgerProblems([await walletIdOf(agency.id, "POINT")]), []);
 });

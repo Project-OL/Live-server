@@ -87,10 +87,18 @@ export async function makeAgency(level = "A", rateBp = 1600) {
     return owner;
 }
 
-export async function makeGift(coinCost = 100) {
+export async function makeGift(coinCost = 100, { isLucky = false } = {}) {
     return prisma.gift.create({
-        data: { name: `gift_${rid()}`, coinCost, displayImageUrl: "https://example.invalid/g.png", code: `g_${rid()}`, isActive: true },
+        data: { name: `gift_${rid()}`, coinCost, displayImageUrl: "https://example.invalid/g.png", code: `g_${rid()}`, isActive: true, isLucky },
     });
+}
+
+export const luckyGift = await import("../../src/routes/service/serviceLuckyGift.js");
+
+/** cumulative XP of one level type (0 when the user has no row yet). */
+export async function levelXp(userId, levelType) {
+    const row = await prisma.walletUserLevel.findUnique({ where: { userId_levelType: { userId, levelType } } });
+    return row?.cumulativeTotal ?? 0n;
 }
 
 export async function makeActiveCall(callerId, creatorId, pricePerMin = 600) {

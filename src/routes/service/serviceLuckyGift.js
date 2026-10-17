@@ -208,10 +208,15 @@ export const sendLuckyGiftService = async ({
                 }
             });
             hostLedgerId = hostLedger.id;
+
+            // Host livestream-level XP, same rule as normal gifts: XP grows by the points the host
+            // receives (here the lucky host cut). Decided 2026-10-17; before, lucky gifts gave none.
+            await updateUserLevel(tx, effectiveReceiverId, LevelType.LIVESTREAM, hostPoints);
         }
 
         // Agency commission settles in the same transaction as the host credit
-        // it derives from, so the two can never diverge.
+        // it derives from, so the two can never diverge. Business rule (confirmed
+        // 2026-10-17): only combo lucky gifts pay agency commission, single ones don't.
         let agencyUserId = null;
         if (isCombo && hostPoints > 0n && hostLedgerId) {
             const commRes = await processLiveStreamAgencyCommission(
