@@ -158,6 +158,14 @@ try {
     const dup = await http("POST /live-stream/:id/send-gift (same clientTxId)", "POST", `${LIVE}/api/live-stream/${dbId}/send-gift`, { ...V, body: { giftId: plain.id, count: 1, clientTxId } });
     values.duplicate = { status: dup.status, code: dup.json?.code ?? null };
 
+    // PARK-01: the host gifting in their own room (the case remote mode first got wrong, 2026-10-17).
+    const hostCoins = (await http(null, "GET", `${LIVE}/api/live-stream/wallet/balance`, H)).json?.balance ?? 0;
+    if (hostCoins >= plain.coinCost) {
+        await http("POST /live-stream/:id/send-gift (host to self)", "POST", `${LIVE}/api/live-stream/${dbId}/send-gift`, { ...H, body: { giftId: plain.id, count: 1 } });
+    } else {
+        console.warn(`host has ${hostCoins} coins on staging; skipping the host self-gift step`);
+    }
+
     await http("POST /live-stream/:id/send-gift (lucky)", "POST", `${LIVE}/api/live-stream/${dbId}/send-gift`, { ...V, body: { giftId: lucky.id, count: 1 } });
     await http("POST /live-stream/global-message", "POST", `${LIVE}/api/live-stream/global-message`, { ...V, body: { message: "money smoke", streamId: dbId } });
     await wait(2000);

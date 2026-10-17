@@ -203,6 +203,18 @@ test("lucky single: host gets 4% points + equal livestream XP, sender wealth XP 
     assert.deepEqual(await ledgerProblems([await walletIdOf(sender.id, "COIN"), await walletIdOf(hostUser.id, "POINT")]), []);
 });
 
+test("a host can gift in their own live room (PARK-01), in either ledger mode", async () => {
+    const host = await makeUser({ coins: 10_000n });
+    const gift = await makeGift(1_000);
+    const streamId = crypto.randomUUID();
+    await prisma.liveStream.create({
+        data: { id: streamId, streamId, userId: host.id, title: "t", streamKey: `k_${streamId}`, isLive: true, startedAt: new Date() },
+    });
+    const r = await live.sendStreamGiftService({ streamDbId: streamId, senderId: host.id, giftId: gift.id, count: 1 });
+    assert.equal(r.newBalance, 9_000);
+    assert.equal(r.socketPayload.pointsAwarded, 600);
+});
+
 test("LIVE-57: a lucky gift sent through the stream path with one clientTxId is charged once", async () => {
     const hostUser = await makeUser();
     const sender = await makeUser({ coins: 1_000_000n });
