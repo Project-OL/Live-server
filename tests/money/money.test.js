@@ -187,6 +187,26 @@ test("lucky single: host gets 4% points + equal livestream XP, sender wealth XP 
     assert.deepEqual(await ledgerProblems([await walletIdOf(sender.id, "COIN"), await walletIdOf(hostUser.id, "POINT")]), []);
 });
 
+test("LIVE-57: a lucky gift sent through the stream path with one clientTxId is charged once", async () => {
+    const hostUser = await makeUser();
+    const sender = await makeUser({ coins: 1_000_000n });
+    await ensureWallets(hostUser.id);
+    const gift = await makeGift(1_000, { isLucky: true });
+    const streamId = crypto.randomUUID();
+    await prisma.liveStream.create({
+        data: { id: streamId, streamId, userId: hostUser.id, title: "t", streamKey: `k_${streamId}`, isLive: true, startedAt: new Date() },
+    });
+    const send = () => live.sendStreamGiftService({ streamDbId: streamId, senderId: sender.id, giftId: gift.id, count: 1, clientTxId: "retry-1" });
+
+    const first = await send();
+    const again = await send();
+    assert.equal(again.transactionId, first.transactionId, "the retry replays the first result");
+    const debits = await prisma.coinLedgerEntry.count({
+        where: { walletId: await walletIdOf(sender.id, "COIN"), direction: "DEBIT", txType: "GIFT_SEND" },
+    });
+    assert.equal(debits, 1);
+});
+
 test("lucky host cut follows the admin setting (host_revenue_share_config.lucky_host_share_bp)", async () => {
     const hostUser = await makeUser();
     const sender = await makeUser({ coins: 1_000_000n });

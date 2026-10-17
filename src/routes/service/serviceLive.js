@@ -1358,6 +1358,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
             streamId: stream.streamId,
             giftId,
             comboCount: giftCount,
+            // LIVE-57: without it a client retry of a lucky gift was charged again.
+            clientTxId,
             preFetchedGift: gift
         });
         luckyResult.socketPayload.senderName = senderName;
