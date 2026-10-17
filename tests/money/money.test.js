@@ -159,6 +159,23 @@ test("LIVE-26: an accept racing an end never leaves a billed call MISSED, nor bi
     }
 });
 
+test("LIVE-42: per-call billing and the sweep billing the same minute concurrently bill it once", async () => {
+    const caller = await makeUser({ coins: 1_000_000n });
+    const hostUser = await makeUser();
+    await ensureWallets(hostUser.id);
+    // Started 2.5 minutes ago with minute 1 billed: minutes 2 and 3 are due.
+    const call = await prisma.videoCallSession.create({
+        data: { callerId: caller.id, creatorId: hostUser.id, livekitRoom: `room_${crypto.randomUUID()}`, pricePerMin: 600, status: "ACTIVE", startedAt: new Date(Date.now() - 150_000), minsCharged: 1 },
+    });
+    const fresh = () => prisma.videoCallSession.findUnique({ where: { id: call.id } });
+    await settledAll([videoCall.billDueMinutes(await fresh()), videoCall.billDueMinutes(await fresh()), videoCall.billDueMinutes(await fresh())]);
+    const s = await fresh();
+    assert.equal(s.minsCharged, 3);
+    assert.equal(s.coinsDeducted, 2_000n, "two minutes at ceil(600*5/3)=1000 coins each, counted once");
+    assert.equal(await prisma.coinLedgerEntry.count({ where: { refId: call.id, direction: "DEBIT" } }), 2);
+    assert.deepEqual(await ledgerProblems([await walletIdOf(caller.id, "COIN")]), []);
+});
+
 test("LIVE-28: a double-tapped call start creates one ringing session", async () => {
     const caller = await makeUser({ coins: 1_000_000n });
     const hostUser = await makeUser();

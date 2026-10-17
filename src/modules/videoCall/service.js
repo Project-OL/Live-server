@@ -766,6 +766,9 @@ export const acceptCall = async (sessionId, receiverId) => {
     recordHeartbeat(sessionId, session.callerId);
     recordHeartbeat(sessionId, session.creatorId);
 
+    // LIVE-42: minute 2 is billed by this call's own timer at its boundary (the sweep is a backstop).
+    scheduleNextBilling(updatedSession).catch(() => { });
+
     // 2nd minute precision disconnect check (Very fast, runs in background)
     (async () => {
         try {
@@ -924,6 +927,7 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
     }
 
     cancelDurable(LOWCOIN_TIMER, sessionId).catch(() => { });
+    cancelDurable("vc_bill", sessionId).catch(() => { }); // LIVE-42 per-call billing timer
     // The 15s socket-disconnect grace (videoCall/socket.js) for either participant.
     if (session.callerId) cancelDurable("vc_disconnect", `${sessionId}:${session.callerId}`).catch(() => { });
     if (session.creatorId) cancelDurable("vc_disconnect", `${sessionId}:${session.creatorId}`).catch(() => { });
@@ -1068,8 +1072,236 @@ export const getCallSettingsForCaller = async ({ callerId, creatorId }) => {
     };
 };
 
+/**
+ * Bill every minute of an ACTIVE call that is due and not billed yet (LIVE-42).
+ * Used by the per-call `vc_bill` timer (each call on its own minute boundary, in parallel) and by
+ * the 5 s sweep as a backstop. Both paths lock the session row and skip billed minutes, so
+ * they never double-bill each other. `session` is a fresh row.
+ */
+export const billDueMinutes = async (session) => {
+    const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
+    const currentMinute = Math.floor(elapsedMs / 60000) + 1;
+
+    if (currentMinute > session.minsCharged) {
+        const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
+        const pointRate = BigInt(session.pricePerMin);
+
+        let hasFailed = false;
+
+        for (let m = session.minsCharged + 1; m <= currentMinute; m++) {
+            // Billing Guard: Check if caller was disconnected prior to or during minute m boundary
+            let isCallerDisconnected = false;
+            if (redisClient.isOpen) {
+                const discVal = await redisClient.get(`call:disconnect:${session.id}:${session.callerId}`);
+                if (discVal) {
+                    const discTime = parseInt(discVal, 10);
+                    const minStartTime = new Date(session.startedAt).getTime() + (m - 1) * 60000;
+                    if (!isNaN(discTime) && discTime <= minStartTime + 5000) {
+                        isCallerDisconnected = true;
+                    }
+                }
+            }
+
+            if (isCallerDisconnected) {
+                console.log(`[VideoCall Billing Guard] Caller ${session.callerId} was disconnected prior to Minute ${m} boundary. Skipping Minute ${m} charge for session ${session.id}.`);
+                break;
+            }
+            try {
+                let txAgencyUserId = null;
+                if (ledgerMode("CALL_MINUTE") === "remote") {
+                    // BE-20: billed in ol-node-rest under the session row lock, so an
+                    // ended call is never billed and a minute is never billed twice.
+                    try {
+                        await callLedger("CALL_MINUTE", "call-minute", { sessionId: session.id, minute: m });
+                    } catch (err) {
+                        if (err.code === "INSUFFICIENT_COINS") throw new Error("INSUFFICIENT_BALANCE");
+                        throw err;
+                    }
+                } else {
+                await runMoneyTransaction(async (tx) => {
+                    // LIVE-26: lock the call row; never bill a call that ended since the
+                    // sweep's snapshot, nor a minute another node already billed.
+                    const [live] = await tx.$queryRaw`
+                        SELECT status, mins_charged AS "minsCharged" FROM video_call_sessions
+                        WHERE id = ${session.id} FOR UPDATE`;
+                    if (!live || live.status !== "ACTIVE") throw new Error("CALL_NOT_ACTIVE");
+                    if (live.minsCharged >= m) throw new Error("MINUTE_ALREADY_BILLED");
+
+                    const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
+                    const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
+
+                    // Lock both wallets before reading, so a concurrent gift send
+                    // from the same caller cannot bill against the same balance.
+                    await lockWalletsForUpdate(tx, [callerWallet.id, hostWallet.id]);
+                    await assertCoinsNotFrozenInTx(tx, session.callerId);
+
+                    const callerCoins = await getCoinBalanceInTx(tx, callerWallet.id);
+                    if (callerCoins < coinRate) {
+                        throw new Error("INSUFFICIENT_BALANCE");
+                    }
+
+                    const balanceAfterCoins = callerCoins - coinRate;
+                    await tx.coinLedgerEntry.create({
+                        data: {
+                            walletId: callerWallet.id,
+                            direction: LedgerDirection.DEBIT,
+                            txType: CoinTxType.VIDEO_CALL,
+                            amount: coinRate,
+                            balanceAfter: balanceAfterCoins,
+                            idempotencyKey: `call-${session.id}-min-${m}-coins`,
+                            refId: session.id,
+                            counterpartyId: session.creatorId,
+                            description: `Video call minute ${m} charge`
+                        }
+                    });
+
+                    const hostPoints = await getPointBalanceInTx(tx, hostWallet.id);
+                    const balanceAfterPoints = hostPoints + pointRate;
+                    const hostLedger = await tx.pointLedgerEntry.create({
+                        data: {
+                            walletId: hostWallet.id,
+                            direction: LedgerDirection.CREDIT,
+                            txType: PointTxType.VIDEO_CALL,
+                            amount: pointRate,
+                            balanceAfter: balanceAfterPoints,
+                            idempotencyKey: `call-${session.id}-min-${m}-points`,
+                            refId: session.id,
+                            counterpartyId: session.callerId,
+                            description: `Points for video call minute ${m}`
+                        }
+                    });
+
+                    const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
+                    txAgencyUserId = commRes ? commRes.agencyUserId : null;
+
+                    await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
+                    await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
+
+
+                    await tx.videoCallSession.update({
+                        where: { id: session.id },
+                        data: {
+                            minsCharged: m,
+                            coinsDeducted: { increment: coinRate },
+                            pointsAwarded: { increment: pointRate }
+                        }
+                    });
+                }, { timeout: 15000 });
+
+                await invalidateCaches(session.callerId, session.creatorId, txAgencyUserId);
+                if (txAgencyUserId) {
+                    await afterCommissionCreditCommit(txAgencyUserId);
+                }
+                }
+
+                if (!(await lowCoinDisconnectPending(session.id))) {
+                    const wAfter = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
+                    const coinsAfter = await getFastCoinBalance(wAfter.id);
+                    if (coinsAfter < coinRate) {
+                        const startMs = new Date(session.startedAt).getTime();
+                        const disconnectAtMs = startMs + (m * 60000); // end of minute m
+                        const msUntil = disconnectAtMs - Date.now();
+                        if (msUntil > 0) {
+                            console.log(`[VideoCall] Caller cannot afford minute ${m + 1}. Scheduling disconnect in ${msUntil}ms for session ${session.id}`);
+                            await scheduleLowCoinDisconnect(session.id, session.callerId, coinRate, disconnectAtMs, m);
+                        }
+                    }
+                }
+            } catch (err) {
+                if (err.message === "INSUFFICIENT_BALANCE") {
+                    console.log(`[VideoCall] Session ${session.id} auto-ended due to insufficient balance.`);
+                    await endCall(session.id, session.callerId, "INSUFFICIENT_BALANCE");
+                    hasFailed = true;
+                    break;
+                } else if (err.message === "CALL_NOT_ACTIVE" || err.code === "CALL_NOT_ACTIVE") {
+                    // Ended since the snapshot (LIVE-26): nothing to bill.
+                    hasFailed = true;
+                    break;
+                } else if (err.message === "MINUTE_ALREADY_BILLED" || err.code === "MINUTE_OUT_OF_ORDER") {
+                    // Another node billed it, or this snapshot is stale; the next tick re-reads.
+                    hasFailed = true;
+                    break;
+                } else {
+                    if (err.code === "P2002") {
+                        console.log(`[VideoCall] Idempotency key match for minute ${m}, assuming already billed. Error detail:`, err);
+                        await prisma.videoCallSession.updateMany({
+                            where: { id: session.id, minsCharged: { lt: m } },
+                            data: { minsCharged: m }
+                        }).catch(() => { });
+                    } else {
+                        console.error(`[VideoCall] Transaction error billing session ${session.id} minute ${m}:`, err);
+                        hasFailed = true;
+                        break;
+                    }
+                }
+            }
+        }
+
+        if (hasFailed) {
+            return;
+        }
+    }
+};
+
+/**
+ * LIVE-42: per-call billing deadline. Fires at the call's next minute boundary (durable: another
+ * node or a restart still fires it), bills what is due, then schedules the next boundary. At most
+ * BILL_CONCURRENCY billings run at once, so a burst of boundaries can't exhaust DB connections.
+ */
+const BILL_TIMER = "vc_bill";
+const BILL_CONCURRENCY = 10;
+const BILL_MIN_GAP_MS = 5000;
+let billingInFlight = 0;
+const billingWaiters = [];
+const withBillingSlot = async (fn) => {
+    if (billingInFlight >= BILL_CONCURRENCY) await new Promise((r) => billingWaiters.push(r));
+    billingInFlight++;
+    try {
+        return await fn();
+    } finally {
+        billingInFlight--;
+        billingWaiters.shift()?.();
+    }
+};
+
+/** Schedule the next minute-boundary billing for an ACTIVE call (never sooner than 5 s from now). */
+export const scheduleNextBilling = async (session) => {
+    if (!session || session.status !== "ACTIVE" || !session.startedAt) return;
+    const due = new Date(session.startedAt).getTime() + session.minsCharged * 60000;
+    await scheduleDurable(BILL_TIMER, session.id, Math.max(due, Date.now() + BILL_MIN_GAP_MS)).catch(() => { });
+};
+
+registerDurableHandler(BILL_TIMER, async (sessionId) => {
+    await withBillingSlot(async () => {
+        const fresh = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
+        if (!fresh || fresh.status !== "ACTIVE") return;
+        await billDueMinutes(fresh);
+        await scheduleNextBilling(await prisma.videoCallSession.findUnique({ where: { id: sessionId } }));
+    });
+});
+
+/** LIVE-41: one tick at a time; a slow tick is logged and the overlapping one skipped. */
+const guardedTick = (name, fn) => {
+    let running = false;
+    return async () => {
+        if (running) {
+            console.warn(`[${name}] previous tick still running; skipped`);
+            return;
+        }
+        running = true;
+        const started = Date.now();
+        try {
+            await fn();
+        } finally {
+            running = false;
+            const ms = Date.now() - started;
+            if (ms > 4000) console.warn(`[${name}] tick took ${ms} ms`);
+        }
+    };
+};
+
 if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
-    const videoCallSweep = setInterval(async () => {
+    const videoCallSweep = setInterval(guardedTick("videocall-sweep", async () => {
         // L5 (LIVE-09): billing, ringing timeouts and heartbeat ends run on one node only.
         try {
             if (!(await isLeader("videocall-sweep"))) return;
@@ -1119,178 +1351,17 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                 where: { status: "ACTIVE" }
             });
 
+            // Backstop for the per-call timers (LIVE-42): also re-arms a call whose timer was lost.
             for (const session of activeSessions) {
-                const elapsedMs = Date.now() - new Date(session.startedAt).getTime();
-                const currentMinute = Math.floor(elapsedMs / 60000) + 1;
-
-                if (currentMinute > session.minsCharged) {
-                    const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
-                    const pointRate = BigInt(session.pricePerMin);
-
-                    let currentCoinsDeducted = session.coinsDeducted;
-                    let currentPointsAwarded = session.pointsAwarded;
-                    let hasFailed = false;
-
-                    for (let m = session.minsCharged + 1; m <= currentMinute; m++) {
-                        // Billing Guard: Check if caller was disconnected prior to or during minute m boundary
-                        let isCallerDisconnected = false;
-                        if (redisClient.isOpen) {
-                            const discVal = await redisClient.get(`call:disconnect:${session.id}:${session.callerId}`);
-                            if (discVal) {
-                                const discTime = parseInt(discVal, 10);
-                                const minStartTime = new Date(session.startedAt).getTime() + (m - 1) * 60000;
-                                if (!isNaN(discTime) && discTime <= minStartTime + 5000) {
-                                    isCallerDisconnected = true;
-                                }
-                            }
-                        }
-
-                        if (isCallerDisconnected) {
-                            console.log(`[VideoCall Billing Guard] Caller ${session.callerId} was disconnected prior to Minute ${m} boundary. Skipping Minute ${m} charge for session ${session.id}.`);
-                            break;
-                        }
-                        try {
-                            let txAgencyUserId = null;
-                            if (ledgerMode("CALL_MINUTE") === "remote") {
-                                // BE-20: billed in ol-node-rest under the session row lock, so an
-                                // ended call is never billed and a minute is never billed twice.
-                                try {
-                                    await callLedger("CALL_MINUTE", "call-minute", { sessionId: session.id, minute: m });
-                                } catch (err) {
-                                    if (err.code === "INSUFFICIENT_COINS") throw new Error("INSUFFICIENT_BALANCE");
-                                    throw err;
-                                }
-                            } else {
-                            await runMoneyTransaction(async (tx) => {
-                                // LIVE-26: lock the call row; never bill a call that ended since the
-                                // sweep's snapshot, nor a minute another node already billed.
-                                const [live] = await tx.$queryRaw`
-                                    SELECT status, mins_charged AS "minsCharged" FROM video_call_sessions
-                                    WHERE id = ${session.id} FOR UPDATE`;
-                                if (!live || live.status !== "ACTIVE") throw new Error("CALL_NOT_ACTIVE");
-                                if (live.minsCharged >= m) throw new Error("MINUTE_ALREADY_BILLED");
-
-                                const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
-                                const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
-
-                                // Lock both wallets before reading, so a concurrent gift send
-                                // from the same caller cannot bill against the same balance.
-                                await lockWalletsForUpdate(tx, [callerWallet.id, hostWallet.id]);
-                                await assertCoinsNotFrozenInTx(tx, session.callerId);
-
-                                const callerCoins = await getCoinBalanceInTx(tx, callerWallet.id);
-                                if (callerCoins < coinRate) {
-                                    throw new Error("INSUFFICIENT_BALANCE");
-                                }
-
-                                const balanceAfterCoins = callerCoins - coinRate;
-                                await tx.coinLedgerEntry.create({
-                                    data: {
-                                        walletId: callerWallet.id,
-                                        direction: LedgerDirection.DEBIT,
-                                        txType: CoinTxType.VIDEO_CALL,
-                                        amount: coinRate,
-                                        balanceAfter: balanceAfterCoins,
-                                        idempotencyKey: `call-${session.id}-min-${m}-coins`,
-                                        refId: session.id,
-                                        counterpartyId: session.creatorId,
-                                        description: `Video call minute ${m} charge`
-                                    }
-                                });
-
-                                const hostPoints = await getPointBalanceInTx(tx, hostWallet.id);
-                                const balanceAfterPoints = hostPoints + pointRate;
-                                const hostLedger = await tx.pointLedgerEntry.create({
-                                    data: {
-                                        walletId: hostWallet.id,
-                                        direction: LedgerDirection.CREDIT,
-                                        txType: PointTxType.VIDEO_CALL,
-                                        amount: pointRate,
-                                        balanceAfter: balanceAfterPoints,
-                                        idempotencyKey: `call-${session.id}-min-${m}-points`,
-                                        refId: session.id,
-                                        counterpartyId: session.callerId,
-                                        description: `Points for video call minute ${m}`
-                                    }
-                                });
-
-                                const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
-                                txAgencyUserId = commRes ? commRes.agencyUserId : null;
-
-                                await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
-                                await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
-
-                                currentCoinsDeducted += coinRate;
-                                currentPointsAwarded += pointRate;
-
-                                await tx.videoCallSession.update({
-                                    where: { id: session.id },
-                                    data: {
-                                        minsCharged: m,
-                                        coinsDeducted: currentCoinsDeducted,
-                                        pointsAwarded: currentPointsAwarded
-                                    }
-                                });
-                            }, { timeout: 15000 });
-
-                            await invalidateCaches(session.callerId, session.creatorId, txAgencyUserId);
-                            if (txAgencyUserId) {
-                                await afterCommissionCreditCommit(txAgencyUserId);
-                            }
-                            }
-
-                            if (!(await lowCoinDisconnectPending(session.id))) {
-                                const wAfter = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN);
-                                const coinsAfter = await getFastCoinBalance(wAfter.id);
-                                if (coinsAfter < coinRate) {
-                                    const startMs = new Date(session.startedAt).getTime();
-                                    const disconnectAtMs = startMs + (m * 60000); // end of minute m
-                                    const msUntil = disconnectAtMs - Date.now();
-                                    if (msUntil > 0) {
-                                        console.log(`[VideoCall] Caller cannot afford minute ${m + 1}. Scheduling disconnect in ${msUntil}ms for session ${session.id}`);
-                                        await scheduleLowCoinDisconnect(session.id, session.callerId, coinRate, disconnectAtMs, m);
-                                    }
-                                }
-                            }
-                        } catch (err) {
-                            if (err.message === "INSUFFICIENT_BALANCE") {
-                                console.log(`[VideoCall] Session ${session.id} auto-ended due to insufficient balance.`);
-                                await endCall(session.id, session.callerId, "INSUFFICIENT_BALANCE");
-                                hasFailed = true;
-                                break;
-                            } else if (err.message === "CALL_NOT_ACTIVE" || err.code === "CALL_NOT_ACTIVE") {
-                                // Ended since the snapshot (LIVE-26): nothing to bill.
-                                hasFailed = true;
-                                break;
-                            } else if (err.message === "MINUTE_ALREADY_BILLED" || err.code === "MINUTE_OUT_OF_ORDER") {
-                                // Another node billed it, or this snapshot is stale; the next tick re-reads.
-                                hasFailed = true;
-                                break;
-                            } else {
-                                if (err.code === "P2002") {
-                                    console.log(`[VideoCall] Idempotency key match for minute ${m}, assuming already billed. Error detail:`, err);
-                                    await prisma.videoCallSession.updateMany({
-                                        where: { id: session.id, minsCharged: { lt: m } },
-                                        data: { minsCharged: m }
-                                    }).catch(() => { });
-                                } else {
-                                    console.error(`[VideoCall] Transaction error billing session ${session.id} minute ${m}:`, err);
-                                    hasFailed = true;
-                                    break;
-                                }
-                            }
-                        }
-                    }
-
-                    if (hasFailed) {
-                        continue;
-                    }
+                await withBillingSlot(() => billDueMinutes(session));
+                if (!(await hasDurable(BILL_TIMER, session.id))) {
+                    await scheduleNextBilling(await prisma.videoCallSession.findUnique({ where: { id: session.id } }));
                 }
             }
         } catch (err) {
             console.error("[VideoCall] Error during active session billing:", err);
         }
-    }, 5000);
+    }), 5000);
     onShutdown("videocall-sweep", () => clearInterval(videoCallSweep));
 }
 

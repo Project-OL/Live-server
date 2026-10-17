@@ -226,6 +226,9 @@ export const scheduleDurable = async (kind, key, atMs, payload = null) => {
     const handle = setTimeout(() => {
         fire(member, payload, persisted).catch(() => { });
     }, delay);
+    // A pending deadline alone must not keep a process alive (tests, one-off scripts); the server
+    // stays up through its HTTP listener, and the deadline is in Redis for the sweeper anyway.
+    handle.unref?.();
     localTimers.set(member, handle);
 };
 
