@@ -173,7 +173,9 @@ export const getTestUsers = async (req, res) => {
             }
         });
 
-        const secret = process.env.JWT_SECRET || "fallback_secret";
+        // No placeholder fallback: test routes exist only outside production (SEC-06).
+        const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || process.env.JWT_SECRET_KEY;
+        if (!secret) return res.status(500).json({ success: false, message: "JWT secret not configured" });
 
         const mappedUsers = users.map(u => {
             const token = jwt.sign({ userId: u.id, tokenVersion: 0 }, secret, { expiresIn: '1d' });

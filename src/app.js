@@ -64,6 +64,10 @@ try {
 
 
 import { errorHandler } from "./middlewares/errorHandler.js";
+import { liveHealth } from "./routes/liveHealth.js";
+
+// LIVE-46: dependency-aware health for uptime checks (see src/routes/liveHealth.js).
+app.get("/live-health", liveHealth);
 
 app.get("/", (_req, res) => {
   res.status(200).json({

@@ -39,9 +39,15 @@ const attachRedisAdapter = async (server) => {
 };
 
 export const initSocket = async (server) => {
+    // SEC-13: browser origins allowed to open a socket. Opt-in: LIVE_SOCKET_CORS_ORIGINS
+    // (comma-separated); unset keeps "*". The mobile app sends no Origin, so CORS never applies to it.
+    const socketOrigins = String(process.env.LIVE_SOCKET_CORS_ORIGINS || "")
+        .split(",")
+        .map((o) => o.trim())
+        .filter(Boolean);
     io = new Server(server, {
         cors: {
-            origin: "*",
+            origin: socketOrigins.length ? socketOrigins : "*",
             credentials: true,
         },
     });
