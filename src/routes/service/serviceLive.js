@@ -10,6 +10,7 @@ import {
     getFastPointBalance,
     updateUserLevel,
 } from '../../modules/videoCall/service.js';
+import { callLedger, ledgerMode, toLocalError } from '../../services/ledgerClient.js';
 import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
@@ -1402,8 +1403,11 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         ? `gift-stream:${senderId}:${clientTxId}`
         : `gift-stream:${giftTransactionId}`;
 
+    const remoteLedger = ledgerMode("GIFT_LIVE") === "remote";
     let txAgencyUserId = null;
-    const settled = await runMoneyTransaction(async (tx) => {
+    const settled = remoteLedger
+        ? await sendStreamGiftRemoteLedger({ senderId, receiverId, giftId: gift.id, giftCount, giftTransactionId, idemBase })
+        : await runMoneyTransaction(async (tx) => {
         const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
         const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT, tx);
 
@@ -1510,9 +1514,12 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
     const { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp } = settled;
 
     // Committed. Everything below is best-effort and must not fail the send.
-    await writeCoinBalanceCache(senderId, balanceAfterCoins);
-    await writePointBalanceCache(receiverId, balanceAfterPoints);
-    if (redisClient.isOpen) {
+    // (Remote mode: ol-node-rest already refreshed the balance/level caches and the agency tier.)
+    if (!remoteLedger) {
+        await writeCoinBalanceCache(senderId, balanceAfterCoins);
+        await writePointBalanceCache(receiverId, balanceAfterPoints);
+    }
+    if (!remoteLedger && redisClient.isOpen) {
         // Level XP Cache Invalidation for sender wealth level & receiver stream level
         redisClient.del(`level:wealth:${senderId}`).catch(() => { });
         redisClient.del(`level:stream:${receiverId}`).catch(() => { });
@@ -1581,6 +1588,29 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         currentLevel: finalLevel,
         isLevelUp
     };
+};
+
+/** BE-20 remote ledger for a live-stream gift; returns the same fields as the local transaction. */
+const sendStreamGiftRemoteLedger = async ({ senderId, receiverId, giftId, giftCount, giftTransactionId, idemBase }) => {
+    try {
+        const r = await callLedger("GIFT_LIVE", "gift", {
+            context: "live_stream",
+            senderId,
+            receiverId,
+            giftId,
+            quantity: giftCount,
+            giftTransactionId,
+            idemBase
+        });
+        return {
+            balanceAfterCoins: BigInt(r.balanceAfterCoins),
+            balanceAfterPoints: BigInt(r.balanceAfterPoints),
+            finalLevel: r.wealth.newLevel,
+            isLevelUp: r.wealth.newLevel > r.wealth.previousLevel
+        };
+    } catch (err) {
+        throw toLocalError(err, { insufficient: "Insufficient coins to send this gift." });
+    }
 };
 
 export const followUserService = async ({ followerId, followingId }) => {
@@ -1770,6 +1800,8 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
     let agentLedgerEntry = null;
     if (commissionPoints > 0n) {
         const agentWallet = await getOrCreateWallet(agencyUserId, WalletCurrencyType.POINT, tx);
+        // LIVE-24: lock before reading (see processAgencyCommission in videoCall/service.js).
+        await lockWalletsForUpdate(tx, [agentWallet.id]);
         const agentPoints = await getFastPointBalance(agentWallet.id, tx);
         const balanceAfter = agentPoints + commissionPoints;
 
@@ -1810,6 +1842,17 @@ export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoin
     return { agencyUserId, commissionPoints, agentLedgerEntry };
 };
 
+/** BE-20 remote ledger for the 10,000-coin global message. */
+const globalMessageRemoteLedger = async ({ senderId, messageTxId, idemKey, message }) => {
+    try {
+        // Only the ledger description uses the text (first 30 chars).
+        const r = await callLedger("GLOBAL_MESSAGE", "global-message", { senderId, messageTxId, idemKey, message: message.slice(0, 100) });
+        return { balanceAfterCoins: BigInt(r.balanceAfterCoins), wealthLevel: r.wealthLevel };
+    } catch (err) {
+        throw toLocalError(err, { insufficient: "Insufficient coins to send a global message." });
+    }
+};
+
 export const sendGlobalMessageService = async ({ senderId, message, streamId = null, clientTxId = null }) => {
     // Fast pre-check only; re-checked under the wallet lock below.
     await checkCoinsFrozenFast(senderId);
@@ -1843,7 +1886,10 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
     const messageTxId = crypto.randomUUID();
     const idemKey = clientTxId ? `global-msg:${senderId}:${clientTxId}` : `global-msg:${messageTxId}`;
 
-    const { balanceAfterCoins, wealthLevel } = await runMoneyTransaction(async (tx) => {
+    const remoteLedger = ledgerMode("GLOBAL_MESSAGE") === "remote";
+    const { balanceAfterCoins, wealthLevel } = remoteLedger
+        ? await globalMessageRemoteLedger({ senderId, messageTxId, idemKey, message })
+        : await runMoneyTransaction(async (tx) => {
         const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
         await lockWalletsForUpdate(tx, [senderWallet.id]);
         await assertCoinsNotFrozenInTx(tx, senderId);
@@ -1877,9 +1923,11 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         return { balanceAfterCoins: dbBalanceAfter, wealthLevel: wealth.newLevel };
     });
 
-    await writeCoinBalanceCache(senderId, balanceAfterCoins);
-    if (redisClient.isOpen) {
-        redisClient.del(`level:wealth:${senderId}`).catch(() => { });
+    if (!remoteLedger) {
+        await writeCoinBalanceCache(senderId, balanceAfterCoins);
+        if (redisClient.isOpen) {
+            redisClient.del(`level:wealth:${senderId}`).catch(() => { });
+        }
     }
 
     return {

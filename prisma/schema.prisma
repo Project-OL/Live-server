@@ -2694,3 +2694,19 @@ model LiveStreamAdmin {
   @@map("live_stream_admins")
 }
 
+/// Owned by ol-node-rest (its migrations create and alter it); mirrored here so Live-server's test DB
+/// has it. Live-server only reads the lucky columns (src/services/luckyShares.service.js).
+model HostRevenueShareConfig {
+  id                   Int      @id @default(1)
+  giftReceiveBp        Int      @default(6000) @map("gift_receive_bp")
+  subscriptionBp       Int      @default(7500) @map("subscription_bp")
+  guardianPurchaseBp   Int      @default(7500) @map("guardian_purchase_bp")
+  videoCallHostShareBp Int      @default(6000) @map("video_call_host_share_bp")
+  luckyHostShareBp     Int      @default(400) @map("lucky_host_share_bp")
+  luckyTargetRtpBp     Int      @default(9200) @map("lucky_target_rtp_bp")
+  updatedAt            DateTime @updatedAt @map("updated_at")
+  updatedByAdminId     String?  @map("updated_by_admin_id") @db.Uuid
+
+  @@map("host_revenue_share_config")
+}
+

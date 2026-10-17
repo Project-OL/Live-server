@@ -12,7 +12,7 @@ import { test, after } from "node:test";
 import assert from "node:assert/strict";
 import {
     prisma, videoCall, live, makeUser, makeAgency, makeGift, makeActiveCall,
-    walletIdOf, ledgerProblems, olNodeStyleLockedCredit, closeAll, ensureWallets, luckyGift, levelXp,
+    walletIdOf, ledgerProblems, olNodeStyleLockedCredit, closeAll, ensureWallets, luckyGift, levelXp, setLuckyShares,
 } from "./helpers.mjs";
 
 after(closeAll);
@@ -62,7 +62,7 @@ test("sender cannot overspend: parallel gifts beyond the balance are rejected, n
     assert.equal(latest.balanceAfter, 0n);
 });
 
-test("LIVE-24: two hosts of one agency earning at once keep the agency wallet consistent", { todo: "LIVE-24" }, async () => {
+test("LIVE-24: two hosts of one agency earning at once keep the agency wallet consistent", async () => {
     const agency = await makeAgency("A", 1600);
     const [h1, h2] = [await makeUser({ agencyUserId: agency.id }), await makeUser({ agencyUserId: agency.id })];
     const [s1, s2] = [await makeUser({ coins: 1_000_000n }), await makeUser({ coins: 1_000_000n })];
@@ -82,7 +82,7 @@ test("LIVE-24: two hosts of one agency earning at once keep the agency wallet co
     assert.deepEqual(await ledgerProblems([aw]), [], "agency wallet balance must equal the sum of its commission credits");
 });
 
-test("LIVE-24 cross-service: Live-server commission racing an ol-node-rest-style locked credit", { todo: "LIVE-24" }, async () => {
+test("LIVE-24 cross-service: Live-server commission racing an ol-node-rest-style locked credit", async () => {
     const agency = await makeAgency("A", 1600);
     const h1 = await makeUser({ agencyUserId: agency.id });
     const s1 = await makeUser({ coins: 1_000_000n });
@@ -101,7 +101,7 @@ test("LIVE-24 cross-service: Live-server commission racing an ol-node-rest-style
     assert.deepEqual(await ledgerProblems([await walletIdOf(agency.id, "POINT")]), []);
 });
 
-test("LIVE-56: the first gifts to a brand-new host (no wallet yet) all succeed", { todo: "LIVE-56" }, async () => {
+test("LIVE-56: the first gifts to a brand-new host (no wallet yet) all succeed", async () => {
     // getOrCreateWallet is find-then-create: parallel first gifts race to create the receiver's
     // POINT wallet, the losers hit P2002 on (user_id, currency_type), and the controller reports
     // that as 409 "Duplicate gift send (already processed)" although nothing was sent.
@@ -115,7 +115,7 @@ test("LIVE-56: the first gifts to a brand-new host (no wallet yet) all succeed",
     assert.deepEqual(await ledgerProblems([await walletIdOf(sender.id, "COIN"), await walletIdOf(newHost.id, "POINT")]), []);
 });
 
-test("LIVE-25: the minute-1 agency commission is committed together with the call accept", { todo: "LIVE-25" }, async () => {
+test("LIVE-25: the minute-1 agency commission is committed together with the call accept", async () => {
     const agency = await makeAgency("A", 1600);
     const hostUser = await makeUser({ agencyUserId: agency.id });
     const caller = await makeUser({ coins: 1_000_000n });
@@ -126,7 +126,10 @@ test("LIVE-25: the minute-1 agency commission is committed together with the cal
     await videoCall.acceptCall(session.id, hostUser.id);
     // Read straight after the accept returns: a committed accept must already include the commission.
     const hostLedger = await prisma.pointLedgerEntry.findFirst({ where: { idempotencyKey: `call-${session.id}-min-1-points` } });
-    const commission = await prisma.pointLedgerEntry.findFirst({ where: { idempotencyKey: `agency-commission-${hostLedger.id}` } });
+    // Local mode keys the commission `agency-commission-<id>`, ol-node-rest (remote mode) `agency-commission:<id>`.
+    const commission = await prisma.pointLedgerEntry.findFirst({
+        where: { idempotencyKey: { in: [`agency-commission-${hostLedger.id}`, `agency-commission:${hostLedger.id}`] } },
+    });
     assert.ok(commission, "commission row must exist as soon as the accept has committed");
 });
 
@@ -182,6 +185,22 @@ test("lucky single: host gets 4% points + equal livestream XP, sender wealth XP 
     assert.equal(await levelXp(sender.id, "WEALTH"), 1_000n, "sender wealth XP = full cost");
     assert.equal(await commissionRowsFor(r.transactionId), 0, "single lucky gifts pay no agency commission");
     assert.deepEqual(await ledgerProblems([await walletIdOf(sender.id, "COIN"), await walletIdOf(hostUser.id, "POINT")]), []);
+});
+
+test("lucky host cut follows the admin setting (host_revenue_share_config.lucky_host_share_bp)", async () => {
+    const hostUser = await makeUser();
+    const sender = await makeUser({ coins: 1_000_000n });
+    await ensureWallets(hostUser.id);
+    const gift = await makeGift(1_000, { isLucky: true });
+    await setLuckyShares({ luckyHostShareBp: 500 });
+    try {
+        const r = await luckyGift.sendLuckyGiftService({ senderId: sender.id, receiverId: hostUser.id, streamId: "s", giftId: gift.id, comboCount: 1 });
+        assert.equal(r.hostEarningPoints, 50, "5% of 1,000");
+        const hostRow = await prisma.pointLedgerEntry.findFirst({ where: { refId: r.transactionId, txType: "LIVESTREAM_GIFT" } });
+        assert.equal(hostRow.amount, 50n, "the ledger row agrees with the payload");
+    } finally {
+        await setLuckyShares();
+    }
 });
 
 test("lucky combo: host XP = host points, agency commission is paid", async () => {

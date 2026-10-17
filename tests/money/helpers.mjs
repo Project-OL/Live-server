@@ -94,6 +94,19 @@ export async function makeGift(coinCost = 100, { isLucky = false } = {}) {
 }
 
 export const luckyGift = await import("../../src/routes/service/serviceLuckyGift.js");
+export const luckyShares = await import("../../src/services/luckyShares.service.js");
+export const redisClient = redis.client;
+
+/** Set the lucky admin settings (ol-node-rest owns the row) and drop every cached copy. */
+export async function setLuckyShares({ luckyHostShareBp = 400, luckyTargetRtpBp = 9200 } = {}) {
+    await prisma.hostRevenueShareConfig.upsert({
+        where: { id: 1 },
+        create: { id: 1, luckyHostShareBp, luckyTargetRtpBp },
+        update: { luckyHostShareBp, luckyTargetRtpBp },
+    });
+    await redis.client.del("host:revenue-shares");
+    luckyShares.resetLuckySharesMemo();
+}
 
 /** cumulative XP of one level type (0 when the user has no row yet). */
 export async function levelXp(userId, levelType) {

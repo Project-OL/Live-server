@@ -22,6 +22,7 @@ import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
 import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
 import { giftImageFields } from "../../utils/giftImage.js";
+import { callLedger, ledgerMode, toLocalError } from "../../services/ledgerClient.js";
 import {
     isLeader,
     onShutdown,
@@ -162,12 +163,16 @@ export const getOrCreateWallet = async (userId, currencyType, tx = prisma) => {
         where: { userId_currencyType: { userId, currencyType } }
     });
     if (!wallet) {
-        wallet = await tx.wallet.create({
-            data: {
-                userId,
-                currencyType,
-                version: 0n
-            }
+        // LIVE-56: find-then-create raced on a brand-new user's first parallel gifts; the losers hit
+        // P2002, which aborts the money transaction and was reported as a duplicate send.
+        // ON CONFLICT DO NOTHING waits for the concurrent creator instead.
+        await tx.$executeRaw`
+            INSERT INTO wallets (id, user_id, currency_type, version, unconfirmed_points, created_at, updated_at)
+            VALUES (gen_random_uuid(), ${userId}::uuid, ${currencyType}::"WalletCurrencyType", 0, 0, NOW(), NOW())
+            ON CONFLICT (user_id, currency_type) DO NOTHING
+        `;
+        wallet = await tx.wallet.findUnique({
+            where: { userId_currencyType: { userId, currencyType } }
         });
     }
     return wallet;
@@ -270,6 +275,9 @@ export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedger
     let agentLedgerEntry = null;
     if (commissionPoints > 0n) {
         const agentWallet = await getOrCreateWallet(agencyUserId, WalletCurrencyType.POINT, tx);
+        // LIVE-24: lock before reading, like ol-node-rest's creditInTransaction. Unlocked, two hosts
+        // of one agency earning at once both read X and both wrote X + c (one credit lost).
+        await lockWalletsForUpdate(tx, [agentWallet.id]);
         const agentPoints = await getFastPointBalance(agentWallet.id, tx);
         const balanceAfter = agentPoints + commissionPoints;
 
@@ -568,6 +576,22 @@ export const initiateCall = async ({ callerId, creatorId }) => {
     return session;
 };
 
+/**
+ * BE-20 remote accept: ol-node-rest bills minute 1 (debit, credit, levels, commission) and flips the
+ * session to ACTIVE in one transaction under the session row lock. The row is then read back with
+ * this service's Prisma client, so the response is shaped exactly like the local path's.
+ */
+const acceptCallRemoteLedger = async (sessionId, receiverId) => {
+    let r;
+    try {
+        r = await callLedger("CALL_ACCEPT", "call-accept", { sessionId, receiverId });
+    } catch (err) {
+        throw toLocalError(err, { insufficient: "Insufficient balance to accept call." });
+    }
+    const updatedSession = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
+    return { updatedSession, agencyUserId: r.agencyUserId ?? null };
+};
+
 export const acceptCall = async (sessionId, receiverId) => {
     const session = await prisma.videoCallSession.findUnique({ where: { id: sessionId } });
 
@@ -581,7 +605,10 @@ export const acceptCall = async (sessionId, receiverId) => {
     const pointRate = BigInt(session.pricePerMin);
 
     // 1st minute balance check & core balance debit/credit (Strictly blocking)
-    const { updatedSession, hostLedgerId } = await prisma.$transaction(async (tx) => {
+    const remoteLedger = ledgerMode("CALL_ACCEPT") === "remote";
+    const { updatedSession, agencyUserId } = remoteLedger
+        ? await acceptCallRemoteLedger(sessionId, receiverId)
+        : await runMoneyTransaction(async (tx) => {
         const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
         const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
 
@@ -630,6 +657,10 @@ export const acceptCall = async (sessionId, receiverId) => {
         await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
         await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
 
+        // LIVE-25: the minute-1 commission commits with the minute it derives from (it ran after
+        // this transaction, unlocked, so a crash in between dropped it).
+        const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
+
         const updated = await tx.videoCallSession.update({
             where: { id: sessionId },
             data: {
@@ -641,12 +672,11 @@ export const acceptCall = async (sessionId, receiverId) => {
             }
         });
 
-        return { updatedSession: updated, hostLedgerId: hostLedger.id };
+        return { updatedSession: updated, agencyUserId: commRes ? commRes.agencyUserId : null };
     }, { timeout: 10000 });
 
-    // Committed: drop balance + level caches now. The background task below
-    // repeats this with the agency id, but only if every step before it succeeds.
-    await invalidateCaches(session.callerId, session.creatorId);
+    // Committed: drop balance + level caches now (remote mode: ol-node-rest already did).
+    if (!remoteLedger) await invalidateCaches(session.callerId, session.creatorId, agencyUserId);
 
     // Generate LiveKit tokens (In-memory, very fast!)
     const receiverToken = await generateLivekitToken(session.livekitRoom, receiverId, true);
@@ -744,13 +774,9 @@ export const acceptCall = async (sessionId, receiverId) => {
         }
 
         try {
-            // 2. Process Agency Commission
-            const commRes = await processAgencyCommission(prisma, session.creatorId, pointRate, hostLedgerId);
-            const agencyUserId = commRes ? commRes.agencyUserId : null;
-
-            // 3. Cache Invalidation (levels were updated in the accept transaction) + tier recompute (ol-node afterCommissionCreditCommit)
-            await invalidateCaches(session.callerId, session.creatorId, agencyUserId);
-            if (agencyUserId) {
+            // 2. Agency tier recompute (ol-node afterCommissionCreditCommit). The commission itself
+            // committed inside the accept transaction; remote mode recomputes in ol-node-rest.
+            if (agencyUserId && !remoteLedger) {
                 await afterCommissionCreditCommit(agencyUserId);
             }
 
@@ -1057,7 +1083,17 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                         }
                         try {
                             let txAgencyUserId = null;
-                            await prisma.$transaction(async (tx) => {
+                            if (ledgerMode("CALL_MINUTE") === "remote") {
+                                // BE-20: billed in ol-node-rest under the session row lock, so an
+                                // ended call is never billed and a minute is never billed twice.
+                                try {
+                                    await callLedger("CALL_MINUTE", "call-minute", { sessionId: session.id, minute: m });
+                                } catch (err) {
+                                    if (err.code === "INSUFFICIENT_COINS") throw new Error("INSUFFICIENT_BALANCE");
+                                    throw err;
+                                }
+                            } else {
+                            await runMoneyTransaction(async (tx) => {
                                 const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
                                 const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
 
@@ -1124,6 +1160,7 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                             await invalidateCaches(session.callerId, session.creatorId, txAgencyUserId);
                             if (txAgencyUserId) {
                                 await afterCommissionCreditCommit(txAgencyUserId);
+                            }
                             }
 
                             if (!(await lowCoinDisconnectPending(session.id))) {
@@ -1261,64 +1298,11 @@ export const getFastPointBalance = async (walletId, tx = prisma) => {
 };
 
 /**
- * Send a gift inside a video call.
- *
- * The coin debit is decided from Postgres inside a transaction holding
- * FOR UPDATE on both wallet rows, and the socket event is emitted only after
- * that transaction commits. Redis is written afterwards as a cache refresh.
- * See src/services/walletBalance.service.js for the rule this follows.
- *
- * `clientTxId`, when supplied, makes the send idempotent across client retries;
- * without it the ledger keys are still deterministic per logical send, so an
- * internal transaction retry can never produce a second debit.
+ * Local ledger path of a video-call gift (LIVE_LEDGER_MODE_GIFT_VIDEO_CALL=local): one transaction
+ * holding FOR UPDATE on both wallets, then the post-commit cache refresh. Remote mode writes the same
+ * rows through ol-node-rest instead.
  */
-export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxId = null) => {
-    // Fast pre-check to reject obviously-frozen senders before doing any work.
-    // Authoritative re-check happens under the wallet lock below.
-    await checkCoinsFrozenFast(senderId);
-
-    const giftCount = Math.max(1, parseInt(count || 1, 10));
-
-    const [session, gift, senderUser] = await Promise.all([
-        prisma.videoCallSession.findUnique({
-            where: { id: sessionId }
-        }),
-        prisma.gift.findUnique({
-            where: { id: giftId }
-        }),
-        prisma.user.findUnique({
-            where: { id: senderId },
-            select: { username: true }
-        })
-    ]);
-
-    if (!session) {
-        throw new Error("Video call session not found.");
-    }
-    if (session.status !== "ACTIVE") {
-        throw new Error("Video call session is not active.");
-    }
-    if (!gift || !gift.isActive) {
-        throw new Error("Gift not found or is inactive.");
-    }
-
-    const receiverId = (senderId === session.callerId) ? session.creatorId : session.callerId;
-    const receiverUser = await prisma.user.findUnique({
-        where: { id: receiverId },
-        select: { username: true }
-    });
-
-    const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
-    const pointsAwarded = (coinCost * 60n) / 100n;
-    const senderName = senderUser ? (senderUser.username || "User") : "User";
-    const receiverName = receiverUser ? (receiverUser.username || "User") : "User";
-
-    // The debit, the wealth-level bump, the host credit and the agency
-    // commission all settle in one transaction that holds FOR UPDATE on both
-    // wallet rows. Nothing is emitted and no cache is written until it commits.
-    const giftTransactionId = crypto.randomUUID();
-    const idemBase = clientTxId ? `gift:${senderId}:${clientTxId}` : `gift:${giftTransactionId}`;
-
+const sendGiftLocalLedger = async ({ senderId, receiverId, gift, giftCount, coinCost, pointsAwarded, giftTransactionId, idemBase }) => {
     let giftAgencyUserId = null;
     const settled = await runMoneyTransaction(async (tx) => {
         const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
@@ -1415,11 +1399,9 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
         return { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp };
     });
 
-    const { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp } = settled;
-
     // Committed. Everything below is best-effort and must never fail the send.
-    await writeCoinBalanceCache(senderId, balanceAfterCoins);
-    await writePointBalanceCache(receiverId, balanceAfterPoints);
+    await writeCoinBalanceCache(senderId, settled.balanceAfterCoins);
+    await writePointBalanceCache(receiverId, settled.balanceAfterPoints);
     redisClient.del(`level:wealth:${senderId}`).catch((err) => console.error(err));
     redisClient.del(`level:stream:${receiverId}`).catch((err) => console.error(err));
 
@@ -1428,6 +1410,97 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
             console.error("[VideoCall Gift] agency tier recompute failed:", err)
         );
     }
+    return settled;
+};
+
+/**
+ * Send a gift inside a video call.
+ *
+ * The coin debit is decided from Postgres inside a transaction holding
+ * FOR UPDATE on both wallet rows, and the socket event is emitted only after
+ * that transaction commits. Redis is written afterwards as a cache refresh.
+ * See src/services/walletBalance.service.js for the rule this follows.
+ *
+ * `clientTxId`, when supplied, makes the send idempotent across client retries;
+ * without it the ledger keys are still deterministic per logical send, so an
+ * internal transaction retry can never produce a second debit.
+ */
+export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxId = null) => {
+    // Fast pre-check to reject obviously-frozen senders before doing any work.
+    // Authoritative re-check happens under the wallet lock below.
+    await checkCoinsFrozenFast(senderId);
+
+    const giftCount = Math.max(1, parseInt(count || 1, 10));
+
+    const [session, gift, senderUser] = await Promise.all([
+        prisma.videoCallSession.findUnique({
+            where: { id: sessionId }
+        }),
+        prisma.gift.findUnique({
+            where: { id: giftId }
+        }),
+        prisma.user.findUnique({
+            where: { id: senderId },
+            select: { username: true }
+        })
+    ]);
+
+    if (!session) {
+        throw new Error("Video call session not found.");
+    }
+    if (session.status !== "ACTIVE") {
+        throw new Error("Video call session is not active.");
+    }
+    if (!gift || !gift.isActive) {
+        throw new Error("Gift not found or is inactive.");
+    }
+
+    const receiverId = (senderId === session.callerId) ? session.creatorId : session.callerId;
+    const receiverUser = await prisma.user.findUnique({
+        where: { id: receiverId },
+        select: { username: true }
+    });
+
+    const coinCost = BigInt(gift.coinCost) * BigInt(giftCount);
+    const pointsAwarded = (coinCost * 60n) / 100n;
+    const senderName = senderUser ? (senderUser.username || "User") : "User";
+    const receiverName = receiverUser ? (receiverUser.username || "User") : "User";
+
+    // The debit, the wealth-level bump, the host credit and the agency
+    // commission all settle in one transaction that holds FOR UPDATE on both
+    // wallet rows. Nothing is emitted and no cache is written until it commits.
+    const giftTransactionId = crypto.randomUUID();
+    const idemBase = clientTxId ? `gift:${senderId}:${clientTxId}` : `gift:${giftTransactionId}`;
+
+    let settled;
+    if (ledgerMode("GIFT_VIDEO_CALL") === "remote") {
+        // BE-20: ol-node-rest settles the debit, credit, levels and commission and refreshes the
+        // shared caches; this path keeps the socket events below.
+        try {
+            const r = await callLedger("GIFT_VIDEO_CALL", "gift", {
+                context: "video_call",
+                senderId,
+                receiverId,
+                giftId: gift.id,
+                quantity: giftCount,
+                giftTransactionId,
+                idemBase,
+                sessionId
+            });
+            settled = {
+                balanceAfterCoins: BigInt(r.balanceAfterCoins),
+                balanceAfterPoints: BigInt(r.balanceAfterPoints),
+                finalLevel: r.wealth.newLevel,
+                isLevelUp: r.wealth.newLevel > r.wealth.previousLevel
+            };
+        } catch (err) {
+            throw toLocalError(err, { insufficient: "Insufficient coins to send this gift." });
+        }
+    } else {
+        settled = await sendGiftLocalLedger({ sessionId, senderId, receiverId, gift, giftCount, coinCost, pointsAwarded, giftTransactionId, idemBase });
+    }
+
+    const { balanceAfterCoins, finalLevel, isLevelUp } = settled;
 
     const socketPayload = {
         success: true,

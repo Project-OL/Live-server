@@ -1,6 +1,6 @@
 import prisma from '../../config/prisma.js';
 import { client as redisClient } from '../../config/redis.js';
-import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
+import { getLuckyShares } from '../../services/luckyShares.service.js';
 import { runAsLeader, onShutdown } from '../../services/cluster.service.js';
 
 const SPENT_KEY = "lucky:reserve:total_spent";
@@ -55,8 +55,9 @@ export const getReservePoolStats = async () => {
     const totalRewarded = rewardedStr !== null ? Number(rewardedStr) : 0;
     const poolBalance = poolStr !== null ? Number(poolStr) : 0;
 
-    const targetRtp = LUCKY_GIFT_CONFIG.targetRtpPercent || 92.0;
-    const currentRtp = totalSpent > 0 
+    // Admin setting (host_revenue_share_config.lucky_target_rtp_bp), default 92%.
+    const targetRtp = (await getLuckyShares()).luckyTargetRtpBp / 100;
+    const currentRtp = totalSpent > 0
         ? (totalRewarded / totalSpent) * 100 
         : targetRtp;
 
@@ -77,7 +78,7 @@ export const updateReservePool = async ({ giftCost, rewardCoins }) => {
 
     const cost = Number(giftCost);
     const reward = Number(rewardCoins);
-    const targetRtp = (LUCKY_GIFT_CONFIG.targetRtpPercent || 92.0) / 100;
+    const targetRtp = (await getLuckyShares()).luckyTargetRtpBp / 10000;
 
     const inflow = cost * targetRtp;
     const outflow = reward;
