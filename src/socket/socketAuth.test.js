@@ -122,6 +122,21 @@ test("SEC-14: a revoked token is rejected when both modes enforce", async () => 
     }
 });
 
+test("SEC-17: a stale session token (normal refresh) is accepted on the socket even when enforcing", async () => {
+    process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
+    process.env.LIVE_SESSION_CHECK_MODE = "enforce";
+    setSessionCheckerForTests(async () => ({ ok: false, statusCode: 401, code: "SESSION_TOKEN_STALE", message: "stale" }));
+    try {
+        const t = jwt.sign({ userId: "real" }, SECRET, { expiresIn: 3600 });
+        const { socket, err } = await run({ auth: { token: t } });
+        assert.equal(err, undefined);
+        assert.equal(socket.data.authUserId, "real");
+    } finally {
+        delete process.env.LIVE_SESSION_CHECK_MODE;
+        setSessionCheckerForTests(async () => ({ ok: true }));
+    }
+});
+
 test("SEC-14: a checker error never rejects the socket", async () => {
     process.env.LIVE_SOCKET_AUTH_MODE = "enforce";
     process.env.LIVE_SESSION_CHECK_MODE = "enforce";

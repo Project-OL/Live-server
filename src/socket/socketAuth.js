@@ -132,8 +132,17 @@ export const socketAuthMiddleware = async (socket, next) => {
     if (userId) {
         try {
             const payload = jwt.decode(extractSocketToken(hs));
-            const verdict = await sessionChecker(payload);
-            recordSessionCheck("socket", verdict);
+            let verdict = await sessionChecker(payload);
+            // SEC-17: every refresh bumps the session's token_version, and the app reconnects its
+            // socket with the token it first connected with, so STALE here is a normal refresh, not a
+            // revocation (2026-10-17 prod counters). Logout, password reset, ban and device ban still
+            // reject (SESSION_INVALID / DEVICE_BANNED); REST keeps the full check.
+            if (!verdict.ok && verdict.code === "SESSION_TOKEN_STALE") {
+                verdict = { ok: true, code: "STALE_OK" };
+                recordSessionCheck("socket", { ok: false, code: "STALE_OK" });
+            } else {
+                recordSessionCheck("socket", verdict);
+            }
             if (!verdict.ok) {
                 if (shouldLogRejection(userId)) {
                     console.warn(`[Session Check] socket for user ${userId} ${verdict.code} (mode=${sessionCheckMode()})`);
