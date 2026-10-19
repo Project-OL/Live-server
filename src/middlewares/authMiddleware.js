@@ -7,6 +7,7 @@ import {
     shouldLogRejection,
 } from "../services/session.service.js";
 import { setLogFields } from "../utils/logger.js";
+import { restRateAllow } from "./restRateLimit.js";
 
 export const authenticate = async (req, res, next) => {
     try {
@@ -55,6 +56,8 @@ export const authenticate = async (req, res, next) => {
         req.deviceId = payload.deviceId;
         req.jti = payload.jti;
         setLogFields({ userId: String(userId) }); // LIVE-44: later log lines of this request carry it
+
+        if (!restRateAllow(req, res, userId)) return; // LIVE-47 (log mode by default)
 
         next();
     } catch (err) {

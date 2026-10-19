@@ -73,5 +73,23 @@ const shutdown = async (signal) => {
   process.exit(0);
 };
 
+/**
+ * LIVE-58 backstop: a rejected promise nobody awaited (e.g. an async socket handler that throws)
+ * used to crash the process, dropping every live stream and call on this node. It is now logged
+ * and the server keeps running; the request or event that caused it fails on its own.
+ * Synchronous uncaught exceptions still exit (state may be inconsistent); pm2 restarts the process.
+ */
+let unhandledCount = 0;
+process.on('unhandledRejection', (reason) => {
+  unhandledCount += 1;
+  if (unhandledCount <= 20 || unhandledCount % 100 === 0) {
+    console.error(`[Process] unhandled rejection #${unhandledCount}:`, reason instanceof Error ? reason.stack : reason);
+  }
+});
+process.on('uncaughtException', (err) => {
+  console.error('[Process] uncaught exception; exiting:', err?.stack || err);
+  process.exit(1);
+});
+
 process.on('SIGTERM', () => void shutdown('SIGTERM'));
 process.on('SIGINT', () => void shutdown('SIGINT'));

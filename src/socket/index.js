@@ -6,6 +6,7 @@ import { client as redisClient } from "../config/redis.js";
 import { onShutdown } from "../services/cluster.service.js";
 import { claimedUserId, socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
 import { withLogContext } from "../utils/logger.js";
+import { socketEventGuard } from "./eventGuard.js";
 
 let io;
 
@@ -67,6 +68,8 @@ export const initSocket = async (server) => {
         socket.use((packet, nextPacket) =>
             withLogContext({ ...base, ev: String(packet?.[0] ?? "").slice(0, 48) }, nextPacket)
         );
+        // LIVE-58 / LIVE-48 / LIVE-47: drop crash-inducing payloads; check fields and rates.
+        socket.use(socketEventGuard(socket));
         withLogContext(base, next);
     });
 
