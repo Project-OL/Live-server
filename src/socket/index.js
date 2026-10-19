@@ -4,7 +4,8 @@ import { setupVideoCallSockets } from "../modules/videoCall/socket.js";
 import { setupLiveSockets } from "../routes/service/socket-live-service.js";
 import { client as redisClient } from "../config/redis.js";
 import { onShutdown } from "../services/cluster.service.js";
-import { socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
+import { claimedUserId, socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
+import { withLogContext } from "../utils/logger.js";
 
 let io;
 
@@ -57,6 +58,17 @@ export const initSocket = async (server) => {
     // SEC-05: verify the access token before any handler reads handshake.userId.
     io.use(socketAuthMiddleware);
     console.log(`[Socket Auth] mode=${socketAuthMode()} (LIVE_SOCKET_AUTH_MODE: off | log | enforce)`);
+
+    // LIVE-44: every log line written while handling a socket event carries the socket, user and
+    // event. socket.io dispatches handlers on a nextTick inside this callback, so the context reaches them.
+    io.use((socket, next) => {
+        const userId = socket.data?.authUserId || claimedUserId(socket.handshake) || undefined;
+        const base = userId ? { sid: socket.id, userId } : { sid: socket.id };
+        socket.use((packet, nextPacket) =>
+            withLogContext({ ...base, ev: String(packet?.[0] ?? "").slice(0, 48) }, nextPacket)
+        );
+        withLogContext(base, next);
+    });
 
     setupVideoCallSockets(io);
     setupLiveSockets(io);

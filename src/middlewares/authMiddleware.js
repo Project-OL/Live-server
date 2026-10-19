@@ -6,6 +6,7 @@ import {
     sessionCheckMode,
     shouldLogRejection,
 } from "../services/session.service.js";
+import { setLogFields } from "../utils/logger.js";
 
 export const authenticate = async (req, res, next) => {
     try {
@@ -53,6 +54,7 @@ export const authenticate = async (req, res, next) => {
         req.sessionId = payload.sessionId;
         req.deviceId = payload.deviceId;
         req.jti = payload.jti;
+        setLogFields({ userId: String(userId) }); // LIVE-44: later log lines of this request carry it
 
         next();
     } catch (err) {

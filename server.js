@@ -4,7 +4,9 @@ BigInt.prototype.toJSON = function () {
   return Number.isSafeInteger(num) ? num : this.toString();
 };
 
-// LIVE-45: must stay the first import (exits before anything connects or signs with a placeholder).
+// LIVE-44: structured logs (console.* -> JSON lines); first so every later line is structured.
+import './src/config/logging.js';
+// LIVE-45: before anything else connects (exits before anything signs with a placeholder).
 import './src/config/assertProductionConfig.js';
 import http from 'http';
 import app from './src/app.js';

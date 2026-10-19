@@ -5,11 +5,15 @@ import authMiddleware from "./middlewares/authMiddleware.js";
 import apiRoutes from "./modules/index.js";
 import streamRoutes from "./routes/index.js";
 import { connectRedis } from "./config/redis.js";
+import { requestLog } from "./middlewares/requestLog.js";
 // import { initSocket } from "./socket/index.js"
 
 dotenv.config();
 
 const app = express();
+
+// LIVE-44 / INF-11: request id + one access-log line per request (before everything else).
+app.use(requestLog);
 
 function corsAllowedOrigins() {
   const raw = [
