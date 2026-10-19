@@ -19,7 +19,8 @@
     "check:redis-keys": "node scripts/check-no-redis-keys.mjs",
     "lift-live-bans": "node scripts/lift-live-moderation-bans.js",
     "lift-live-bans:dry-run": "node scripts/lift-live-moderation-bans.js --dry-run",
-    "lift-live-bans:verify": "node scripts/lift-live-moderation-bans.js --verify-only"
+    "lift-live-bans:verify": "node scripts/lift-live-moderation-bans.js --verify-only",
+    "check:schema": "node scripts/check-schema-drift.mjs ../ol-node-rest/prisma/schema.prisma"
   },
   "keywords": [],
   "author": "",

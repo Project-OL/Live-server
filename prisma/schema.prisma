@@ -1986,16 +1986,6 @@ model UserQuestionnaireAnswer {
   @@map("user_questionnaire_answers")
 }
 
-model ServiceRequest {
-  id        String   @id @default(cuid())
-  userId    String
-  serviceId String
-  provider  String?
-  status    String   @default("pending")
-  payload   Json?
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-}
 
 model LiveStream {
   id            String    @id @default(uuid())
@@ -2028,14 +2018,6 @@ model LiveMessage {
   replyToUsername  String?  @map("reply_to_username")
 }
 
-model StreamViewer {
-  id       String   @id @default(uuid())
-  streamId String
-  userId   String
-  joinedAt DateTime @default(now())
-
-  @@unique([streamId, userId])
-}
 
 model BannedWord {
   id        String   @id @default(uuid()) @db.Uuid
@@ -2160,8 +2142,8 @@ model csa_notifications {
 model custom_gift_config {
   id                  Int      @id @default(1)
   coin_cost           BigInt   @default(100000)
-  coin_cost_1_month   Int?
-  coin_cost_3_months  Int?
+  coin_cost_1_month   BigInt?
+  coin_cost_3_months  BigInt?
   enabled             Boolean  @default(true)
   description         String?
   updated_at          DateTime

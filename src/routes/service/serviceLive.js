@@ -511,22 +511,8 @@ export const endLiveStreamService = async ({
         totalAudiencesCount
     };
 
-    try {
-        const viewerIds = await redisClient.sMembers(`stream:history:${stream.streamId}`);
-        if (viewerIds && viewerIds.length > 0) {
-            const viewerData = viewerIds.map(vId => ({
-                streamId: stream.streamId,
-                userId: vId
-            }));
-            await prisma.streamViewer.createMany({
-                data: viewerData,
-                skipDuplicates: true
-            });
-            console.log(`[Batch Sync] Saved ${viewerIds.length} viewer sessions to DB.`);
-        }
-    } catch (syncError) {
-        console.error("[Batch Sync] Failed to sync viewers to DB:", syncError.message);
-    }
+    // LIVE-51: a viewer-history write to `StreamViewer` used to sit here. That table has never existed
+    // in the shared database (ol-node-rest owns the schema), so the write could only fail; removed.
 
     try {
         const rawChats = await redisClient.lRange(`stream:chats:${stream.streamId}`, 0, -1);
@@ -2027,23 +2013,8 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
 
             console.log(`[Live Stream END] ✅ Ended successfully. reason=AI_MODERATION_NUDITY_BLOCK dbId=${id} streamId=${stream.streamId} userId=${stream.userId} grossDurationSeconds=${grossDurationSeconds} effectiveDurationSeconds=${effectiveDurationSeconds}`);
 
-            // 4. Batch sync viewers/chats from Redis to PostgreSQL
-            try {
-                const viewerIds = await redisClient.sMembers(`stream:history:${stream.streamId}`);
-                if (viewerIds && viewerIds.length > 0) {
-                    const viewerData = viewerIds.map(vId => ({
-                        streamId: stream.streamId,
-                        userId: vId
-                    }));
-                    await prisma.streamViewer.createMany({
-                        data: viewerData,
-                        skipDuplicates: true
-                    });
-                }
-            } catch (syncError) {
-                console.error("[Stream Moderation Sync] Failed to sync viewers:", syncError.message);
-            }
-
+            // 4. Batch sync chats from Redis to PostgreSQL (the viewer write to the nonexistent
+            //    `StreamViewer` table was removed, LIVE-51).
             try {
                 const rawChats = await redisClient.lRange(`stream:chats:${stream.streamId}`, 0, -1);
                 if (rawChats && rawChats.length > 0) {
