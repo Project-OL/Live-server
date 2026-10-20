@@ -64,3 +64,15 @@ test("SEC-07: a body already parsed as JSON (not raw) is rejected", async () => 
     await livekitWebhook(fakeReq(JSON.parse(payload), "Bearer x"), res);
     assert.equal(res.statusCode, 401);
 });
+
+test("LIVE_WEBHOOK_MODE defaults to log (room_finished must not end calls until enforced)", async () => {
+    const { webhookMode } = await import("../../services/livekitEvents.service.js");
+    const saved = process.env.LIVE_WEBHOOK_MODE;
+    delete process.env.LIVE_WEBHOOK_MODE;
+    assert.equal(webhookMode(), "log");
+    process.env.LIVE_WEBHOOK_MODE = "enforce";
+    assert.equal(webhookMode(), "enforce");
+    process.env.LIVE_WEBHOOK_MODE = "bogus";
+    assert.equal(webhookMode(), "log");
+    if (saved === undefined) delete process.env.LIVE_WEBHOOK_MODE; else process.env.LIVE_WEBHOOK_MODE = saved;
+});

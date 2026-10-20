@@ -6,6 +6,7 @@ import { WebhookReceiver } from "livekit-server-sdk";
 import { withGiftThumbnail } from "../../utils/giftImage.js";
 import { getActiveGiftCatalogPage, GIFT_CATALOG_PAGE_SIZE } from "../../services/giftCatalog.service.js";
 import { rejectNotOwner } from "../../utils/ownershipCheck.js";
+import { recordLivekitEvent, webhookMode } from "../../services/livekitEvents.service.js";
 
 // SEC-07: LiveKit signs every webhook with the API key/secret (Authorization header).
 const webhookReceiver = new WebhookReceiver(
@@ -118,13 +119,23 @@ export const livekitWebhook = async (req, res) => {
         console.warn(`[LiveKit Webhook] rejected unsigned/invalid webhook: ${authErr.message}`);
         return res.status(401).send("Unauthorized");
     }
+    // OBS-07 / LIVE-43: record every event (presence + counters) before anything else; never fails
+    // the request, so LiveKit doesn't retry.
+    await recordLivekitEvent(event).catch(() => {});
     try {
         if (event && event.event === 'room_finished' && event.room?.name) {
             const session = await prisma.videoCallSession.findUnique({
                 where: { livekitRoom: event.room.name }
             });
             if (session && session.status === "ACTIVE") {
-                await videoCallService.endCall(session.id, session.callerId, "ROOM_FINISHED_WEBHOOK");
+                // LIVE_WEBHOOK_MODE (off | log | enforce, default log): LiveKit only began posting
+                // webhooks on 2026-10-21. Ending a call because its room emptied is new behaviour, so
+                // it is logged first and enforced only after the logs show it matches real hang-ups.
+                if (webhookMode() === "enforce") {
+                    await videoCallService.endCall(session.id, session.callerId, "ROOM_FINISHED_WEBHOOK");
+                } else {
+                    console.log(`[LiveKit Webhook] mode=${webhookMode()} would end call ${session.id} (room_finished ${event.room.name})`);
+                }
             }
         }
         return res.status(200).send("OK");
