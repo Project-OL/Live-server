@@ -7,9 +7,10 @@ import { getLuckyShares } from '../../services/luckyShares.service.js';
  *
  * LIVE-31: the counters live in Postgres (`lucky_reserve_pool`, owned by ol-node-rest's migrations),
  * 8 slots summed on read so concurrent lucky gifts don't queue on one row lock. Each lucky gift adds
- * to a random slot INSIDE its own transaction: ol-node-rest's internal ledger does it in remote
- * mode, `addToReservePoolInTx` below in local mode. A restart or a Redis failover no longer loses
- * history (Redis had no persistence and was only snapshotted every 5 minutes).
+ * to a random slot INSIDE its own transaction, in ol-node-rest's internal ledger (Live-server's
+ * local copy of that write was retired on 2026-10-21). A restart or a Redis failover no longer
+ * loses history (Redis had no persistence and was only snapshotted every 5 minutes).
+ * Live-server only reads the totals here, to steer the draw.
  *
  * The Redis keys below are the pre-LIVE-31 counters. They are read once to seed slot 0 (atomic,
  * flagged `seeded`), and as a fallback if the DB read fails; they are no longer written.
@@ -92,24 +93,4 @@ export const getReservePoolStats = async () => {
     }
     const currentRtp = totals.totalSpent > 0 ? (totals.totalRewarded / totals.totalSpent) * 100 : targetRtp;
     return { ...totals, currentRtp, targetRtp };
-};
-
-/**
- * Local-mode lucky gifts: add this gift to the counters inside its money transaction.
- * Inflow = cost x RTP target; outflow = the reward. Upsert, so a DB without the seeded slot rows
- * (tests built with `prisma db push`) still counts.
- */
-export const addToReservePoolInTx = async (tx, { giftCost, rewardCoins, targetRtpBp }) => {
-    const slot = Math.floor(Math.random() * RESERVE_POOL_SLOTS);
-    const cost = BigInt(giftCost);
-    const reward = BigInt(rewardCoins);
-    await tx.$executeRaw`
-        INSERT INTO lucky_reserve_pool (slot, total_spent, total_rewarded, pool_balance, updated_at)
-        VALUES (${slot}, ${cost}, ${reward}, (${cost}::numeric * ${targetRtpBp} / 10000) - ${reward}, NOW())
-        ON CONFLICT (slot) DO UPDATE
-        SET total_spent = lucky_reserve_pool.total_spent + EXCLUDED.total_spent,
-            total_rewarded = lucky_reserve_pool.total_rewarded + EXCLUDED.total_rewarded,
-            pool_balance = lucky_reserve_pool.pool_balance + EXCLUDED.pool_balance,
-            updated_at = NOW()
-    `;
 };

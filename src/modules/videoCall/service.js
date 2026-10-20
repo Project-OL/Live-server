@@ -1,5 +1,5 @@
 import crypto from "crypto";
-import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from "@prisma/client";
+import { WalletCurrencyType, LedgerDirection, LevelType } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { emitToUser } from "./socket.js";
 import { closeLivekitRoom, generateLivekitToken } from "./livekit.js";
@@ -7,22 +7,10 @@ import { client as redisClient } from "../../config/redis.js";
 import { moderateImage, uploadFlaggedFrameToS3 } from "./aws.service.js";
 import { v2 } from "@google-cloud/translate";
 import { checkCoinsFrozenFast } from "../../utils/coinRestriction.js";
-import {
-    getCoinBalanceInTx,
-    getPointBalanceInTx,
-    lockWalletsForUpdate,
-    assertCoinsNotFrozenInTx,
-    writeCoinBalanceCache,
-    writePointBalanceCache,
-    invalidateCoinBalanceCache,
-    invalidatePointBalanceCache,
-    runMoneyTransaction
-} from "../../services/walletBalance.service.js";
 import { broadcastToStream } from "../../routes/service/socket-live-service.js";
 import { getSheetUsersService, removeUserFromSheetService } from "../../routes/service/serviceLive.js";
-import { afterCommissionCreditCommit } from "../../services/agencyTierRecompute.service.js";
 import { giftImageFields } from "../../utils/giftImage.js";
-import { callLedger, ledgerMode, toLocalError } from "../../services/ledgerClient.js";
+import { callLedger, toLocalError } from "../../services/ledgerClient.js";
 import { unlinkByPattern } from "../../utils/redisScan.js";
 import {
     isLeader,
@@ -203,121 +191,6 @@ export const getPointBalance = async (walletId, tx = prisma) => {
     return (credits._sum.amount ?? 0n) - (debits._sum.amount ?? 0n);
 };
 
-export const processAgencyCommission = async (tx, hostId, hostPoints, hostLedgerEntryId, opts = {}) => {
-    const hostUser = await tx.user.findUnique({
-        where: { id: hostId },
-        select: { currentAgencyId: true, username: true, firstName: true, lastName: true }
-    });
-
-    if (!hostUser) return null;
-
-    const fullName = [hostUser.firstName, hostUser.lastName].filter(Boolean).join(" ").trim();
-    const hostName = fullName || hostUser.firstName || hostUser.username || "Host";
-
-    let agencyUserId = hostUser.currentAgencyId;
-
-    // If host is not under an external agency, check if host is an agency owner themselves
-    if (!agencyUserId) {
-        const selfAgency = await tx.agency.findUnique({
-            where: { userId: hostId },
-            select: { userId: true }
-        });
-        if (selfAgency) {
-            agencyUserId = hostId;
-        }
-    }
-
-    if (!agencyUserId) return null;
-
-    const agency = await tx.agency.findUnique({
-        where: { userId: agencyUserId },
-        select: { currentLevel: true }
-    });
-    if (!agency) return null;
-
-    const levelConfig = await tx.agencyCommissionLevel.findUnique({
-        where: { level: agency.currentLevel }
-    });
-    if (!levelConfig) return null;
-
-    const rateBp = levelConfig.matchChatRateBp;
-    const commissionPoints = BigInt(Math.floor((Number(hostPoints) * rateBp) / 10000));
-
-    await tx.agencyCommissionProcessed.create({
-        data: {
-            hostLedgerEntryId
-        }
-    });
-
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-
-    await tx.agencyDailyEarning.upsert({
-        where: {
-            agencyUserId_hostUserId_day: {
-                agencyUserId,
-                hostUserId: hostId,
-                day: today
-            }
-        },
-        update: {
-            hostEarningsPoints: { increment: hostPoints },
-            hostCommissionPoints: { increment: commissionPoints }
-        },
-        create: {
-            agencyUserId,
-            hostUserId: hostId,
-            day: today,
-            hostEarningsPoints: hostPoints,
-            hostCommissionPoints: commissionPoints
-        }
-    });
-
-    let agentLedgerEntry = null;
-    if (commissionPoints > 0n) {
-        const agentWallet = await getOrCreateWallet(agencyUserId, WalletCurrencyType.POINT, tx);
-        // LIVE-24: lock before reading, like ol-node-rest's creditInTransaction. Unlocked, two hosts
-        // of one agency earning at once both read X and both wrote X + c (one credit lost).
-        await lockWalletsForUpdate(tx, [agentWallet.id]);
-        const agentPoints = await getFastPointBalance(agentWallet.id, tx);
-        const balanceAfter = agentPoints + commissionPoints;
-
-        const businessRefId = opts.businessRefId || hostLedgerEntryId;
-        const hostTxType = opts.hostTxType || null;
-        const giftName = opts.gift?.name;
-        const metadata = (hostTxType || opts.gift)
-            ? {
-                category: "MATCH_CHAT",
-                ...(hostTxType ? { hostTxType } : {}),
-                hostLedgerEntryId,
-                ...(opts.gift?.id ? { giftId: opts.gift.id } : {}),
-                ...(giftName ? { giftName } : {}),
-                ...(opts.context ? { context: opts.context } : {}),
-                ...(opts.quantity != null ? { quantity: opts.quantity } : {}),
-                ...(opts.unitCoinCost != null ? { unitCoinCost: opts.unitCoinCost } : {})
-            }
-            : undefined;
-        agentLedgerEntry = await tx.pointLedgerEntry.create({
-            data: {
-                walletId: agentWallet.id,
-                direction: LedgerDirection.CREDIT,
-                txType: PointTxType.AGENT_COMMISSION,
-                amount: commissionPoints,
-                balanceAfter,
-                idempotencyKey: `agency-commission-${hostLedgerEntryId}`,
-                refId: businessRefId,
-                counterpartyId: hostId,
-                description: giftName
-                    ? `Agency commission: ${giftName}`
-                    : `Commission earned from host ${hostName} in video call`,
-                ...(metadata ? { metadata } : {})
-            }
-        });
-    }
-
-    return { agencyUserId, commissionPoints, agentLedgerEntry };
-};
-
 /**
  * Drop ol-node /commission/me + dashboard snapshots after a live/video-call
  * commission credit. INCR epoch so GET misses even if KEYS is empty.
@@ -342,92 +215,6 @@ export const bustAgencyCommissionCaches = async (agencyUserId) => {
     } catch (e) {
         console.error("[Agency] Cache invalidation error:", e);
     }
-};
-
-export const invalidateCaches = async (callerId, hostId, agencyUserId = null) => {
-    try {
-        await invalidateCoinBalanceCache(callerId);
-        await redisClient.del(`level:wealth:${callerId}`);
-
-        await invalidatePointBalanceCache(hostId);
-        await redisClient.del(`level:stream:${hostId}`);
-
-        if (agencyUserId) {
-            await bustAgencyCommissionCaches(agencyUserId);
-        }
-    } catch (e) {
-        console.error("[VideoCall] Cache invalidation error:", e);
-    }
-};
-
-// Mirrors ol-node-rest walletLevelService.applyCredit: must run inside the money
-// transaction. The row is locked FOR UPDATE so concurrent XP writes from either
-// service serialize instead of losing an increment, and the level is recomputed
-// against every active threshold so one large spend can cross several levels.
-export const updateUserLevel = async (tx, userId, levelType, increment) => {
-    await tx.$executeRaw`
-        INSERT INTO wallet_user_levels (
-            id, user_id, level_type, current_level, cumulative_total, created_at, updated_at
-        )
-        VALUES (gen_random_uuid(), ${userId}::uuid, ${levelType}::"LevelType", 1, 0, NOW(), NOW())
-        ON CONFLICT (user_id, level_type) DO NOTHING
-    `;
-    const [current] = await tx.$queryRaw`
-        SELECT current_level AS "currentLevel", cumulative_total AS "cumulativeTotal"
-        FROM wallet_user_levels
-        WHERE user_id = ${userId}::uuid AND level_type = ${levelType}::"LevelType"
-        FOR UPDATE
-    `;
-
-    const newCumulative = BigInt(current.cumulativeTotal) + BigInt(increment);
-
-    const thresholds = await tx.walletLevelConfig.findMany({
-        where: { levelType, isActive: true },
-        orderBy: { level: "asc" }
-    });
-
-    let newLevel = 1;
-    for (const t of thresholds) {
-        if (newCumulative >= t.threshold) {
-            newLevel = t.level;
-        } else {
-            break;
-        }
-    }
-
-    await tx.walletUserLevel.update({
-        where: { userId_levelType: { userId, levelType } },
-        data: {
-            cumulativeTotal: newCumulative,
-            currentLevel: newLevel
-        }
-    });
-
-    // Legacy `user_levels` mirror (display fallback only). Atomic ON CONFLICT
-    // upsert: a Prisma upsert races on the first row (P2002), and any failed
-    // statement aborts the whole Postgres transaction - so a try/catch here could
-    // never save the send, it only hid why it failed.
-    if (levelType === LevelType.LIVESTREAM) {
-        await tx.$executeRaw`
-            INSERT INTO user_levels (id, user_id, livestream_level, livestream_xp, updated_at)
-            VALUES (${crypto.randomUUID()}, ${userId}::uuid, ${newLevel}, ${newCumulative}, NOW())
-            ON CONFLICT (user_id) DO UPDATE
-            SET livestream_level = EXCLUDED.livestream_level,
-                livestream_xp = EXCLUDED.livestream_xp,
-                updated_at = NOW()
-        `;
-    } else if (levelType === LevelType.WEALTH) {
-        await tx.$executeRaw`
-            INSERT INTO user_levels (id, user_id, wealth_level, wealth_xp, updated_at)
-            VALUES (${crypto.randomUUID()}, ${userId}::uuid, ${newLevel}, ${newCumulative}, NOW())
-            ON CONFLICT (user_id) DO UPDATE
-            SET wealth_level = EXCLUDED.wealth_level,
-                wealth_xp = EXCLUDED.wealth_xp,
-                updated_at = NOW()
-        `;
-    }
-
-    return { newLevel, previousLevel: current.currentLevel, newCumulative };
 };
 
 /**
@@ -649,83 +436,11 @@ export const acceptCall = async (sessionId, receiverId) => {
     const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
     const pointRate = BigInt(session.pricePerMin);
 
-    // 1st minute balance check & core balance debit/credit (Strictly blocking)
-    const remoteLedger = ledgerMode("CALL_ACCEPT") === "remote";
-    const { updatedSession, agencyUserId } = remoteLedger
-        ? await acceptCallRemoteLedger(sessionId, receiverId)
-        : await runMoneyTransaction(async (tx) => {
-        const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
-        const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
-
-        // Same guard as per-minute billing: lock both wallets before reading, so a
-        // concurrent gift from the caller cannot spend against the same balance.
-        await lockWalletsForUpdate(tx, [callerWallet.id, hostWallet.id]);
-        await assertCoinsNotFrozenInTx(tx, session.callerId);
-
-        const callerCoins = await getCoinBalanceInTx(tx, callerWallet.id);
-        if (callerCoins < coinRate) {
-            throw new Error("Insufficient balance to accept call.");
-        }
-
-        const balanceAfterCoins = callerCoins - coinRate;
-        await tx.coinLedgerEntry.create({
-            data: {
-                walletId: callerWallet.id,
-                direction: LedgerDirection.DEBIT,
-                txType: CoinTxType.VIDEO_CALL,
-                amount: coinRate,
-                balanceAfter: balanceAfterCoins,
-                idempotencyKey: `call-${session.id}-min-1-coins`,
-                refId: session.id,
-                counterpartyId: session.creatorId,
-                description: `Video call minute 1 charge`
-            }
-        });
-
-        const hostPoints = await getPointBalanceInTx(tx, hostWallet.id);
-        const balanceAfterPoints = hostPoints + pointRate;
-        const hostLedger = await tx.pointLedgerEntry.create({
-            data: {
-                walletId: hostWallet.id,
-                direction: LedgerDirection.CREDIT,
-                txType: PointTxType.VIDEO_CALL,
-                amount: pointRate,
-                balanceAfter: balanceAfterPoints,
-                idempotencyKey: `call-${session.id}-min-1-points`,
-                refId: session.id,
-                counterpartyId: session.callerId,
-                description: `Points for video call minute 1`
-            }
-        });
-
-        // Minute-1 XP settles with the minute-1 debit, like every later minute.
-        await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
-        await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
-
-        // LIVE-25: the minute-1 commission commits with the minute it derives from (it ran after
-        // this transaction, unlocked, so a crash in between dropped it).
-        const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
-
-        // Conditional on RINGING: if an end, reject or timeout won the race, the whole minute-1
-        // charge rolls back instead of resurrecting an ended call (LIVE-26).
-        const { count } = await tx.videoCallSession.updateMany({
-            where: { id: sessionId, status: "RINGING" },
-            data: {
-                status: "ACTIVE",
-                startedAt: new Date(),
-                minsCharged: 1,
-                coinsDeducted: coinRate,
-                pointsAwarded: pointRate
-            }
-        });
-        if (count === 0) throw new Error("Invalid session or unauthorized.");
-        const updated = await tx.videoCallSession.findUnique({ where: { id: sessionId } });
-
-        return { updatedSession: updated, agencyUserId: commRes ? commRes.agencyUserId : null };
-    }, { timeout: 10000 });
-
-    // Committed: drop balance + level caches now (remote mode: ol-node-rest already did).
-    if (!remoteLedger) await invalidateCaches(session.callerId, session.creatorId, agencyUserId);
+    // BE-20: minute 1 (balance check, debit, credit, levels, commission) and RINGING -> ACTIVE settle
+    // in ol-node-rest's ledger in one transaction under the session row lock; it also drops the
+    // balance/level caches and recomputes the agency tier. Strictly blocking: no tokens before it.
+    // Live-server's own copy of this transaction was retired on 2026-10-21.
+    const { updatedSession } = await acceptCallRemoteLedger(sessionId, receiverId);
 
     // Generate LiveKit tokens (In-memory, very fast!)
     const receiverToken = await generateLivekitToken(session.livekitRoom, receiverId, true);
@@ -825,17 +540,8 @@ export const acceptCall = async (sessionId, receiverId) => {
             console.error("[VideoCall] Live Stream pause on call accept error:", pauseErr);
         }
 
-        try {
-            // 2. Agency tier recompute (ol-node afterCommissionCreditCommit). The commission itself
-            // committed inside the accept transaction; remote mode recomputes in ol-node-rest.
-            if (agencyUserId && !remoteLedger) {
-                await afterCommissionCreditCommit(agencyUserId);
-            }
-
-            console.log(`[VideoCall] Background tasks completed for session ${sessionId}`);
-        } catch (e) {
-            console.error(`[VideoCall] Background tasks failed for session ${sessionId}:`, e);
-        }
+        // (The agency tier is recomputed by ol-node-rest with the minute-1 commission.)
+        console.log(`[VideoCall] Background tasks completed for session ${sessionId}`);
     })();
 
     return {
@@ -1084,7 +790,6 @@ export const billDueMinutes = async (session) => {
 
     if (currentMinute > session.minsCharged) {
         const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
-        const pointRate = BigInt(session.pricePerMin);
 
         let hasFailed = false;
 
@@ -1107,91 +812,14 @@ export const billDueMinutes = async (session) => {
                 break;
             }
             try {
-                let txAgencyUserId = null;
-                if (ledgerMode("CALL_MINUTE") === "remote") {
-                    // BE-20: billed in ol-node-rest under the session row lock, so an
-                    // ended call is never billed and a minute is never billed twice.
-                    try {
-                        await callLedger("CALL_MINUTE", "call-minute", { sessionId: session.id, minute: m });
-                    } catch (err) {
-                        if (err.code === "INSUFFICIENT_COINS") throw new Error("INSUFFICIENT_BALANCE");
-                        throw err;
-                    }
-                } else {
-                await runMoneyTransaction(async (tx) => {
-                    // LIVE-26: lock the call row; never bill a call that ended since the
-                    // sweep's snapshot, nor a minute another node already billed.
-                    const [live] = await tx.$queryRaw`
-                        SELECT status, mins_charged AS "minsCharged" FROM video_call_sessions
-                        WHERE id = ${session.id} FOR UPDATE`;
-                    if (!live || live.status !== "ACTIVE") throw new Error("CALL_NOT_ACTIVE");
-                    if (live.minsCharged >= m) throw new Error("MINUTE_ALREADY_BILLED");
-
-                    const callerWallet = await getOrCreateWallet(session.callerId, WalletCurrencyType.COIN, tx);
-                    const hostWallet = await getOrCreateWallet(session.creatorId, WalletCurrencyType.POINT, tx);
-
-                    // Lock both wallets before reading, so a concurrent gift send
-                    // from the same caller cannot bill against the same balance.
-                    await lockWalletsForUpdate(tx, [callerWallet.id, hostWallet.id]);
-                    await assertCoinsNotFrozenInTx(tx, session.callerId);
-
-                    const callerCoins = await getCoinBalanceInTx(tx, callerWallet.id);
-                    if (callerCoins < coinRate) {
-                        throw new Error("INSUFFICIENT_BALANCE");
-                    }
-
-                    const balanceAfterCoins = callerCoins - coinRate;
-                    await tx.coinLedgerEntry.create({
-                        data: {
-                            walletId: callerWallet.id,
-                            direction: LedgerDirection.DEBIT,
-                            txType: CoinTxType.VIDEO_CALL,
-                            amount: coinRate,
-                            balanceAfter: balanceAfterCoins,
-                            idempotencyKey: `call-${session.id}-min-${m}-coins`,
-                            refId: session.id,
-                            counterpartyId: session.creatorId,
-                            description: `Video call minute ${m} charge`
-                        }
-                    });
-
-                    const hostPoints = await getPointBalanceInTx(tx, hostWallet.id);
-                    const balanceAfterPoints = hostPoints + pointRate;
-                    const hostLedger = await tx.pointLedgerEntry.create({
-                        data: {
-                            walletId: hostWallet.id,
-                            direction: LedgerDirection.CREDIT,
-                            txType: PointTxType.VIDEO_CALL,
-                            amount: pointRate,
-                            balanceAfter: balanceAfterPoints,
-                            idempotencyKey: `call-${session.id}-min-${m}-points`,
-                            refId: session.id,
-                            counterpartyId: session.callerId,
-                            description: `Points for video call minute ${m}`
-                        }
-                    });
-
-                    const commRes = await processAgencyCommission(tx, session.creatorId, pointRate, hostLedger.id);
-                    txAgencyUserId = commRes ? commRes.agencyUserId : null;
-
-                    await updateUserLevel(tx, session.callerId, LevelType.WEALTH, coinRate);
-                    await updateUserLevel(tx, session.creatorId, LevelType.LIVESTREAM, pointRate);
-
-
-                    await tx.videoCallSession.update({
-                        where: { id: session.id },
-                        data: {
-                            minsCharged: m,
-                            coinsDeducted: { increment: coinRate },
-                            pointsAwarded: { increment: pointRate }
-                        }
-                    });
-                }, { timeout: 15000 });
-
-                await invalidateCaches(session.callerId, session.creatorId, txAgencyUserId);
-                if (txAgencyUserId) {
-                    await afterCommissionCreditCommit(txAgencyUserId);
-                }
+                // BE-20: billed in ol-node-rest under the session row lock, so an ended call is
+                // never billed and a minute is never billed twice; it also drops the caches and
+                // recomputes the agency tier. (Live-server's local copy was retired 2026-10-21.)
+                try {
+                    await callLedger("CALL_MINUTE", "call-minute", { sessionId: session.id, minute: m });
+                } catch (err) {
+                    if (err.code === "INSUFFICIENT_COINS") throw new Error("INSUFFICIENT_BALANCE");
+                    throw err;
                 }
 
                 if (!(await lowCoinDisconnectPending(session.id))) {
@@ -1453,128 +1081,11 @@ export const getFastPointBalance = async (walletId, tx = prisma) => {
 };
 
 /**
- * Local ledger path of a video-call gift (LIVE_LEDGER_MODE_GIFT_VIDEO_CALL=local): one transaction
- * holding FOR UPDATE on both wallets, then the post-commit cache refresh. Remote mode writes the same
- * rows through ol-node-rest instead.
- */
-const sendGiftLocalLedger = async ({ senderId, receiverId, gift, giftCount, coinCost, pointsAwarded, giftTransactionId, idemBase }) => {
-    let giftAgencyUserId = null;
-    const settled = await runMoneyTransaction(async (tx) => {
-        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
-        const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT, tx);
-
-        await lockWalletsForUpdate(tx, [senderWallet.id, receiverWallet.id]);
-        await assertCoinsNotFrozenInTx(tx, senderId);
-
-        const senderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
-        if (senderCoins < coinCost) {
-            throw new Error("Insufficient coins to send this gift.");
-        }
-        const balanceAfterCoins = senderCoins - coinCost;
-
-        const receiverPoints = await getPointBalanceInTx(tx, receiverWallet.id);
-        const balanceAfterPoints = receiverPoints + pointsAwarded;
-
-        await tx.coinLedgerEntry.create({
-            data: {
-                walletId: senderWallet.id,
-                direction: LedgerDirection.DEBIT,
-                txType: CoinTxType.GIFT_SEND,
-                amount: coinCost,
-                balanceAfter: balanceAfterCoins,
-                idempotencyKey: `${idemBase}-coin`,
-                refId: giftTransactionId,
-                counterpartyId: receiverId,
-                description: `Sent gift ${gift.name} x${giftCount} in video call`,
-                metadata: {
-                    giftId: gift.id,
-                    giftTransactionId,
-                    context: "video_call",
-                    quantity: giftCount
-                }
-            }
-        });
-
-        await tx.wallet.update({
-            where: { id: senderWallet.id },
-            data: { version: { increment: 1n } }
-        });
-
-        const hostLedger = await tx.pointLedgerEntry.create({
-            data: {
-                walletId: receiverWallet.id,
-                direction: LedgerDirection.CREDIT,
-                txType: PointTxType.GIFT_RECEIVE,
-                amount: pointsAwarded,
-                balanceAfter: balanceAfterPoints,
-                idempotencyKey: `${idemBase}-point`,
-                refId: giftTransactionId,
-                counterpartyId: senderId,
-                description: `Received gift ${gift.name} x${giftCount} in video call`,
-                metadata: {
-                    giftId: gift.id,
-                    giftName: gift.name,
-                    context: "video_call",
-                    quantity: giftCount,
-                    unitCoinCost: Number(gift.coinCost),
-                    giftTransactionId
-                }
-            }
-        });
-
-        await tx.giftTransaction.create({
-            data: {
-                id: giftTransactionId,
-                senderUserId: senderId,
-                receiverUserId: receiverId,
-                giftId: gift.id,
-                coinCost: Number(coinCost),
-                quantity: giftCount,
-                pointsAwarded: Number(pointsAwarded),
-                context: "video_call"
-            }
-        });
-
-        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, coinCost);
-        const finalLevel = wealth.newLevel;
-        const isLevelUp = wealth.newLevel > wealth.previousLevel;
-
-        await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
-
-        const commRes = await processAgencyCommission(tx, receiverId, pointsAwarded, hostLedger.id, {
-            businessRefId: giftTransactionId,
-            hostTxType: PointTxType.GIFT_RECEIVE,
-            gift,
-            context: "video_call",
-            quantity: giftCount,
-            unitCoinCost: Number(gift.coinCost)
-        });
-        giftAgencyUserId = commRes?.agencyUserId ?? null;
-
-        return { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp };
-    });
-
-    // Committed. Everything below is best-effort and must never fail the send.
-    await writeCoinBalanceCache(senderId, settled.balanceAfterCoins);
-    await writePointBalanceCache(receiverId, settled.balanceAfterPoints);
-    redisClient.del(`level:wealth:${senderId}`).catch((err) => console.error(err));
-    redisClient.del(`level:stream:${receiverId}`).catch((err) => console.error(err));
-
-    if (giftAgencyUserId) {
-        await afterCommissionCreditCommit(giftAgencyUserId).catch((err) =>
-            console.error("[VideoCall Gift] agency tier recompute failed:", err)
-        );
-    }
-    return settled;
-};
-
-/**
  * Send a gift inside a video call.
  *
- * The coin debit is decided from Postgres inside a transaction holding
- * FOR UPDATE on both wallet rows, and the socket event is emitted only after
- * that transaction commits. Redis is written afterwards as a cache refresh.
- * See src/services/walletBalance.service.js for the rule this follows.
+ * The coin debit is decided by ol-node-rest's ledger (BE-20) inside a transaction holding
+ * FOR UPDATE on both wallet rows, and the socket event is emitted only after that has
+ * committed. ol-node-rest also refreshes the balance and level caches.
  *
  * `clientTxId`, when supplied, makes the send idempotent across client retries;
  * without it the ledger keys are still deterministic per logical send, so an
@@ -1627,32 +1138,28 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
     const giftTransactionId = crypto.randomUUID();
     const idemBase = clientTxId ? `gift:${senderId}:${clientTxId}` : `gift:${giftTransactionId}`;
 
+    // BE-20: ol-node-rest settles the debit, credit, levels and commission and refreshes the shared
+    // caches; this path keeps the socket events below. (Local copy retired 2026-10-21.)
     let settled;
-    if (ledgerMode("GIFT_VIDEO_CALL") === "remote") {
-        // BE-20: ol-node-rest settles the debit, credit, levels and commission and refreshes the
-        // shared caches; this path keeps the socket events below.
-        try {
-            const r = await callLedger("GIFT_VIDEO_CALL", "gift", {
-                context: "video_call",
-                senderId,
-                receiverId,
-                giftId: gift.id,
-                quantity: giftCount,
-                giftTransactionId,
-                idemBase,
-                sessionId
-            });
-            settled = {
-                balanceAfterCoins: BigInt(r.balanceAfterCoins),
-                balanceAfterPoints: BigInt(r.balanceAfterPoints),
-                finalLevel: r.wealth.newLevel,
-                isLevelUp: r.wealth.newLevel > r.wealth.previousLevel
-            };
-        } catch (err) {
-            throw toLocalError(err, { insufficient: "Insufficient coins to send this gift." });
-        }
-    } else {
-        settled = await sendGiftLocalLedger({ sessionId, senderId, receiverId, gift, giftCount, coinCost, pointsAwarded, giftTransactionId, idemBase });
+    try {
+        const r = await callLedger("GIFT_VIDEO_CALL", "gift", {
+            context: "video_call",
+            senderId,
+            receiverId,
+            giftId: gift.id,
+            quantity: giftCount,
+            giftTransactionId,
+            idemBase,
+            sessionId
+        });
+        settled = {
+            balanceAfterCoins: BigInt(r.balanceAfterCoins),
+            balanceAfterPoints: BigInt(r.balanceAfterPoints),
+            finalLevel: r.wealth.newLevel,
+            isLevelUp: r.wealth.newLevel > r.wealth.previousLevel
+        };
+    } catch (err) {
+        throw toLocalError(err, { insufficient: "Insufficient coins to send this gift." });
     }
 
     const { balanceAfterCoins, finalLevel, isLevelUp } = settled;

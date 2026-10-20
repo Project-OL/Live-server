@@ -23,6 +23,9 @@ export const productionConfigProblems = (env = process.env) => {
     need("JWT_ACCESS_SECRET (or JWT_SECRET / JWT_SECRET_KEY)", env.JWT_ACCESS_SECRET || env.JWT_SECRET || env.JWT_SECRET_KEY);
     need("DATABASE_URL", env.DATABASE_URL);
     need("REDIS_URL", env.REDIS_URL);
+    // BE-20: every coin/point write goes through ol-node-rest's signed internal ledger API since
+    // Live-server's local money code was retired (2026-10-21); without the key every send would fail.
+    need("INTERNAL_LEDGER_HMAC_SECRET", env.INTERNAL_LEDGER_HMAC_SECRET);
     return problems;
 };
 

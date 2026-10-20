@@ -53,7 +53,7 @@ if (offenders.length > 0) {
             "",
             "These keys are shared with ol-node-rest and are a post-commit cache only.",
             "Use the walletBalance.service.js helpers instead:",
-            "  - decide affordability with getCoinBalanceInTx(tx, walletId) under lockWalletsForUpdate",
+            "  - never decide affordability here: money writes go through ol-node-rest (services/ledgerClient.js)",
             "  - refresh the cache with writeCoinBalanceCache / writePointBalanceCache after commit",
             "  - read for display with readCoinBalanceCacheForDisplay",
             ""

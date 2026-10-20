@@ -1,18 +1,16 @@
 /**
  * BE-20 (option B): client for ol-node-rest's internal ledger API (`/internal/v1/ledger/*`).
  *
- * ol-node-rest is the single money service. With LIVE_LEDGER_MODE=remote an operation's coin/point
- * ledger rows, levels and agency commission are written there, in one locked transaction; Live-server
- * keeps the socket events and the UX. Ledger keys are the same in both modes, so flipping an
- * operation between local and remote never double-bills.
+ * ol-node-rest is the single money service: every operation's coin/point ledger rows, levels and
+ * agency commission are written there, in one locked transaction; Live-server keeps the socket
+ * events and the UX. Operations: GIFT_LIVE | GIFT_VIDEO_CALL | LUCKY_GIFT | CALL_ACCEPT |
+ * CALL_MINUTE | GLOBAL_MESSAGE.
  *
- * Modes (default local):
- *   LIVE_LEDGER_MODE=local|remote             every operation
- *   LIVE_LEDGER_MODE_<OP>=local|remote        one operation, overrides the above
- *     OP = GIFT_LIVE | GIFT_VIDEO_CALL | LUCKY_GIFT | CALL_ACCEPT | CALL_MINUTE | GLOBAL_MESSAGE
- *   LIVE_LEDGER_BASE_URL                      default http://127.0.0.1:3101 (ol-node-rest internal listener)
- *   INTERNAL_LEDGER_HMAC_SECRET               shared with ol-node-rest
- * Remote without a secret falls back to local (logged once): a config error must not stop sends.
+ * Live-server's own (local) copy of these transactions and the LIVE_LEDGER_MODE* switches were
+ * retired on 2026-10-21, after every operation had run remote on production since 2026-10-17.
+ *   LIVE_LEDGER_BASE_URL          default http://127.0.0.1:3101 (ol-node-rest internal listener)
+ *   INTERNAL_LEDGER_HMAC_SECRET   shared with ol-node-rest; production refuses to boot without it
+ *                                 (config/assertProductionConfig.js)
  *
  * Transport: keep-alive (Node's fetch pools connections), 3 s timeout per attempt, and retries only
  * for a network error, a timeout or 502/503/504, always with the same requestId, so a retry of a
@@ -28,24 +26,6 @@ const RETRY_STATUS = new Set([502, 503, 504]);
 
 const secret = () => process.env.INTERNAL_LEDGER_HMAC_SECRET || "";
 const baseUrl = () => (process.env.LIVE_LEDGER_BASE_URL || "http://127.0.0.1:3101").replace(/\/+$/, "");
-
-let warnedNoSecret = false;
-
-/** "local" or "remote" for one operation. */
-export const ledgerMode = (op) => {
-    const raw = String(process.env[`LIVE_LEDGER_MODE_${op}`] || process.env.LIVE_LEDGER_MODE || "local")
-        .trim()
-        .toLowerCase();
-    if (raw !== "remote") return "local";
-    if (!secret()) {
-        if (!warnedNoSecret) {
-            console.error("[Ledger] LIVE_LEDGER_MODE=remote but INTERNAL_LEDGER_HMAC_SECRET is not set; using local");
-            warnedNoSecret = true;
-        }
-        return "local";
-    }
-    return "remote";
-};
 
 /** Same scheme as ol-node-rest src/internal/hmac.ts. */
 export const signRequest = (key, { timestamp, method, path, body }) =>

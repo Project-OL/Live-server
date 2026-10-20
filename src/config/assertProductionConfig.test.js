@@ -2,7 +2,12 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { productionConfigProblems } from "./assertProductionConfig.js";
 
-const good = { LIVEKIT_API_KEY: "APIabc", LIVEKIT_API_SECRET: "s".repeat(40), JWT_ACCESS_SECRET: "j".repeat(64), DATABASE_URL: "postgresql://x", REDIS_URL: "redis://x" };
+const good = { LIVEKIT_API_KEY: "APIabc", LIVEKIT_API_SECRET: "s".repeat(40), JWT_ACCESS_SECRET: "j".repeat(64), DATABASE_URL: "postgresql://x", REDIS_URL: "redis://x", INTERNAL_LEDGER_HMAC_SECRET: "l".repeat(48) };
+
+test("BE-20: production refuses to boot without the ledger key (the only money path since 2026-10-21)", () => {
+    assert.deepEqual(productionConfigProblems({ ...good, INTERNAL_LEDGER_HMAC_SECRET: undefined }), ["INTERNAL_LEDGER_HMAC_SECRET is missing"]);
+    assert.deepEqual(productionConfigProblems({ ...good, INTERNAL_LEDGER_HMAC_SECRET: "changeme" }), ["INTERNAL_LEDGER_HMAC_SECRET is a placeholder"]);
+});
 
 test("LIVE-45: a complete production config has no problems", () => {
     assert.deepEqual(productionConfigProblems(good), []);

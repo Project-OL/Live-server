@@ -1,9 +1,16 @@
 /**
  * LIVE-52 part 2: money concurrency tests against a throwaway Postgres + Redis.
  *
+ * Since 2026-10-21 every coin/point write goes through ol-node-rest's internal ledger API (BE-20),
+ * so these drive Live-server's real send/call code through the real ledger:
+ *
  *   docker compose -f tests/money/docker-compose.yml up -d --wait
- *   npx prisma db push --skip-generate   (DATABASE_URL=postgresql://money:money@127.0.0.1:55432/money_test)
- *   npm run test:money
+ *   ol-node-rest:  npm run test:ledger:setup && npx tsx tests/ledger/serve-internal.ts
+ *   here:          MONEY_TEST_DATABASE_URL=postgresql://money:money@127.0.0.1:55432/ledger_test \
+ *                  LIVE_LEDGER_BASE_URL=http://127.0.0.1:3199 \
+ *                  INTERNAL_LEDGER_HMAC_SECRET=test-internal-ledger-secret-at-least-32-chars \
+ *                  npm run test:money
+ * (.github/workflows/tests.yml does the same in CI.)
  *
  * Tests marked `todo: "<ID>"` reproduce a known bug from docs/context/HARDENING_SCALE_PLAN.md. They run and
  * report, but don't fail the suite until the fix lands; then drop the `todo`.

@@ -4,29 +4,14 @@ import { AccessToken, RoomServiceClient, EgressClient } from 'livekit-server-sdk
 import { client as redisClient } from '../../config/redis.js';
 import dotenv from 'dotenv';
 import { isUserRestrictedFast } from './serviceAdmin.js';
-import { WalletCurrencyType, LedgerDirection, CoinTxType, PointTxType, LevelType } from '@prisma/client';
-import {
-    getOrCreateWallet,
-    getFastPointBalance,
-    updateUserLevel,
-} from '../../modules/videoCall/service.js';
-import { callLedger, ledgerMode, toLocalError } from '../../services/ledgerClient.js';
+import { LevelType } from '@prisma/client';
+import { callLedger, toLocalError } from '../../services/ledgerClient.js';
 import { scanKeys } from '../../utils/redisScan.js';
-import { afterCommissionCreditCommit } from '../../services/agencyTierRecompute.service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { giftImageFields } from '../../utils/giftImage.js';
 import { checkCoinsFrozenFast } from '../../utils/coinRestriction.js';
-import {
-    getCoinBalanceInTx,
-    getPointBalanceInTx,
-    lockWalletsForUpdate,
-    assertCoinsNotFrozenInTx,
-    writeCoinBalanceCache,
-    writePointBalanceCache,
-    runMoneyTransaction
-} from '../../services/walletBalance.service.js';
 import { getOrCreateSessionAlias } from './serviceMessage.js';
 
 import {
@@ -1391,144 +1376,24 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         return luckyResult;
     }
 
-    // The debit, the host point credit, the sender's wealth level and the
-    // agency commission all settle in one transaction holding FOR UPDATE on
-    // both wallet rows. Affordability is decided from the ledger inside that
-    // transaction - never from Redis, which ol-node-rest also writes.
-    // See src/services/walletBalance.service.js.
+    // BE-20: the debit, the host point credit, both levels and the agency commission settle in
+    // ol-node-rest's ledger (one locked transaction), which also refreshes the balance/level caches
+    // and the agency tier. Live-server's own copy of this transaction was retired on 2026-10-21.
     const giftTransactionId = crypto.randomUUID();
     const idemBase = clientTxId
         ? `gift-stream:${senderId}:${clientTxId}`
         : `gift-stream:${giftTransactionId}`;
 
-    const remoteLedger = ledgerMode("GIFT_LIVE") === "remote";
-    let txAgencyUserId = null;
-    const settled = remoteLedger
-        ? await sendStreamGiftRemoteLedger({ senderId, receiverId, giftId: gift.id, giftCount, giftTransactionId, idemBase })
-        : await runMoneyTransaction(async (tx) => {
-        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
-        const receiverWallet = await getOrCreateWallet(receiverId, WalletCurrencyType.POINT, tx);
-
-        await lockWalletsForUpdate(tx, [senderWallet.id, receiverWallet.id]);
-        await assertCoinsNotFrozenInTx(tx, senderId);
-
-        const senderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
-        if (senderCoins < coinCost) {
-            throw new Error("Insufficient coins to send this gift.");
-        }
-        const balanceAfterCoins = senderCoins - coinCost;
-
-        const receiverPoints = await getPointBalanceInTx(tx, receiverWallet.id);
-        const balanceAfterPoints = receiverPoints + pointsAwarded;
-
-        await tx.coinLedgerEntry.create({
-            data: {
-                walletId: senderWallet.id,
-                direction: LedgerDirection.DEBIT,
-                txType: CoinTxType.GIFT_SEND,
-                amount: coinCost,
-                balanceAfter: balanceAfterCoins,
-                idempotencyKey: `${idemBase}-coin`,
-                refId: giftTransactionId,
-                counterpartyId: receiverId,
-                description: `Sent gift ${gift.name} in live stream`,
-                metadata: {
-                    giftId: gift.id,
-                    giftTransactionId,
-                    context: "live_stream",
-                    quantity: giftCount
-                }
-            }
-        });
-
-        await tx.wallet.update({
-            where: { id: senderWallet.id },
-            data: { version: { increment: 1n } }
-        });
-
-        const hostLedger = await tx.pointLedgerEntry.create({
-            data: {
-                walletId: receiverWallet.id,
-                direction: LedgerDirection.CREDIT,
-                txType: PointTxType.GIFT_RECEIVE,
-                amount: pointsAwarded,
-                balanceAfter: balanceAfterPoints,
-                idempotencyKey: `${idemBase}-point`,
-                refId: giftTransactionId,
-                counterpartyId: senderId,
-                description: `Received gift ${gift.name} in live stream`,
-                metadata: {
-                    giftId: gift.id,
-                    giftName: gift.name,
-                    context: "live_stream",
-                    quantity: giftCount,
-                    unitCoinCost: Number(gift.coinCost),
-                    giftTransactionId
-                }
-            }
-        });
-
-        await tx.giftTransaction.create({
-            data: {
-                id: giftTransactionId,
-                senderUserId: senderId,
-                receiverUserId: receiverId,
-                giftId: gift.id,
-                coinCost: gift.coinCost,
-                quantity: giftCount,
-                pointsAwarded: Number(pointsAwarded),
-                context: "live_stream"
-            }
-        });
-
-        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, coinCost);
-        const finalLevel = wealth.newLevel;
-        const isLevelUp = wealth.newLevel > wealth.previousLevel;
-
-        await updateUserLevel(tx, receiverId, LevelType.LIVESTREAM, pointsAwarded);
-
-        const commRes = await processLiveStreamAgencyCommission(
-            tx,
-            receiverId,
-            pointsAwarded,
-            hostLedger.id,
-            null,
-            {
-                businessRefId: giftTransactionId,
-                hostTxType: PointTxType.GIFT_RECEIVE,
-                gift,
-                context: "live_stream",
-                quantity: giftCount,
-                unitCoinCost: Number(gift.coinCost)
-            }
-        );
-        if (commRes && commRes.agencyUserId) {
-            txAgencyUserId = commRes.agencyUserId;
-        }
-
-        return { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp };
+    const { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp } = await sendStreamGiftRemoteLedger({
+        senderId,
+        receiverId,
+        giftId: gift.id,
+        giftCount,
+        giftTransactionId,
+        idemBase
     });
 
-    const { balanceAfterCoins, balanceAfterPoints, finalLevel, isLevelUp } = settled;
-
     // Committed. Everything below is best-effort and must not fail the send.
-    // (Remote mode: ol-node-rest already refreshed the balance/level caches and the agency tier.)
-    if (!remoteLedger) {
-        await writeCoinBalanceCache(senderId, balanceAfterCoins);
-        await writePointBalanceCache(receiverId, balanceAfterPoints);
-    }
-    if (!remoteLedger && redisClient.isOpen) {
-        // Level XP Cache Invalidation for sender wealth level & receiver stream level
-        redisClient.del(`level:wealth:${senderId}`).catch(() => { });
-        redisClient.del(`level:stream:${receiverId}`).catch(() => { });
-    }
-
-    if (txAgencyUserId) {
-        await afterCommissionCreditCommit(txAgencyUserId).catch((err) =>
-            console.error("[Stream Gift] agency tier recompute failed:", err.message)
-        );
-    }
-
     // LIVE-32/40: the sender's 7-day total and level changed: retire the stream's viewer cards.
     await bumpViewerCardsEpoch(stream.streamId);
 
@@ -1674,164 +1539,6 @@ export const checkFollowStatusService = async ({ followerId, followingId }) => {
     return { isFollowing: !!existing };
 };
 
-export const getAgencyCommissionRatesService = async () => {
-    const cacheKey = "agency:commission_rates";
-    if (redisClient.isOpen) {
-        const cached = await redisClient.get(cacheKey);
-        if (cached) {
-            try { return JSON.parse(cached); } catch (e) { }
-        }
-    }
-
-    const levels = await prisma.agencyCommissionLevel.findMany();
-    const ratesMap = {};
-    for (const cl of levels) {
-        if (cl.level) {
-            ratesMap[cl.level.trim()] = cl.liveRateBp || 400;
-        }
-    }
-    if (!ratesMap['D']) ratesMap['D'] = 400;
-
-    if (redisClient.isOpen) {
-        await redisClient.set(cacheKey, JSON.stringify(ratesMap), { EX: 86400 });
-    }
-    return ratesMap;
-};
-
-export const invalidateAgencyCommissionRatesCache = async () => {
-    if (redisClient.isOpen) {
-        await redisClient.del("agency:commission_rates");
-    }
-};
-
-export const processLiveStreamAgencyCommission = async (tx, receiverId, hostPoints, hostLedgerEntryId, cachedReceiverUser = null, opts = {}) => {
-    let agencyUserId = cachedReceiverUser?.currentAgencyId;
-
-    const getHostDisplayName = (u) => {
-        if (!u) return null;
-        const fullName = [u.firstName, u.lastName].filter(Boolean).join(" ").trim();
-        return fullName || u.firstName || u.username || null;
-    };
-
-    let hostName = getHostDisplayName(cachedReceiverUser);
-
-    if (!agencyUserId || !hostName) {
-        const receiverUser = await tx.user.findUnique({
-            where: { id: receiverId },
-            select: { currentAgencyId: true, username: true, firstName: true, lastName: true }
-        });
-        if (receiverUser) {
-            if (!agencyUserId && receiverUser.currentAgencyId) {
-                agencyUserId = receiverUser.currentAgencyId;
-            }
-            if (!hostName) {
-                hostName = getHostDisplayName(receiverUser);
-            }
-        }
-    }
-    if (!hostName) hostName = "Host";
-
-    if (!agencyUserId) {
-        const selfAgency = await tx.agency.findUnique({
-            where: { userId: receiverId },
-            select: { userId: true }
-        });
-        if (selfAgency) {
-            agencyUserId = receiverId;
-        }
-    }
-
-    if (!agencyUserId) return null;
-
-    const agency = await tx.agency.findUnique({
-        where: { userId: agencyUserId },
-        select: { currentLevel: true }
-    });
-    if (!agency) return null;
-
-    const levelKey = agency.currentLevel ? agency.currentLevel.trim() : 'D';
-    const ratesMap = await getAgencyCommissionRatesService();
-    const rateBp = ratesMap[levelKey] || 400;
-    const commissionPoints = BigInt(Math.floor((Number(hostPoints) * rateBp) / 10000));
-
-    // Same transaction as the gift: /commission/me totals join these rows.
-    try {
-        await tx.agencyCommissionProcessed.create({
-            data: { hostLedgerEntryId }
-        });
-    } catch (e) {
-        if (e?.code !== 'P2002') throw e;
-    }
-
-    const today = new Date();
-    today.setUTCHours(0, 0, 0, 0);
-
-    await tx.agencyDailyEarning.upsert({
-        where: {
-            agencyUserId_hostUserId_day: {
-                agencyUserId,
-                hostUserId: receiverId,
-                day: today
-            }
-        },
-        update: {
-            hostEarningsPoints: { increment: hostPoints },
-            hostCommissionPoints: { increment: commissionPoints }
-        },
-        create: {
-            agencyUserId,
-            hostUserId: receiverId,
-            day: today,
-            hostEarningsPoints: hostPoints,
-            hostCommissionPoints: commissionPoints
-        }
-    });
-
-    let agentLedgerEntry = null;
-    if (commissionPoints > 0n) {
-        const agentWallet = await getOrCreateWallet(agencyUserId, WalletCurrencyType.POINT, tx);
-        // LIVE-24: lock before reading (see processAgencyCommission in videoCall/service.js).
-        await lockWalletsForUpdate(tx, [agentWallet.id]);
-        const agentPoints = await getFastPointBalance(agentWallet.id, tx);
-        const balanceAfter = agentPoints + commissionPoints;
-
-        const businessRefId = opts.businessRefId || hostLedgerEntryId;
-        const hostTxType = opts.hostTxType || PointTxType.GIFT_RECEIVE;
-        const giftName = opts.gift?.name;
-        agentLedgerEntry = await tx.pointLedgerEntry.create({
-            data: {
-                walletId: agentWallet.id,
-                direction: LedgerDirection.CREDIT,
-                txType: PointTxType.AGENT_COMMISSION,
-                amount: commissionPoints,
-                balanceAfter,
-                idempotencyKey: `agency-commission-${hostLedgerEntryId}`,
-                refId: businessRefId,
-                counterpartyId: receiverId,
-                description: giftName
-                    ? `Agency commission: ${giftName}`
-                    : `Commission earned from host ${hostName} in live stream`,
-                metadata: {
-                    category: "LIVE",
-                    hostTxType,
-                    hostLedgerEntryId,
-                    ...(opts.gift?.id ? { giftId: opts.gift.id } : {}),
-                    ...(giftName ? { giftName } : {}),
-                    ...(opts.context ? { context: opts.context } : {}),
-                    ...(opts.quantity != null ? { quantity: opts.quantity } : {}),
-                    ...(opts.unitCoinCost != null ? { unitCoinCost: opts.unitCoinCost } : {})
-                }
-            }
-        });
-
-        // Tier / window total: do NOT mutate currentLevel here (ol-node parity).
-        // After the gift tx commits, callers run afterCommissionCreditCommit which
-        // recomputes from host earnings + admin tier lock floor.
-    }
-
-    return { agencyUserId, commissionPoints, agentLedgerEntry };
-};
-
 /** BE-20 remote ledger for the 10,000-coin global message. */
 const globalMessageRemoteLedger = async ({ senderId, messageTxId, idemKey, message }) => {
     try {
@@ -1851,8 +1558,6 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         throw new Error("Message content cannot be empty.");
     }
 
-    const cost = 10000n;
-
     // 1. Fetch sender info (wealth level comes from the charge below, post-spend)
     const senderUser = await prisma.user.findUnique({
         where: { id: senderId },
@@ -1870,55 +1575,12 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
         throw new Error("Sender user not found.");
     }
 
-    // Same rule as the gift paths: the 10,000-coin charge is decided from the
-    // ledger inside a transaction holding the wallet lock, and the message is
-    // only returned (and therefore broadcast) once that transaction commits.
+    // BE-20: the 10,000-coin charge and the wealth level settle in ol-node-rest's ledger under the
+    // wallet lock; the message is only returned (and so broadcast) once that has committed.
     const messageTxId = crypto.randomUUID();
     const idemKey = clientTxId ? `global-msg:${senderId}:${clientTxId}` : `global-msg:${messageTxId}`;
 
-    const remoteLedger = ledgerMode("GLOBAL_MESSAGE") === "remote";
-    const { balanceAfterCoins, wealthLevel } = remoteLedger
-        ? await globalMessageRemoteLedger({ senderId, messageTxId, idemKey, message })
-        : await runMoneyTransaction(async (tx) => {
-        const senderWallet = await getOrCreateWallet(senderId, WalletCurrencyType.COIN, tx);
-        await lockWalletsForUpdate(tx, [senderWallet.id]);
-        await assertCoinsNotFrozenInTx(tx, senderId);
-
-        const senderCoins = await getCoinBalanceInTx(tx, senderWallet.id);
-        if (senderCoins < cost) {
-            throw new Error("Insufficient coins to send a global message.");
-        }
-        const dbBalanceAfter = senderCoins - cost;
-
-        await tx.coinLedgerEntry.create({
-            data: {
-                walletId: senderWallet.id,
-                direction: LedgerDirection.DEBIT,
-                txType: CoinTxType.GLOBAL_MESSAGE || "GLOBAL_MESSAGE",
-                amount: cost,
-                balanceAfter: dbBalanceAfter,
-                idempotencyKey: idemKey,
-                refId: messageTxId,
-                description: `Sent global message: "${message.substring(0, 30)}..."`
-            }
-        });
-
-        await tx.wallet.update({
-            where: { id: senderWallet.id },
-            data: { version: { increment: 1n } }
-        });
-
-        const wealth = await updateUserLevel(tx, senderId, LevelType.WEALTH, cost);
-
-        return { balanceAfterCoins: dbBalanceAfter, wealthLevel: wealth.newLevel };
-    });
-
-    if (!remoteLedger) {
-        await writeCoinBalanceCache(senderId, balanceAfterCoins);
-        if (redisClient.isOpen) {
-            redisClient.del(`level:wealth:${senderId}`).catch(() => { });
-        }
-    }
+    const { balanceAfterCoins, wealthLevel } = await globalMessageRemoteLedger({ senderId, messageTxId, idemKey, message });
 
     return {
         transactionId: messageTxId,

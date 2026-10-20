@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "crypto";
-import { callLedger, ledgerMode, signRequest, toLocalError, LedgerError } from "./ledgerClient.js";
+import { callLedger, signRequest, toLocalError, LedgerError } from "./ledgerClient.js";
 
 const SECRET = "test-internal-ledger-secret-at-least-32-chars";
 
@@ -28,19 +28,6 @@ test("signature matches ol-node-rest's scheme (HMAC-SHA256 over ts.METHOD.path.b
     const sig = signRequest(SECRET, { timestamp: "1700000000000", method: "post", path: "/internal/v1/ledger/gift", body: "{}" });
     const expected = crypto.createHmac("sha256", SECRET).update("1700000000000.POST./internal/v1/ledger/gift.{}").digest("hex");
     assert.equal(sig, `v1=${expected}`);
-});
-
-test("mode: local by default, per-operation override, remote without a secret falls back to local", async () => {
-    await withEnv({ LIVE_LEDGER_MODE: undefined, LIVE_LEDGER_MODE_GIFT_LIVE: undefined, INTERNAL_LEDGER_HMAC_SECRET: SECRET }, () => {
-        assert.equal(ledgerMode("GIFT_LIVE"), "local");
-    });
-    await withEnv({ LIVE_LEDGER_MODE: "local", LIVE_LEDGER_MODE_GIFT_LIVE: "remote", INTERNAL_LEDGER_HMAC_SECRET: SECRET }, () => {
-        assert.equal(ledgerMode("GIFT_LIVE"), "remote");
-        assert.equal(ledgerMode("CALL_MINUTE"), "local");
-    });
-    await withEnv({ LIVE_LEDGER_MODE: "remote", INTERNAL_LEDGER_HMAC_SECRET: undefined }, () => {
-        assert.equal(ledgerMode("GIFT_LIVE"), "local");
-    });
 });
 
 test("retries a timeout / 503 with the same requestId and a fresh signature", async () => {
