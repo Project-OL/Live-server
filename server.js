@@ -29,6 +29,13 @@ const PORT = process.env.PORT || 5000;
 
 const server = http.createServer(app);
 
+// Keep idle connections longer than the Google LB's 600 s backend keepalive. Node's 5 s default made
+// the LB open a fresh connection to Mumbai for most requests from far-away users (~4 round trips:
+// p95 1.6 s vs 0.2 s near Mumbai, 2026-10-21). headersTimeout stays above it as Node recommends.
+const keepAliveMs = Number(process.env.LIVE_HTTP_KEEP_ALIVE_TIMEOUT_MS) || 620_000;
+server.keepAliveTimeout = keepAliveMs;
+server.headersTimeout = keepAliveMs + 5_000;
+
 // Socket Init (attaches the Redis adapter before any client can connect)
 const io = await initSocket(server);
 
