@@ -1,4 +1,5 @@
 import jwt from "jsonwebtoken";
+import { previousAccessSecret, verifyRotating } from "../utils/jwtRotation.js";
 import {
     checkAccessPayload,
     recordSessionCheck,
@@ -61,18 +62,23 @@ export const claimedUserId = (handshake = {}) => {
  * Verify the handshake token.
  * @returns {{ outcome: 'ok'|'expired_ok'|'missing'|'invalid'|'expired_too_old', userId: string|null }}
  */
-export const verifySocketToken = (handshake, secret = jwtSecret(), nowSec = Math.floor(Date.now() / 1000)) => {
+export const verifySocketToken = (
+    handshake,
+    secret = jwtSecret(),
+    nowSec = Math.floor(Date.now() / 1000),
+    previous = previousAccessSecret() // SEC-01 rotation grace (utils/jwtRotation.js)
+) => {
     const token = extractSocketToken(handshake);
     if (!token) return { outcome: "missing", userId: null };
     if (!secret) return { outcome: "invalid", userId: null };
     let payload;
     let outcome = "ok";
     try {
-        payload = jwt.verify(token, secret);
+        payload = verifyRotating(token, secret, previous);
     } catch (err) {
         if (err?.name !== "TokenExpiredError") return { outcome: "invalid", userId: null };
         try {
-            payload = jwt.verify(token, secret, { ignoreExpiration: true });
+            payload = verifyRotating(token, secret, previous, { ignoreExpiration: true });
         } catch {
             return { outcome: "invalid", userId: null };
         }

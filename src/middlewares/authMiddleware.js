@@ -1,5 +1,5 @@
-import jwt from "jsonwebtoken";
 import { AppError } from "./errorHandler.js";
+import { previousAccessSecret, verifyRotating } from "../utils/jwtRotation.js";
 import {
     checkAccessPayload,
     recordSessionCheck,
@@ -24,7 +24,7 @@ export const authenticate = async (req, res, next) => {
         }
 
         const secret = process.env.JWT_ACCESS_SECRET || process.env.JWT_SECRET || process.env.JWT_SECRET_KEY;
-        const payload = jwt.verify(token, secret);
+        const payload = verifyRotating(token, secret, previousAccessSecret());
 
         const userId = payload.userId || payload.sub;
         if (!userId) {

@@ -1,5 +1,5 @@
-import jwt from 'jsonwebtoken'
 import prisma from '../config/prisma.js'
+import { previousAdminSecret, verifyRotating } from '../utils/jwtRotation.js'
 import { client as redisClient } from '../config/redis.js'
 import { AppError } from './errorHandler.js'
 
@@ -78,7 +78,7 @@ export async function verifyAdminAccessToken(token) {
   const secret = adminJwtSecret()
   let payload
   try {
-    payload = jwt.verify(token, secret, { algorithms: ['HS256'] })
+    payload = verifyRotating(token, secret, previousAdminSecret(), { algorithms: ['HS256'] })
   } catch (err) {
     if (err instanceof AppError) throw err
     throw new AppError(401, 'Admin token invalid or expired', 'ADMIN_TOKEN_INVALID')
