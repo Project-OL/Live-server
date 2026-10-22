@@ -38,6 +38,11 @@ jobs:
         env:
           DATABASE_URL: postgresql://ci:ci@127.0.0.1:5432/ci
 
+      # The deploy scripts run inside single-quoted blocks on the VM; a stray apostrophe broke a
+      # deploy on 2026-10-21. Fail here instead.
+      - name: Syntax-check deploy scripts
+        run: for f in .github/deploy/*.sh; do bash -n "$f" || { echo "syntax error in $f"; exit 1; }; done
+
       - name: Pack artifact
         run: |
           tar -czf live-server-artifact.tgz \

@@ -6,6 +6,7 @@ import apiRoutes from "./modules/index.js";
 import streamRoutes from "./routes/index.js";
 import { connectRedis } from "./config/redis.js";
 import { requestLog } from "./middlewares/requestLog.js";
+import { corsAllowedOrigins } from "./config/corsOrigins.js";
 // import { initSocket } from "./socket/index.js"
 
 dotenv.config();
@@ -15,27 +16,16 @@ const app = express();
 // LIVE-44 / INF-11: request id + one access-log line per request (before everything else).
 app.use(requestLog);
 
-function corsAllowedOrigins() {
-  const raw = [
-    process.env.CORS_ORIGINS,
-    process.env.ALLOWED_ORIGINS,
-    process.env.CLIENT_URL,
-    process.env.ADMIN_CLIENT_URL,
-  ]
-    .filter(Boolean)
-    .flatMap((value) => String(value).split(','))
-    .map((origin) => origin.trim())
-    .filter(Boolean)
-  return [...new Set(raw)]
-}
-
+// F15: production boots only with an explicit list (assertProductionConfig.js); "*" is honoured
+// only outside production.
 const allowedOrigins = corsAllowedOrigins()
+const allowAnyOrigin = process.env.NODE_ENV !== 'production' && allowedOrigins.includes('*')
 
 app.use(
   cors({
     origin(origin, callback) {
       if (!origin) return callback(null, true)
-      if (allowedOrigins.includes('*') || allowedOrigins.includes(origin)) {
+      if (allowAnyOrigin || allowedOrigins.includes(origin)) {
         return callback(null, true)
       }
       return callback(null, false)

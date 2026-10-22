@@ -95,15 +95,29 @@ cd "$APP_DIR"
 echo "npm ci --omit=dev"
 npm ci --omit=dev --no-audit --no-fund
 
+# F19: --kill-timeout gives the graceful shutdown (server.js) room; the pm2 default of 1.6 s cut it
+# short. pm2 keeps a process kill timeout across restarts, so a process started without it is
+# deleted and started once (deploys run only when nobody is live). No apostrophes in this block:
+# it runs inside a single-quoted string.
+KILL_TIMEOUT_MS=15000
+pm2_kill_timeout() {
+  pm2 jlist 2>/dev/null | node -e "let d=\"\";process.stdin.on(\"data\",c=>d+=c).on(\"end\",()=>{const p=JSON.parse(d).find(x=>x.name===process.argv[1]);console.log(p ? (p.pm2_env.kill_timeout || 0) : \"none\")})" "$1"
+}
 pm2_ensure() {
   local name="$1"
   local script="$2"
-  if pm2 describe "$name" >/dev/null 2>&1; then
+  local kt
+  kt="$(pm2_kill_timeout "$name")"
+  if [ "$kt" = "none" ]; then
+    echo "pm2 start $script --name $name --kill-timeout $KILL_TIMEOUT_MS"
+    pm2 start "$script" --name "$name" --kill-timeout "$KILL_TIMEOUT_MS"
+  elif [ "$kt" != "$KILL_TIMEOUT_MS" ]; then
+    echo "pm2 delete + start $name (kill_timeout $kt -> $KILL_TIMEOUT_MS)"
+    pm2 delete "$name" >/dev/null 2>&1 || true
+    pm2 start "$script" --name "$name" --kill-timeout "$KILL_TIMEOUT_MS"
+  else
     echo "pm2 restart $name"
     pm2 restart "$name"
-  else
-    echo "pm2 start $script --name $name"
-    pm2 start "$script" --name "$name"
   fi
 }
 

@@ -7,6 +7,7 @@
  * Imported first by server.js, before any module reads the variables.
  */
 import dotenv from "dotenv";
+import { corsProductionProblems } from "./corsOrigins.js";
 
 dotenv.config();
 
@@ -26,6 +27,8 @@ export const productionConfigProblems = (env = process.env) => {
     // BE-20: every coin/point write goes through ol-node-rest's signed internal ledger API since
     // Live-server's local money code was retired (2026-10-21); without the key every send would fail.
     need("INTERNAL_LEDGER_HMAC_SECRET", env.INTERNAL_LEDGER_HMAC_SECRET);
+    // F15: never "*" (or nothing) for browser origins in production.
+    problems.push(...corsProductionProblems(env));
     return problems;
 };
 

@@ -7,6 +7,7 @@ import { onShutdown } from "../services/cluster.service.js";
 import { claimedUserId, socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
 import { withLogContext } from "../utils/logger.js";
 import { socketEventGuard } from "./eventGuard.js";
+import { corsAllowedOrigins } from "../config/corsOrigins.js";
 
 let io;
 
@@ -41,15 +42,17 @@ const attachRedisAdapter = async (server) => {
 };
 
 export const initSocket = async (server) => {
-    // SEC-13: browser origins allowed to open a socket. Opt-in: LIVE_SOCKET_CORS_ORIGINS
-    // (comma-separated); unset keeps "*". The mobile app sends no Origin, so CORS never applies to it.
+    // SEC-13: browser origins allowed to open a socket: LIVE_SOCKET_CORS_ORIGINS (comma-separated).
+    // Unset: F15 uses the HTTP CORS list in production, "*" elsewhere. The mobile app sends no
+    // Origin, so CORS never applies to it.
     const socketOrigins = String(process.env.LIVE_SOCKET_CORS_ORIGINS || "")
         .split(",")
         .map((o) => o.trim())
         .filter(Boolean);
+    const defaultOrigins = process.env.NODE_ENV === "production" ? corsAllowedOrigins() : "*";
     io = new Server(server, {
         cors: {
-            origin: socketOrigins.length ? socketOrigins : "*",
+            origin: socketOrigins.length ? socketOrigins : defaultOrigins,
             credentials: true,
         },
     });
