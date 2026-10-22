@@ -7,6 +7,7 @@ import streamRoutes from "./routes/index.js";
 import { connectRedis } from "./config/redis.js";
 import { requestLog } from "./middlewares/requestLog.js";
 import { corsAllowedOrigins } from "./config/corsOrigins.js";
+import { bodyParsers } from "./config/bodyLimits.js";
 // import { initSocket } from "./socket/index.js"
 
 dotenv.config();
@@ -34,14 +35,8 @@ app.use(
   })
 )
 
-app.use(express.json({ limit: "50mb" }));
-
-app.use(
-  express.urlencoded({
-    extended: true,
-    limit: "50mb",
-  })
-);
+// F20: 1 MB bodies, 50 MB only on the image-upload routes (config/bodyLimits.js).
+app.use(...bodyParsers());
 
 app.use(express.static("public"));
 
