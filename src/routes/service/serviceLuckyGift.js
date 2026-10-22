@@ -30,7 +30,7 @@ export const calculateComboReward = calcCombo;
  * here; ol-node-rest writes the debit, reward, host cut, levels and (combo only) commission.
  * Returns the same fields as the local transaction.
  */
-const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult }) => {
+const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId = null }) => {
     let r;
     try {
         r = await callLedger("LUCKY_GIFT", "lucky-gift", {
@@ -42,7 +42,7 @@ const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTr
             txKeyBase,
             rewardCoins: String(luckyResult.totalReward),
             category: String(luckyResult.category || "LUCKY")
-        });
+        }, { clientTxId });
     } catch (err) {
         throw toLocalError(err, {
             insufficient: (d) => `Insufficient coin balance. Required: ${d.required}, Available: ${d.balance}`
@@ -139,7 +139,7 @@ export const sendLuckyGiftService = async ({
     // separate credit, not a discount), then writes the debit, reward, host cut, levels, combo-only
     // agency commission and the reserve-pool counters in one locked transaction, and refreshes the
     // caches. Live-server's own copy of this transaction was retired on 2026-10-21.
-    const txRecord = await luckyGiftRemoteLedger({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult });
+    const txRecord = await luckyGiftRemoteLedger({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId });
     const hostPoints = txRecord.hostPoints;
     const finalBalanceCoins = txRecord.finalBalanceCoins;
     const wealthLevel = txRecord.wealth.newLevel;

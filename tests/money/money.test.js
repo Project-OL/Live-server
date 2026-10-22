@@ -259,6 +259,41 @@ test("LIVE-57: a lucky gift sent through the stream path with one clientTxId is 
     assert.equal(debits, 1);
 });
 
+test("F03: a ledger slower than the old 3 s attempt timeout charges once and the send succeeds", async () => {
+    const sender = await makeUser({ coins: 10_000n });
+    const hostUser = await makeUser();
+    await ensureWallets(hostUser.id);
+    const gift = await makeGift(1_000);
+    const call = await makeActiveCall(sender.id, hostUser.id);
+    const sw = await walletIdOf(sender.id, "COIN");
+
+    // Hold the sender's wallet lock for 10 s: the ledger transaction waits on it. The old client
+    // (3 s x 3 attempts) gave up after ~9.4 s and reported a failure for a gift that then committed.
+    let release;
+    const held = new Promise((r) => { release = r; });
+    let locked;
+    const lockTaken = new Promise((r) => { locked = r; });
+    const holder = prisma.$transaction(async (tx) => {
+        await tx.$queryRaw`SELECT id FROM wallets WHERE id = ${sw}::uuid FOR UPDATE`;
+        locked();
+        await held;
+    }, { timeout: 30_000 });
+    await lockTaken;
+    const timer = setTimeout(release, 10_000);
+
+    try {
+        const r = await videoCall.sendGift(call.id, sender.id, gift.id, 1);
+        assert.equal(r.newBalance, 9_000n);
+    } finally {
+        clearTimeout(timer);
+        release();
+        await holder;
+    }
+    const debits = await prisma.coinLedgerEntry.count({ where: { walletId: sw, direction: "DEBIT", txType: "GIFT_SEND" } });
+    assert.equal(debits, 1, "charged exactly once");
+    assert.deepEqual(await ledgerProblems([sw]), []);
+});
+
 test("LIVE-31: parallel lucky gifts add exactly to the DB reserve-pool counters", async () => {
     const pool = async () => {
         const [r] = await prisma.$queryRaw`SELECT COALESCE(SUM(total_spent),0)::bigint AS spent FROM lucky_reserve_pool`;

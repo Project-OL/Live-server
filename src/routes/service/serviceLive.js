@@ -1390,7 +1390,8 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
         giftId: gift.id,
         giftCount,
         giftTransactionId,
-        idemBase
+        idemBase,
+        clientTxId
     });
 
     // Committed. Everything below is best-effort and must not fail the send.
@@ -1446,7 +1447,7 @@ export const sendStreamGiftService = async ({ streamDbId, senderId, giftId, targ
 };
 
 /** BE-20 remote ledger for a live-stream gift; returns the same fields as the local transaction. */
-const sendStreamGiftRemoteLedger = async ({ senderId, receiverId, giftId, giftCount, giftTransactionId, idemBase }) => {
+const sendStreamGiftRemoteLedger = async ({ senderId, receiverId, giftId, giftCount, giftTransactionId, idemBase, clientTxId = null }) => {
     try {
         const r = await callLedger("GIFT_LIVE", "gift", {
             context: "live_stream",
@@ -1456,7 +1457,7 @@ const sendStreamGiftRemoteLedger = async ({ senderId, receiverId, giftId, giftCo
             quantity: giftCount,
             giftTransactionId,
             idemBase
-        });
+        }, { clientTxId });
         return {
             balanceAfterCoins: BigInt(r.balanceAfterCoins),
             balanceAfterPoints: BigInt(r.balanceAfterPoints),
@@ -1540,10 +1541,10 @@ export const checkFollowStatusService = async ({ followerId, followingId }) => {
 };
 
 /** BE-20 remote ledger for the 10,000-coin global message. */
-const globalMessageRemoteLedger = async ({ senderId, messageTxId, idemKey, message }) => {
+const globalMessageRemoteLedger = async ({ senderId, messageTxId, idemKey, message, clientTxId = null }) => {
     try {
         // Only the ledger description uses the text (first 30 chars).
-        const r = await callLedger("GLOBAL_MESSAGE", "global-message", { senderId, messageTxId, idemKey, message: message.slice(0, 100) });
+        const r = await callLedger("GLOBAL_MESSAGE", "global-message", { senderId, messageTxId, idemKey, message: message.slice(0, 100) }, { clientTxId });
         return { balanceAfterCoins: BigInt(r.balanceAfterCoins), wealthLevel: r.wealthLevel };
     } catch (err) {
         throw toLocalError(err, { insufficient: "Insufficient coins to send a global message." });
@@ -1580,7 +1581,7 @@ export const sendGlobalMessageService = async ({ senderId, message, streamId = n
     const messageTxId = crypto.randomUUID();
     const idemKey = clientTxId ? `global-msg:${senderId}:${clientTxId}` : `global-msg:${messageTxId}`;
 
-    const { balanceAfterCoins, wealthLevel } = await globalMessageRemoteLedger({ senderId, messageTxId, idemKey, message });
+    const { balanceAfterCoins, wealthLevel } = await globalMessageRemoteLedger({ senderId, messageTxId, idemKey, message, clientTxId });
 
     return {
         transactionId: messageTxId,

@@ -12,15 +12,28 @@
  *   INTERNAL_LEDGER_HMAC_SECRET   shared with ol-node-rest; production refuses to boot without it
  *                                 (config/assertProductionConfig.js)
  *
- * Transport: keep-alive (Node's fetch pools connections), 3 s timeout per attempt, and retries only
- * for a network error, a timeout or 502/503/504, always with the same requestId, so a retry of a
- * request that did commit gets its committed result back instead of a second charge.
+ * Transport: keep-alive (Node's fetch pools connections), and retries only for a network error, a
+ * timeout or 502/503/504, always with the same requestId, so a retry of a request that did commit
+ * gets its committed result back instead of a second charge (a retry that overlaps a still-running
+ * attempt waits on the wallet lock / unique ledger key, then replays).
+ *
+ * F03 timing: a ledger transaction may run 15 s (ol-node-rest TX_TIMEOUT_MS). The old 3 s attempt
+ * gave up after ~9 s while the first attempt could still commit, so the app saw a failure for a
+ * charged gift and the user tapped again (a new send). Now one attempt may take 18 s, and all
+ * attempts fit in a 19 s budget, inside the app's 20 s receive timeout. A give-up after a timeout
+ * logs "outcome unknown" with the requestId, so the charge can be traced.
+ *
+ * Gift-like operations pass `{ clientTxId }`; calls without one are counted per op in the 10-minute
+ * stats line (`noClientTxId`). The app does not send it yet, so they are never rejected.
  */
 import crypto from "crypto";
 
 export const LEDGER_OPS = ["GIFT_LIVE", "GIFT_VIDEO_CALL", "LUCKY_GIFT", "CALL_ACCEPT", "CALL_MINUTE", "GLOBAL_MESSAGE"];
 
-const ATTEMPT_TIMEOUT_MS = 3000;
+export const ATTEMPT_TIMEOUT_MS = 18_000;
+export const TOTAL_BUDGET_MS = 19_000;
+/** Don't start an attempt with less time than this left: it could only time out. */
+const MIN_ATTEMPT_MS = 1000;
 const RETRY_DELAYS_MS = [100, 300];
 const RETRY_STATUS = new Set([502, 503, 504]);
 
@@ -45,12 +58,13 @@ export class LedgerError extends Error {
 // Counters, logged every 10 minutes, so remote mode shows latency and failures at a glance.
 const stats = {};
 let statsWindow = Date.now();
-const record = (op, outcome, ms) => {
+const record = (op, outcome, ms, noClientTxId = false) => {
     const s = (stats[op] ||= { n: 0, ms: 0, max: 0 });
     s.n += 1;
     s.ms += ms;
     s.max = Math.max(s.max, ms);
     s[outcome] = (s[outcome] || 0) + 1;
+    if (noClientTxId) s.noClientTxId = (s.noClientTxId || 0) + 1;
     if (Date.now() - statsWindow >= 10 * 60 * 1000) {
         const out = {};
         for (const [k, v] of Object.entries(stats)) out[k] = { ...v, avgMs: Math.round(v.ms / v.n) };
@@ -62,18 +76,26 @@ const record = (op, outcome, ms) => {
 
 /**
  * POST one operation. `body.requestId` is set here once and reused by every retry.
+ * @param {{ fetchImpl?: typeof fetch, clientTxId?: string | null, attemptTimeoutMs?: number, budgetMs?: number }} [opts]
+ *   `clientTxId`: pass it (even null) for client-initiated money ops, so missing ones are counted.
  * @returns {Promise<object>} the parsed response
  * @throws {LedgerError} with the API's `code` and `status` (status null = transport failure)
  */
-export const callLedger = async (op, path, payload, { fetchImpl = fetch } = {}) => {
+export const callLedger = async (op, path, payload, opts = {}) => {
+    const { fetchImpl = fetch, attemptTimeoutMs = ATTEMPT_TIMEOUT_MS, budgetMs = TOTAL_BUDGET_MS } = opts;
+    const noClientTxId = "clientTxId" in opts && !opts.clientTxId;
     const key = secret();
     const urlPath = `/internal/v1/ledger/${path}`;
-    const body = JSON.stringify({ requestId: crypto.randomUUID(), ...payload });
+    const requestId = crypto.randomUUID();
+    const body = JSON.stringify({ requestId, ...payload });
     const started = Date.now();
     let lastErr = null;
+    let timedOut = false;
 
     for (let attempt = 0; attempt <= RETRY_DELAYS_MS.length; attempt++) {
         if (attempt > 0) await new Promise((r) => setTimeout(r, RETRY_DELAYS_MS[attempt - 1]));
+        const remaining = budgetMs - (Date.now() - started);
+        if (attempt > 0 && remaining < Math.min(MIN_ATTEMPT_MS, attemptTimeoutMs)) break;
         const timestamp = String(Date.now());
         let res;
         try {
@@ -86,9 +108,10 @@ export const callLedger = async (op, path, payload, { fetchImpl = fetch } = {}) 
                 },
                 body,
                 keepalive: true,
-                signal: AbortSignal.timeout(ATTEMPT_TIMEOUT_MS)
+                signal: AbortSignal.timeout(Math.max(1, Math.min(attemptTimeoutMs, remaining)))
             });
         } catch (err) {
+            if (err?.name === "TimeoutError" || err?.name === "AbortError") timedOut = true;
             lastErr = new LedgerError(`Ledger service unreachable: ${err.message}`, { code: "LEDGER_UNAVAILABLE" });
             continue;
         }
@@ -103,18 +126,23 @@ export const callLedger = async (op, path, payload, { fetchImpl = fetch } = {}) 
             json = null;
         }
         if (res.ok) {
-            record(op, json?.replayed ? "replayed" : "ok", Date.now() - started);
+            record(op, json?.replayed ? "replayed" : "ok", Date.now() - started, noClientTxId);
             return json;
         }
-        record(op, json?.code || `http_${res.status}`, Date.now() - started);
+        record(op, json?.code || `http_${res.status}`, Date.now() - started, noClientTxId);
         throw new LedgerError(json?.message || `Ledger error ${res.status}`, {
             code: json?.code || null,
             status: res.status,
             details: json?.details || null
         });
     }
-    record(op, "unavailable", Date.now() - started);
-    console.error(`[Ledger] ${op} failed after retries: ${lastErr?.message}`);
+    record(op, "unavailable", Date.now() - started, noClientTxId);
+    if (timedOut) {
+        // The transaction may still commit after we stop waiting: trace it by requestId (ledger row metadata).
+        console.error(`[Ledger] ${op} outcome unknown after ${Date.now() - started} ms (timed out) requestId=${requestId}`);
+    } else {
+        console.error(`[Ledger] ${op} failed after retries: ${lastErr?.message}`);
+    }
     throw lastErr;
 };
 

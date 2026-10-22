@@ -1151,7 +1151,7 @@ export const sendGift = async (sessionId, senderId, giftId, count = 1, clientTxI
             giftTransactionId,
             idemBase,
             sessionId
-        });
+        }, { clientTxId });
         settled = {
             balanceAfterCoins: BigInt(r.balanceAfterCoins),
             balanceAfterPoints: BigInt(r.balanceAfterPoints),

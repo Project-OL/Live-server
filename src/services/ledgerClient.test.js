@@ -1,7 +1,7 @@
 import { test } from "node:test";
 import assert from "node:assert/strict";
 import crypto from "crypto";
-import { callLedger, signRequest, toLocalError, LedgerError } from "./ledgerClient.js";
+import { callLedger, signRequest, toLocalError, LedgerError, ATTEMPT_TIMEOUT_MS, TOTAL_BUDGET_MS } from "./ledgerClient.js";
 
 const SECRET = "test-internal-ledger-secret-at-least-32-chars";
 
@@ -55,6 +55,55 @@ test("retries a timeout / 503 with the same requestId and a fresh signature", as
             });
             assert.equal(s.headers["x-ol-signature"], expected);
         }
+    });
+});
+
+test("F03: one attempt outlasts the ledger's 15 s transaction, and all attempts fit the app's 20 s timeout", () => {
+    assert.ok(ATTEMPT_TIMEOUT_MS >= 15_000 + 2_000, `attempt ${ATTEMPT_TIMEOUT_MS} ms`);
+    assert.ok(TOTAL_BUDGET_MS < 20_000 && TOTAL_BUDGET_MS >= ATTEMPT_TIMEOUT_MS, `budget ${TOTAL_BUDGET_MS} ms`);
+});
+
+test("F03: a response slower than the old 3 s attempt is waited for, not re-sent", async () => {
+    await withEnv({ INTERNAL_LEDGER_HMAC_SECRET: SECRET }, async () => {
+        let calls = 0;
+        const fetchImpl = async () => {
+            calls += 1;
+            await new Promise((r) => setTimeout(r, 3_300));
+            return jsonResponse(200, { ok: true });
+        };
+        const r = await callLedger("GIFT_LIVE", "gift", {}, { fetchImpl, clientTxId: null });
+        assert.deepEqual(r, { ok: true });
+        assert.equal(calls, 1);
+    });
+});
+
+test("F03: retries stop at the total budget, and a timed-out give-up logs the requestId", async () => {
+    await withEnv({ INTERNAL_LEDGER_HMAC_SECRET: SECRET }, async () => {
+        const bodies = [];
+        // Hangs until aborted, like a ledger stuck on a lock.
+        const fetchImpl = (url, init) => new Promise((_, reject) => {
+            bodies.push(JSON.parse(init.body));
+            init.signal.addEventListener("abort", () => reject(init.signal.reason));
+        });
+        const logged = [];
+        const orig = console.error;
+        console.error = (m) => logged.push(String(m));
+        const started = Date.now();
+        // AbortSignal.timeout's timer is unref'd; a real socket would keep the loop alive.
+        const keepAlive = setInterval(() => {}, 1_000);
+        try {
+            await assert.rejects(
+                callLedger("GIFT_LIVE", "gift", {}, { fetchImpl, attemptTimeoutMs: 1_200, budgetMs: 1_500 }),
+                (err) => err instanceof LedgerError && err.code === "LEDGER_UNAVAILABLE"
+            );
+        } finally {
+            clearInterval(keepAlive);
+            console.error = orig;
+        }
+        const took = Date.now() - started;
+        assert.ok(took < 2_500, `gave up after ${took} ms`);
+        assert.equal(bodies.length, 1, "no attempt started with less than 1 s left");
+        assert.ok(logged.some((l) => l.includes("outcome unknown") && l.includes(`requestId=${bodies[0].requestId}`)), logged.join("\n"));
     });
 });
 
