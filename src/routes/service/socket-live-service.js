@@ -175,6 +175,7 @@ export const setupLiveSockets = (io) => {
 
         socket.on("join_stream", async ({ streamId }) => {
             socket.join(streamId);
+            socket.join(LIVE_ROOMS_ALL); // F17: global announcements reach only sockets in a live room
             socket.data = socket.data || {};
             socket.data.streamId = streamId;
             socket.data.userId = userId;
@@ -352,6 +353,7 @@ export const setupLiveSockets = (io) => {
 
         socket.on("leave_stream", async ({ streamId }) => {
             socket.leave(streamId);
+            socket.leave(LIVE_ROOMS_ALL);
             if (socket.data) {
                 delete socket.data.streamId;
             }
@@ -1056,13 +1058,24 @@ export const broadcastToStream = (streamId, eventName, data) => {
     ioInstance.to(streamId).emit(eventName, data);
 };
 
+/**
+ * F17: every socket that joined a live room is also in this room. The app handles the global events
+ * (GLOBAL_ANNOUNCEMENT, GLOBAL_MESSAGE_SENT) only on the live-room screen, so sending them to these
+ * sockets instead of every connected socket changes nothing for users and skips idle ones.
+ */
+export const LIVE_ROOMS_ALL = "live:rooms:all";
+
+/** Event names the app listens to; others had no listener and only cost bandwidth (F17). */
+const GLOBAL_EVENTS_WITH_LISTENERS = new Set(["GLOBAL_ANNOUNCEMENT", "GLOBAL_MESSAGE_SENT"]);
+
 export const broadcastGlobalMessage = async (eventName, data) => {
     if (!ioInstance) {
         console.warn("[Socket] Socket.IO instance not initialized for live streaming!");
         return;
     }
+    if (!GLOBAL_EVENTS_WITH_LISTENERS.has(eventName)) return;
     try {
-        ioInstance.emit(eventName, data);
+        ioInstance.to(LIVE_ROOMS_ALL).emit(eventName, data);
     } catch (err) {
         console.error("Failed to broadcast global message:", err.message);
     }
@@ -1073,6 +1086,7 @@ export const forceLeaveRoom = async (userId, roomName) => {
     const userSockets = await ioInstance.in(`user:${userId}`).fetchSockets();
     for (const s of userSockets) {
         s.leave(roomName);
+        s.leave(LIVE_ROOMS_ALL);
         if (s.data) {
             delete s.data.streamId;
         }
