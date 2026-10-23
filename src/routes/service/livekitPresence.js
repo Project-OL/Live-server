@@ -41,6 +41,20 @@ export const livekitApiHostIsPresent = async (roomName, hostUserId) => {
     }
 };
 
+/**
+ * Phase 0 black-screen gap: is the host publishing an unmuted video track? true/false, or null when
+ * the host is not in the room or LiveKit can't be asked. TrackType VIDEO is 1 in the protocol enum.
+ */
+export const livekitHostPublishingVideo = async (roomName, hostUserId, list = (r) => livekitRoomService.listParticipants(r)) => {
+    try {
+        const host = (await list(roomName) || []).find((p) => p.identity === hostUserId);
+        if (!host) return null;
+        return (host.tracks || []).some((t) => (t.type === 1 || t.type === 'VIDEO') && !t.muted);
+    } catch (_err) {
+        return null;
+    }
+};
+
 /** Webhook presence: true/false, or null when there is no webhook record for the room. */
 export const webhookHostIsPresent = async (roomName, hostUserId) => {
     if (!redisClient.isOpen) return null;

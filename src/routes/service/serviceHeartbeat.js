@@ -4,6 +4,7 @@ import {
     endLiveStreamService,
 } from './serviceLive.js';
 import { livekitHostIsPresent } from './livekitPresence.js';
+import { HOST_NOVIDEO_MAX_MS, hostNoVideoKey, hostNoVideoMode, hostNoVideoMs } from './hostNoVideo.js';
 import { LIVE_FAILURE_KINDS, recordLiveFailure } from '../../services/liveFailureLog.service.js';
 import { isLeader, onShutdown } from '../../services/cluster.service.js';
 import { heartbeatVerdict } from './heartbeatPolicy.js';
@@ -136,6 +137,9 @@ const clearHostAbsent = (streamIdKey) => {
 };
 const absenceLoggedAt = new Map();
 
+// Phase 0 black-screen gap (host in LiveKit, no video): see hostNoVideo.js.
+const noVideoLoggedAt = new Map();
+
 /** One keepalive log line per stream per minute (the monitor ticks every 5 s). */
 const keepaliveLoggedAt = new Map();
 const logKeepalive = (streamIdKey, hostUserId, sinceLastPingMs, lastHeartbeatTime) => {
@@ -259,6 +263,32 @@ export const startStreamHeartbeatMonitor = (io) => {
                             // "never connected" ghost and gets the full heartbeat grace instead.
                             markHostConfirmed(streamIdKey).catch(() => { });
                             clearHostAbsent(streamIdKey);
+                            const noVideoMs = await hostNoVideoMs(streamIdKey, hostUserId, now);
+                            if (noVideoMs !== null && noVideoMs >= HOST_NOVIDEO_MAX_MS) {
+                                if (hostNoVideoMode() === 'enforce') {
+                                    console.warn(`[Host No Video] Stream ${streamIdKey} host in LiveKit without video for ${noVideoMs} ms; ending (HOST_MEDIA_LOST).`);
+                                    await endFromSweep(io, stream, streamIdKey, {
+                                        reason: "HOST_MEDIA_LOST",
+                                        message: "Live stream ended because the host's video was lost.",
+                                        logTag: "Host No Video",
+                                        failure: {
+                                            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
+                                            userId: hostUserId,
+                                            streamId: streamIdKey,
+                                            code: 'HOST_NO_VIDEO',
+                                            message: `Host in LiveKit but published no video for ${noVideoMs} ms; stream auto-ended.`,
+                                            meta: { ageMs, noVideoMs }
+                                        }
+                                    });
+                                    redisClient.del(hostNoVideoKey(streamIdKey)).catch(() => { });
+                                    continue;
+                                }
+                                if (now - (noVideoLoggedAt.get(streamIdKey) || 0) >= 60000) {
+                                    noVideoLoggedAt.set(streamIdKey, now);
+                                    if (noVideoLoggedAt.size > 5000) noVideoLoggedAt.clear();
+                                    console.warn(`[Host No Video] mode=log would end stream ${streamIdKey}: host in LiveKit without video for ${Math.round(noVideoMs / 1000)} s (camera not switched off).`);
+                                }
+                            }
                         } else {
                             const pause = await hostPausedForCallOrReturn(hostUserId, streamIdKey);
                             if (pause.paused) {
