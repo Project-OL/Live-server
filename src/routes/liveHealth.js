@@ -1,4 +1,5 @@
 import { monitorEventLoopDelay } from "perf_hooks";
+import { readFileSync } from "fs";
 import prisma from "../config/prisma.js";
 import { client as redisClient } from "../config/redis.js";
 
@@ -6,6 +7,16 @@ import { client as redisClient } from "../config/redis.js";
  * LIVE-46 / INF-12: GET /live-health (the GCP URL map already routes this path to Live-server).
  * 200 when Redis and Postgres answer within 2 s, 503 otherwise; no auth, no user data.
  */
+// Phase 0 versioning: the deploy writes release.json ({"commit": "<sha>"}) into the app dir.
+const releaseCommit = (() => {
+    try {
+        const j = JSON.parse(readFileSync(new URL("../../release.json", import.meta.url), "utf8"));
+        return typeof j.commit === "string" && j.commit ? j.commit : null;
+    } catch {
+        return process.env.RELEASE_COMMIT || null;
+    }
+})();
+
 const loopDelay = monitorEventLoopDelay({ resolution: 20 });
 loopDelay.enable();
 
@@ -27,6 +38,7 @@ export const liveHealth = async (_req, res) => {
         db,
         eventLoopLagP99Ms: lagMs,
         uptimeSec: Math.round(process.uptime()),
-        checkMs: Date.now() - started
+        checkMs: Date.now() - started,
+        commit: releaseCommit
     });
 };

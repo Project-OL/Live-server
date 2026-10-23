@@ -11,3 +11,6 @@ node_modules
 # Service-account keys stay on the VM (Secret Manager ol-live-server-google-credentials), never in git.
 google-credentials.json
 
+
+# Phase 0: written by CI into the deploy artifact
+release.json

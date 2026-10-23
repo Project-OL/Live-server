@@ -62,8 +62,10 @@ jobs:
         run: for f in .github/deploy/*.sh; do bash -n "$f" || { echo "syntax error in $f"; exit 1; }; done
 
       # Same file list as the AWS pipeline -- source is shipped, npm ci runs on the box.
+      # release.json: Phase 0 versioning, reported by /live-health.
       - name: Pack artifact
         run: |
+          printf '{"commit":"%s","builtAt":"%s"}\n' "$GITHUB_SHA" "$(date -u +%FT%TZ)" > release.json
           tar -czf live-server-artifact.tgz \
             --exclude=node_modules \
             --exclude=.git \
@@ -72,7 +74,7 @@ jobs:
             --exclude=exp.js \
             --exclude=test-creds.txt \
             --exclude=google-credentials.json \
-            server.js package.json package-lock.json prisma prisma.config.ts src public scripts
+            server.js package.json package-lock.json prisma prisma.config.ts src public scripts release.json
           ls -lh live-server-artifact.tgz
 
       - name: Upload GitHub Actions artifact
@@ -205,7 +207,7 @@ jobs:
           gcloud compute ssh "$GCE_INSTANCE" \
             --project "$GCP_PROJECT_ID" --zone "$GCP_ZONE" \
             --tunnel-through-iap --quiet \
-            --command "for i in \$(seq 1 24); do b=\$(curl -sf --max-time 5 http://127.0.0.1:5000/live-health) && echo \"\$b\" | grep -q '\"status\":\"ok\"' && { echo \"ol-live healthy: \$b\"; exit 0; }; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; sudo -u ${APP_USER} bash -lc 'pm2 list; pm2 logs ol-live --lines 50 --nostream'; exit 1"
+            --command "for i in \$(seq 1 24); do b=\$(curl -sf --max-time 5 http://127.0.0.1:5000/live-health) && echo \"\$b\" | grep -q '\"status\":\"ok\"' && echo \"\$b\" | grep -q '\"commit\":\"${GITHUB_SHA}\"' && { echo \"ol-live healthy on ${GITHUB_SHA}: \$b\"; exit 0; }; echo \"attempt \$i not ready\"; sleep 5; done; echo 'health check failed'; sudo -u ${APP_USER} bash -lc 'pm2 list; pm2 logs ol-live --lines 50 --nostream'; exit 1"
 
       # Keeps <bucket>/live-server/latest.tgz equal to what is actually running, so a
       # VM the MIG (re)creates via ol-node-rest's .github/deploy/gce-bootstrap.sh boots
@@ -220,4 +222,7 @@ jobs:
         run: |
           gcloud storage cp live-server-artifact.tgz "$RELEASE_BUCKET/live-server/$GITHUB_SHA.tgz" --quiet
           gcloud storage cp live-server-artifact.tgz "$RELEASE_BUCKET/live-server/latest.tgz" --quiet
-          gcloud storage ls -l "$RELEASE_BUCKET/live-server/latest.tgz"
+          # Pinned bootstrap (ol-node-rest gce-bootstrap.sh boots <current>.tgz).
+          printf '%s\n' "$GITHUB_SHA" > current
+          gcloud storage cp current "$RELEASE_BUCKET/live-server/current" --quiet
+          gcloud storage ls -l "$RELEASE_BUCKET/live-server/latest.tgz" "$RELEASE_BUCKET/live-server/current"
