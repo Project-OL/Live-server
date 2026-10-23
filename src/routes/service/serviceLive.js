@@ -1,3 +1,4 @@
+import { currentCallerCoinsPerMinute } from '../../services/callRate.service.js';
 import prisma from '../../config/prisma.js';
 import crypto from 'crypto';
 import { AccessToken, RoomServiceClient, EgressClient } from 'livekit-server-sdk';
@@ -2328,7 +2329,7 @@ export const getHostProfileService = async ({ hostUserId }) => {
     const hostName = hostUser ? (`${hostUser.firstName || ""} ${hostUser.lastName || ""}`.trim() || hostUser.username || "Host") : "Host";
     const acceptVideoCalls = videoCallSettings ? videoCallSettings.acceptVideoCalls !== false : true;
     const pricePerMin = videoCallSettings?.pricePerMin || 1800;
-    const coinsPerMin = Math.ceil((pricePerMin * 5) / 3);
+    const coinsPerMin = Number(await currentCallerCoinsPerMinute(pricePerMin)); // F10
 
     const host = hostUser ? {
         id: hostUser.id,

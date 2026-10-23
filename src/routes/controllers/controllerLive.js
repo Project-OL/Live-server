@@ -1,3 +1,4 @@
+import { callerCoinsPerMinute, getVideoCallHostShareBp } from '../../services/callRate.service.js';
 import express from 'express';
 import fs from 'fs';
 import auth from '../../middlewares/authMiddleware.js';
@@ -459,12 +460,13 @@ const getLiveStreams = async (req, res) => {
             return 3;
         };
 
+        const callHostShareBp = await getVideoCallHostShareBp(); // F10: read once per list
         const data = streams.map((stream) => {
             const password = passwordMap.get(stream.streamId);
             const callSettings = videoCallSettingsMap.get(stream.userId);
             const acceptVideoCalls = callSettings ? callSettings.acceptVideoCalls !== false : true;
             const pricePerMin = callSettings?.pricePerMin || 1800;
-            const coinsPerMin = Math.ceil((pricePerMin * 5) / 3);
+            const coinsPerMin = Number(callerCoinsPerMinute(pricePerMin, callHostShareBp)); // F10
             const adminTags = hostAdminTagsMap.get(stream.userId) || [];
 
             return {

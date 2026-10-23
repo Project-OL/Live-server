@@ -1,3 +1,4 @@
+import { currentCallerCoinsPerMinute } from "../../services/callRate.service.js";
 import crypto from "crypto";
 import { WalletCurrencyType, LedgerDirection, LevelType } from "@prisma/client";
 import prisma from "../../config/prisma.js";
@@ -302,7 +303,7 @@ const initiateCallUnlocked = async ({ callerId, creatorId }) => {
     }
 
     // Balance check for caller (1st minute rate)
-    const coinRate = BigInt(Math.ceil((settings.pricePerMin * 5) / 3));
+    const coinRate = await currentCallerCoinsPerMinute(settings.pricePerMin); // F10
     const callerWallet = await getOrCreateWallet(callerId, WalletCurrencyType.COIN);
     const callerCoins = await getFastCoinBalance(callerWallet.id);
 
@@ -433,7 +434,7 @@ export const acceptCall = async (sessionId, receiverId) => {
 
     await checkCoinsFrozenFast(session.callerId);
 
-    const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
+    const coinRate = await currentCallerCoinsPerMinute(session.pricePerMin); // F10
     const pointRate = BigInt(session.pricePerMin);
 
     // BE-20: minute 1 (balance check, debit, credit, levels, commission) and RINGING -> ACTIVE settle
@@ -755,7 +756,7 @@ export const getCallSettingsForCaller = async ({ callerId, creatorId }) => {
         reason = "WEALTH_BLOCKED_LV5";
     }
 
-    const coinRate = BigInt(Math.ceil((settings.pricePerMin * 5) / 3));
+    const coinRate = await currentCallerCoinsPerMinute(settings.pricePerMin); // F10
     const callerWallet = await getOrCreateWallet(callerId, WalletCurrencyType.COIN);
     const callerCoins = await getFastCoinBalance(callerWallet.id);
 
@@ -789,7 +790,7 @@ export const billDueMinutes = async (session) => {
     const currentMinute = Math.floor(elapsedMs / 60000) + 1;
 
     if (currentMinute > session.minsCharged) {
-        const coinRate = BigInt(Math.ceil((session.pricePerMin * 5) / 3));
+        const coinRate = await currentCallerCoinsPerMinute(session.pricePerMin); // F10
 
         let hasFailed = false;
 
@@ -850,17 +851,13 @@ export const billDueMinutes = async (session) => {
                     hasFailed = true;
                     break;
                 } else {
-                    if (err.code === "P2002") {
-                        console.log(`[VideoCall] Idempotency key match for minute ${m}, assuming already billed. Error detail:`, err);
-                        await prisma.videoCallSession.updateMany({
-                            where: { id: session.id, minsCharged: { lt: m } },
-                            data: { minsCharged: m }
-                        }).catch(() => { });
-                    } else {
-                        console.error(`[VideoCall] Transaction error billing session ${session.id} minute ${m}:`, err);
-                        hasFailed = true;
-                        break;
-                    }
+                    // F24: no "assume billed" branch any more. It marked the minute charged here
+                    // (minsCharged) without the ledger billing it. The ledger owns the session row and
+                    // answers a repeat with alreadyBilled, so any other error just stops this pass and
+                    // the next tick re-reads the session.
+                    console.error(`[VideoCall] Billing error session ${session.id} minute ${m} (${err.code || "no code"}):`, err.message);
+                    hasFailed = true;
+                    break;
                 }
             }
         }
