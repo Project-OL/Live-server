@@ -46,6 +46,7 @@ import {
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
 import { withSheetPublicIds } from '../service/roomPublicId.js';
+import { viewerPlayback } from '../service/liveHlsMode.js';
 import { withGiftThumbnail } from '../../utils/giftImage.js';
 import { getActiveGiftCatalogPage, GIFT_CATALOG_PAGE_SIZE } from '../../services/giftCatalog.service.js';
 import { isUserRestrictedFast } from '../service/serviceAdmin.js';
@@ -281,11 +282,16 @@ const joinLiveStream = async (req, res) => {
         const finalViewerCount = viewers.length;
         const cdnDomain = process.env.CDN_DOMAIN;
 
-        let mode = "WEBRTC";
-        let hlsUrl = null;
+        // HLS for 51+ only with LIVE_HLS_SWITCH=on (the shipped app can't play it; see liveHlsMode.js)
+        const { mode, hlsUrl, prewarm } = viewerPlayback({
+            viewerCount: finalViewerCount,
+            isHost: req.userId === stream.userId,
+            streamId: stream.streamId,
+            cdnDomain
+        });
 
         // 🟢 Pre-trigger Egress when 47th Viewer joins so HLS segments are 100% pre-generated for 51st Viewer
-        if (finalViewerCount >= 47 && redisClient.isOpen) {
+        if (prewarm && redisClient.isOpen) {
             const egressKey = `stream:egress:${stream.streamId}`;
             redisClient.get(egressKey).then(async (activeEgressId) => {
                 if (!activeEgressId) {
@@ -295,12 +301,6 @@ const joinLiveStream = async (req, res) => {
                     }
                 }
             }).catch(err => console.error("Egress pre-warm error:", err.message));
-        }
-
-        // 🟢 51st Viewer Threshold: Viewers 1-50 get WebRTC (0.2s ultra low latency), Viewers 51+ get BunnyCDN HLS
-        if (finalViewerCount > 50 && req.userId !== stream.userId) {
-            mode = "HLS";
-            hlsUrl = `${cdnDomain}/hls/streams/${stream.streamId}/live`;
         }
 
         if (isStealth) {
