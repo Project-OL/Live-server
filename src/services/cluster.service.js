@@ -81,12 +81,31 @@ return 0`;
 const lastLeaderState = new Map();
 
 /**
+ * F11: with Redis unreachable no node can know who leads, so the loops run NOWHERE rather than on
+ * every node (two nodes would both end streams / bill). It is also the safer choice on one node:
+ * the heartbeat sweep reads heartbeats from Redis and would end healthy streams without it. Per-call
+ * billing timers fire locally regardless (durable timers fall back to local setTimeout).
+ * LIVE_LEADER_REDIS_DOWN=local restores the old "run here" fallback.
+ */
+const runLocallyWhenRedisDown = () => String(process.env.LIVE_LEADER_REDIS_DOWN || '').trim().toLowerCase() === 'local';
+const pausedLoggedAt = new Map();
+const redisDownVerdict = (name, why) => {
+    if (runLocallyWhenRedisDown()) return true;
+    const now = Date.now();
+    if (now - (pausedLoggedAt.get(name) || 0) >= 60000) {
+        pausedLoggedAt.set(name, now);
+        console.warn(`[Leader] ${name} paused: Redis unavailable (${why}); no node runs it until Redis is back (F11).`);
+    }
+    return false;
+};
+
+/**
  * True when this node holds (or just acquired/renewed) the lock for `name`.
- * Call once per loop tick. Redis down -> true (single-node fallback).
+ * Call once per loop tick. Redis down -> false (F11, see above).
  */
 export const isLeader = async (name) => {
     if (shuttingDown) return false;
-    if (!redisClient.isOpen) return true;
+    if (!redisClient.isOpen) return redisDownVerdict(name, 'not connected');
     const key = leaderKey(name);
     let leader = false;
     try {
@@ -101,8 +120,7 @@ export const isLeader = async (name) => {
             leader = Number(renewed) === 1;
         }
     } catch (err) {
-        console.error(`[Leader] ${name} check failed, running locally:`, err.message);
-        return true;
+        return redisDownVerdict(name, err.message);
     }
     if (leader) heldLocks.add(name);
     else heldLocks.delete(name);
