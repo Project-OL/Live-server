@@ -6,10 +6,19 @@ import {
     extractSocketToken,
     socketAuthMiddleware,
     setSessionCheckerForTests,
+    socketUserId,
     verifySocketToken,
 } from "./socketAuth.js";
 
 const SECRET = "test-secret";
+
+test("F02: socketUserId prefers the verified id over the client's claim", () => {
+    const hs = { auth: { userId: "claimed" }, query: {} };
+    assert.equal(socketUserId({ data: { authUserId: "real" }, handshake: hs }), "real");
+    assert.equal(socketUserId({ data: { authUserId: null }, handshake: hs }), "claimed", "no valid token: claim kept (log mode)");
+    assert.equal(socketUserId({ handshake: { query: { userId: "q" } } }), "q", "off mode");
+    assert.equal(socketUserId({ handshake: {} }), null);
+});
 // jwt.verify checks `exp` against the real clock, so test times are relative to it.
 const NOW = Math.floor(Date.now() / 1000);
 const sign = (payload, opts = {}) => jwt.sign({ iat: NOW - 10, ...payload }, SECRET, { noTimestamp: true, ...opts });

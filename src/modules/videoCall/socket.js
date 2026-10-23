@@ -3,6 +3,7 @@ import { LevelType } from "@prisma/client";
 import prisma from "../../config/prisma.js";
 import { client as redisClient } from "../../config/redis.js";
 import * as videoCallService from "./service.js";
+import { socketUserId } from "../../socket/socketAuth.js";
 import {
     isShuttingDown,
     registerDurableHandler,
@@ -70,7 +71,8 @@ registerDurableHandler(DISCONNECT_TIMER, async (key, payload) => {
 export const setupVideoCallSockets = (io) => {
     ioInstance = io;
     io.on("connection", async (socket) => {
-        const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
+        // F02: the verified id, never the client's claim when a valid token exists.
+        const userId = socketUserId(socket);
         if (userId) {
             userSockets.set(userId, socket.id);
             if (redisClient.isOpen) {

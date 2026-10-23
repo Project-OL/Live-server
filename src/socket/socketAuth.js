@@ -59,6 +59,13 @@ export const claimedUserId = (handshake = {}) => {
 };
 
 /**
+ * F02: the user a socket acts as. The id verified from the token whenever there is one (in every
+ * mode); the client-sent id only when no valid token was presented (log/off mode, unchanged for
+ * honest clients, which claim their own id). Handlers must use this, never a payload id.
+ */
+export const socketUserId = (socket) => socket?.data?.authUserId || claimedUserId(socket?.handshake);
+
+/**
  * Verify the handshake token.
  * @returns {{ outcome: 'ok'|'expired_ok'|'missing'|'invalid'|'expired_too_old', userId: string|null }}
  */

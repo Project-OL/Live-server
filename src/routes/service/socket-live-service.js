@@ -19,6 +19,7 @@ import {
     getLiveStreamService
 } from './serviceLive.js';
 import { rejectNotOwner } from '../../utils/ownershipCheck.js';
+import { socketUserId } from '../../socket/socketAuth.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
 import { roomPublicId } from './roomPublicId.js';
 import { client as redisClient } from '../../config/redis.js';
@@ -159,7 +160,8 @@ export const setupLiveSockets = (io) => {
     ioInstance = io;
     startStreamHeartbeatMonitor(io);
     io.on("connection", (socket) => {
-        const userId = socket.handshake.auth?.userId || socket.handshake.query?.userId;
+        // F02: the verified id, never the client's claim when a valid token exists.
+        const userId = socketUserId(socket);
         if (userId) {
             socket.join(`user:${userId}`);
             console.log(`[Socket] User ${userId} joined personal channel user:${userId}`);
