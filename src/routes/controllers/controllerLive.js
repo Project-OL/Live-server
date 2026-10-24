@@ -45,6 +45,7 @@ import {
     getHostStatsService
 } from '../service/serviceLive.js';
 import { sendLuckyGiftService } from '../service/serviceLuckyGift.js';
+import { withLuckyEmitOnce } from '../../modules/luckyGift/emitDedupe.js';
 import { withSheetPublicIds } from '../service/roomPublicId.js';
 import { viewerPlayback } from '../service/liveHlsMode.js';
 import { withGiftThumbnail } from '../../utils/giftImage.js';
@@ -954,25 +955,36 @@ const sendStreamGift = async (req, res) => {
         const giftCount = count
         const result = await sendStreamGiftService({ streamDbId, senderId: req.userId, giftId, targetUserId, count: giftCount, clientTxId });
 
-        // Broadcast GIFT_SENT to stream UUID, stream DB ID, receiver personal channel, and sender personal channel
-        broadcastToStream(result.socketPayload.streamId, "GIFT_SENT", result.socketPayload);
-        if (streamDbId && streamDbId !== result.socketPayload.streamId) {
-            broadcastToStream(streamDbId, "GIFT_SENT", result.socketPayload);
+        const emitGiftSentBundle = () => {
+            // Broadcast GIFT_SENT to stream UUID, stream DB ID, receiver personal channel, and sender personal channel
+            broadcastToStream(result.socketPayload.streamId, "GIFT_SENT", result.socketPayload);
+            if (streamDbId && streamDbId !== result.socketPayload.streamId) {
+                broadcastToStream(streamDbId, "GIFT_SENT", result.socketPayload);
+            }
+            if (result.socketPayload.receiverId) {
+                broadcastToStream(`user:${result.socketPayload.receiverId}`, "GIFT_SENT", result.socketPayload);
+            }
+            if (req.userId) {
+                broadcastToStream(`user:${req.userId}`, "GIFT_SENT", result.socketPayload);
+            }
+            if (result.luckyWin) {
+                broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+            }
+        };
+
+        // F6: lucky sends emit GIFT_SENT / LUCKY_GIFT_WIN at most once per transactionId.
+        if (result.isLucky) {
+            await withLuckyEmitOnce(result.transactionId, emitGiftSentBundle);
+        } else {
+            emitGiftSentBundle();
         }
+
         if (result.socketPayload.receiverId) {
-            broadcastToStream(`user:${result.socketPayload.receiverId}`, "GIFT_SENT", result.socketPayload);
             broadcastToStream(`user:${result.socketPayload.receiverId}`, "wallet_updated", {
                 currency: "POINT",
                 pointsAwarded: result.socketPayload.pointsAwarded,
                 newTotalPoints: result.socketPayload.receiverTotalPoints
             });
-        }
-        if (req.userId) {
-            broadcastToStream(`user:${req.userId}`, "GIFT_SENT", result.socketPayload);
-        }
-
-        if (result.luckyWin) {
-            broadcastToStream(result.socketPayload.streamId, "LUCKY_GIFT_WIN", result.luckyWin);
         }
 
 

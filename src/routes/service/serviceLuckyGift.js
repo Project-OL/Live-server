@@ -33,6 +33,8 @@ export const calculateComboReward = calcCombo;
 const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId = null }) => {
     let r;
     try {
+        // Phase 4: always advertise supportsServerDraw so a ledger that can run water_v1 does.
+        // An old ledger ignores the unknown field; a new ledger without enforce returns engine=legacy.
         r = await callLedger("LUCKY_GIFT", "lucky-gift", {
             senderId,
             receiverId: receiverId || null,
@@ -41,7 +43,8 @@ const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTr
             giftTransactionId,
             txKeyBase,
             rewardCoins: String(luckyResult.totalReward),
-            category: String(luckyResult.category || "LUCKY")
+            category: String(luckyResult.category || "LUCKY"),
+            supportsServerDraw: true
         }, { clientTxId });
     } catch (err) {
         throw toLocalError(err, {
@@ -56,7 +59,14 @@ const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTr
         pointsAfterHost: r.pointsAfterHost != null ? BigInt(r.pointsAfterHost) : null,
         effectiveReceiverId: r.effectiveReceiverId,
         wealth: r.wealth,
-        hostPoints: BigInt(r.hostPoints)
+        hostPoints: BigInt(r.hostPoints),
+        // Additive Phase 3/4 fields (missing engine ⇒ treat as legacy for old-ledger compat).
+        engine: r.engine === 'water_v1' ? 'water_v1' : 'legacy',
+        rewardCoins: r.rewardCoins != null ? BigInt(r.rewardCoins) : null,
+        category: r.category ?? null,
+        breakdownArray: Array.isArray(r.breakdownArray) ? r.breakdownArray : null,
+        tierId: r.tierId ?? null,
+        configVersion: r.configVersion ?? null
     };
 };
 
@@ -105,7 +115,9 @@ export const sendLuckyGiftService = async ({
     const totalCost = unitCost * BigInt(count);
     const isCombo = count > 1;
 
-    // Fetch Realtime Reserve Pool & Dynamic RTP Stats
+    // Keep the legacy Live-server draw exactly as today. Used when the ledger returns engine=legacy
+    // or omits engine (old ledger). Never re-draw after a ledger timeout: callLedger retries with the
+    // same requestId / clientTxId identity.
     const poolStats = await getReservePoolStats();
 
     let luckyResult;
@@ -145,6 +157,19 @@ export const sendLuckyGiftService = async ({
     const wealthLevel = txRecord.wealth.newLevel;
     const isLevelUp = txRecord.wealth.newLevel > txRecord.wealth.previousLevel;
 
+    // Phase 4: when the ledger ran water_v1, every app-facing reward field comes from the ledger
+    // (never from the local pre-draw). Missing/legacy engine keeps the local draw result.
+    const useWater = txRecord.engine === 'water_v1';
+    const totalRewardCoins = useWater && txRecord.rewardCoins != null
+        ? txRecord.rewardCoins
+        : luckyResult.totalReward;
+    const category = useWater && txRecord.category != null
+        ? txRecord.category
+        : luckyResult.category;
+    const breakdownArray = useWater && txRecord.breakdownArray != null
+        ? txRecord.breakdownArray
+        : luckyResult.breakdownArray;
+
     const resultPayload = {
         success: true,
         transactionId: txRecord.log.id,
@@ -162,12 +187,16 @@ export const sendLuckyGiftService = async ({
         count,
         totalCost: Number(totalCost),
         hostEarningPoints: Number(hostPoints),
-        totalRewardCoins: Number(luckyResult.totalReward),
-        breakdownArray: luckyResult.breakdownArray,
-        category: luckyResult.category,
+        totalRewardCoins: Number(totalRewardCoins),
+        breakdownArray,
+        category,
         senderRemainingCoins: Number(finalBalanceCoins),
         currentLevel: wealthLevel,
         isLevelUp,
+        // Additive fields (app ignores unknown keys).
+        engine: txRecord.engine,
+        tierId: txRecord.tierId,
+        configVersion: txRecord.configVersion,
         socketPayload: {
             success: true,
             streamId,
@@ -188,16 +217,18 @@ export const sendLuckyGiftService = async ({
             isLevelUp,
             isLucky: true
         },
-        luckyWin: luckyResult.totalReward > 0n ? {
+        // luckyWin = null iff rewardCoins == 0 (contract for app win banner / chat).
+        luckyWin: totalRewardCoins > 0n ? {
             senderId,
             receiverId,
             giftId: gift.id,
             giftName: gift.name,
             giftDisplayImageUrl: giftImageFields(gift).displayImageUrl,
             unitCoinCost: gift.coinCost,
-            rewardCoins: Number(luckyResult.totalReward),
-            category: luckyResult.category,
-            breakdownArray: luckyResult.breakdownArray
+            rewardCoins: Number(totalRewardCoins),
+            category,
+            breakdownArray,
+            transactionId: txRecord.log.id
         } : null
     };
 
