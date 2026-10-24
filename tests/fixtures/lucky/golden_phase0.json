@@ -1,0 +1,1709 @@
+{
+  "capturedAt": "2026-10-24T09:17:13.579Z",
+  "note": "Phase 0/1 golden fixtures — engine + payload shapes. Mode off must stay byte-identical to these after wiring.",
+  "singles": [
+    {
+      "name": "single_miss",
+      "kind": "single",
+      "category": "MISS",
+      "engine": {
+        "totalCost": "100",
+        "totalReward": "0",
+        "breakdownArray": [
+          0
+        ],
+        "category": "MISS"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99800,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 100,
+            "returnValue": 0,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "MISS"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "hostEarningPoints": 4,
+          "totalRewardCoins": 0,
+          "breakdownArray": [
+            0
+          ],
+          "category": "MISS",
+          "senderRemainingCoins": 99800,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99800,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 1,
+            "totalCost": 100,
+            "pointsAwarded": 4,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": null
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99800,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "pointsAwarded": 4,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": null,
+        "lucky_gift_single_result": {
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "lucky_gift_combo_step": null
+      }
+    },
+    {
+      "name": "single_0_5x",
+      "kind": "single",
+      "category": "SMALL",
+      "engine": {
+        "totalCost": "100",
+        "totalReward": "50",
+        "breakdownArray": [
+          50
+        ],
+        "category": "SMALL"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99850,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 100,
+            "returnValue": 50,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "SMALL"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "hostEarningPoints": 4,
+          "totalRewardCoins": 50,
+          "breakdownArray": [
+            50
+          ],
+          "category": "SMALL",
+          "senderRemainingCoins": 99850,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99850,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 1,
+            "totalCost": 100,
+            "pointsAwarded": 4,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 50,
+            "category": "SMALL",
+            "breakdownArray": [
+              50
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99850,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "pointsAwarded": 4,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 50,
+          "category": "SMALL",
+          "breakdownArray": [
+            50
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 50
+        },
+        "lucky_gift_single_result": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 50,
+          "category": "SMALL",
+          "breakdownArray": [
+            50
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "lucky_gift_combo_step": null
+      }
+    },
+    {
+      "name": "single_1x",
+      "kind": "single",
+      "category": "EQUAL",
+      "engine": {
+        "totalCost": "100",
+        "totalReward": "100",
+        "breakdownArray": [
+          100
+        ],
+        "category": "EQUAL"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99900,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 100,
+            "returnValue": 100,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "EQUAL"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "hostEarningPoints": 4,
+          "totalRewardCoins": 100,
+          "breakdownArray": [
+            100
+          ],
+          "category": "EQUAL",
+          "senderRemainingCoins": 99900,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99900,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 1,
+            "totalCost": 100,
+            "pointsAwarded": 4,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 100,
+            "category": "EQUAL",
+            "breakdownArray": [
+              100
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99900,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "pointsAwarded": 4,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 100,
+          "category": "EQUAL",
+          "breakdownArray": [
+            100
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 100
+        },
+        "lucky_gift_single_result": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 100,
+          "category": "EQUAL",
+          "breakdownArray": [
+            100
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "lucky_gift_combo_step": null
+      }
+    },
+    {
+      "name": "single_2_5x",
+      "kind": "single",
+      "category": "MEDIUM",
+      "engine": {
+        "totalCost": "100",
+        "totalReward": "250",
+        "breakdownArray": [
+          250
+        ],
+        "category": "MEDIUM"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 100050,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 100,
+            "returnValue": 250,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "MEDIUM"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "hostEarningPoints": 4,
+          "totalRewardCoins": 250,
+          "breakdownArray": [
+            250
+          ],
+          "category": "MEDIUM",
+          "senderRemainingCoins": 100050,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 100050,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 1,
+            "totalCost": 100,
+            "pointsAwarded": 4,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 250,
+            "category": "MEDIUM",
+            "breakdownArray": [
+              250
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 100050,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "pointsAwarded": 4,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 250,
+          "category": "MEDIUM",
+          "breakdownArray": [
+            250
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 250
+        },
+        "lucky_gift_single_result": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 250,
+          "category": "MEDIUM",
+          "breakdownArray": [
+            250
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "lucky_gift_combo_step": null
+      }
+    },
+    {
+      "name": "single_10x",
+      "kind": "single",
+      "category": "JACKPOT",
+      "engine": {
+        "totalCost": "100",
+        "totalReward": "1000",
+        "breakdownArray": [
+          1000
+        ],
+        "category": "JACKPOT"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 100800,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 100,
+            "returnValue": 1000,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "JACKPOT"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "hostEarningPoints": 4,
+          "totalRewardCoins": 1000,
+          "breakdownArray": [
+            1000
+          ],
+          "category": "JACKPOT",
+          "senderRemainingCoins": 100800,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 100800,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 1,
+            "totalCost": 100,
+            "pointsAwarded": 4,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 1000,
+            "category": "JACKPOT",
+            "breakdownArray": [
+              1000
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 100800,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 1,
+          "totalCost": 100,
+          "pointsAwarded": 4,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 1000,
+          "category": "JACKPOT",
+          "breakdownArray": [
+            1000
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 1000
+        },
+        "lucky_gift_single_result": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 1000,
+          "category": "JACKPOT",
+          "breakdownArray": [
+            1000
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "lucky_gift_combo_step": null
+      }
+    }
+  ],
+  "combos": [
+    {
+      "name": "combo_n3",
+      "kind": "combo",
+      "count": 3,
+      "engine": {
+        "totalCost": "300",
+        "totalReward": "270",
+        "breakdownArray": [
+          90,
+          90,
+          90
+        ],
+        "category": "NORMAL"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99870,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 300,
+            "returnValue": 270,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "NORMAL"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 3,
+          "totalCost": 300,
+          "hostEarningPoints": 12,
+          "totalRewardCoins": 270,
+          "breakdownArray": [
+            90,
+            90,
+            90
+          ],
+          "category": "NORMAL",
+          "senderRemainingCoins": 99870,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99870,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 3,
+            "totalCost": 300,
+            "pointsAwarded": 12,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 270,
+            "category": "NORMAL",
+            "breakdownArray": [
+              90,
+              90,
+              90
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99870,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 3,
+          "totalCost": 300,
+          "pointsAwarded": 12,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 270,
+          "category": "NORMAL",
+          "breakdownArray": [
+            90,
+            90,
+            90
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 270
+        },
+        "lucky_gift_single_result": null,
+        "lucky_gift_combo_step": [
+          {
+            "step": 1,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 2,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 3,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          }
+        ]
+      }
+    },
+    {
+      "name": "combo_n10",
+      "kind": "combo",
+      "count": 10,
+      "engine": {
+        "totalCost": "1000",
+        "totalReward": "900",
+        "breakdownArray": [
+          90,
+          90,
+          90,
+          90,
+          90,
+          90,
+          90,
+          90,
+          90,
+          90
+        ],
+        "category": "NORMAL"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99800,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 1000,
+            "returnValue": 900,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "NORMAL"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 10,
+          "totalCost": 1000,
+          "hostEarningPoints": 40,
+          "totalRewardCoins": 900,
+          "breakdownArray": [
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90
+          ],
+          "category": "NORMAL",
+          "senderRemainingCoins": 99800,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99800,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 10,
+            "totalCost": 1000,
+            "pointsAwarded": 40,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 900,
+            "category": "NORMAL",
+            "breakdownArray": [
+              90,
+              90,
+              90,
+              90,
+              90,
+              90,
+              90,
+              90,
+              90,
+              90
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99800,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 10,
+          "totalCost": 1000,
+          "pointsAwarded": 40,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 900,
+          "category": "NORMAL",
+          "breakdownArray": [
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90,
+            90
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 900
+        },
+        "lucky_gift_single_result": null,
+        "lucky_gift_combo_step": [
+          {
+            "step": 1,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 2,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 3,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 4,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 5,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 6,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 7,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 8,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 9,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 10,
+            "rewardCoins": 90,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          }
+        ]
+      }
+    },
+    {
+      "name": "combo_n25",
+      "kind": "combo",
+      "count": 25,
+      "engine": {
+        "totalCost": "2500",
+        "totalReward": "2250",
+        "breakdownArray": [
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225,
+          225
+        ],
+        "category": "NORMAL"
+      },
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99650,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true,
+            "sendValue": 2500,
+            "returnValue": 2250,
+            "transactionId": "00000000-0000-4000-8000-0000000000tx",
+            "category": "NORMAL"
+          }
+        },
+        "httpDirect": {
+          "success": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "isLucky": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 25,
+          "totalCost": 2500,
+          "hostEarningPoints": 100,
+          "totalRewardCoins": 2250,
+          "breakdownArray": [
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225
+          ],
+          "category": "NORMAL",
+          "senderRemainingCoins": 99650,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "socketPayload": {
+            "success": true,
+            "streamId": "00000000-0000-4000-8000-0000000000st",
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "senderName": "Sender",
+            "senderRemainingCoins": 99650,
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "gift": {
+              "id": "00000000-0000-4000-8000-0000000000g1",
+              "name": "Lucky Star",
+              "displayImageUrl": "https://cdn.example/thumb.webp",
+              "fullImageUrl": "https://cdn.example/full.png",
+              "coinCost": 100,
+              "effectLuckyGift": true
+            },
+            "count": 25,
+            "totalCost": 2500,
+            "pointsAwarded": 100,
+            "wealthLevel": 12,
+            "isLevelUp": false,
+            "isLucky": true
+          },
+          "luckyWin": {
+            "senderId": "00000000-0000-4000-8000-0000000000s1",
+            "receiverId": "00000000-0000-4000-8000-0000000000r1",
+            "giftId": "00000000-0000-4000-8000-0000000000g1",
+            "giftName": "Lucky Star",
+            "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+            "unitCoinCost": 100,
+            "rewardCoins": 2250,
+            "category": "NORMAL",
+            "breakdownArray": [
+              225,
+              225,
+              225,
+              225,
+              225,
+              225,
+              225,
+              225,
+              225,
+              225
+            ]
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99650,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 25,
+          "totalCost": 2500,
+          "pointsAwarded": 100,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": {
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "giftId": "00000000-0000-4000-8000-0000000000g1",
+          "giftName": "Lucky Star",
+          "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+          "unitCoinCost": 100,
+          "rewardCoins": 2250,
+          "category": "NORMAL",
+          "breakdownArray": [
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225,
+            225
+          ],
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "coins": 2250
+        },
+        "lucky_gift_single_result": null,
+        "lucky_gift_combo_step": [
+          {
+            "step": 1,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 2,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 3,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 4,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 5,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 6,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 7,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 8,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 9,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          },
+          {
+            "step": 10,
+            "rewardCoins": 225,
+            "category": "NORMAL",
+            "transactionId": "00000000-0000-4000-8000-0000000000tx"
+          }
+        ]
+      }
+    }
+  ],
+  "comboReduce": {
+    "name": "combo_reduce_fix_on",
+    "engine": {
+      "totalCost": "300",
+      "totalReward": "0",
+      "breakdownArray": [
+        0,
+        0,
+        0
+      ],
+      "category": "MISS"
+    },
+    "payloads": {
+      "httpStream": {
+        "success": true,
+        "message": "Gift sent successfully",
+        "data": {
+          "newBalance": 99600,
+          "currentLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true,
+          "sendValue": 300,
+          "returnValue": 0,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx",
+          "category": "MISS"
+        }
+      },
+      "httpDirect": {
+        "success": true,
+        "transactionId": "00000000-0000-4000-8000-0000000000tx",
+        "isLucky": true,
+        "streamId": "00000000-0000-4000-8000-0000000000st",
+        "senderId": "00000000-0000-4000-8000-0000000000s1",
+        "receiverId": "00000000-0000-4000-8000-0000000000r1",
+        "gift": {
+          "id": "00000000-0000-4000-8000-0000000000g1",
+          "name": "Lucky Star",
+          "displayImageUrl": "https://cdn.example/thumb.webp",
+          "fullImageUrl": "https://cdn.example/full.png",
+          "coinCost": 100,
+          "effectLuckyGift": true
+        },
+        "count": 3,
+        "totalCost": 300,
+        "hostEarningPoints": 12,
+        "totalRewardCoins": 0,
+        "breakdownArray": [
+          0,
+          0,
+          0
+        ],
+        "category": "MISS",
+        "senderRemainingCoins": 99600,
+        "currentLevel": 12,
+        "isLevelUp": false,
+        "socketPayload": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderName": "Sender",
+          "senderRemainingCoins": 99600,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "00000000-0000-4000-8000-0000000000g1",
+            "name": "Lucky Star",
+            "displayImageUrl": "https://cdn.example/thumb.webp",
+            "fullImageUrl": "https://cdn.example/full.png",
+            "coinCost": 100,
+            "effectLuckyGift": true
+          },
+          "count": 3,
+          "totalCost": 300,
+          "pointsAwarded": 12,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": true
+        },
+        "luckyWin": null
+      },
+      "giftSent": {
+        "success": true,
+        "streamId": "00000000-0000-4000-8000-0000000000st",
+        "senderId": "00000000-0000-4000-8000-0000000000s1",
+        "senderName": "Sender",
+        "senderRemainingCoins": 99600,
+        "receiverId": "00000000-0000-4000-8000-0000000000r1",
+        "gift": {
+          "id": "00000000-0000-4000-8000-0000000000g1",
+          "name": "Lucky Star",
+          "displayImageUrl": "https://cdn.example/thumb.webp",
+          "fullImageUrl": "https://cdn.example/full.png",
+          "coinCost": 100,
+          "effectLuckyGift": true
+        },
+        "count": 3,
+        "totalCost": 300,
+        "pointsAwarded": 12,
+        "wealthLevel": 12,
+        "isLevelUp": false,
+        "isLucky": true,
+        "transactionId": "00000000-0000-4000-8000-0000000000tx"
+      },
+      "luckyGiftWin": null,
+      "lucky_gift_single_result": null,
+      "lucky_gift_combo_step": [
+        {
+          "step": 1,
+          "rewardCoins": 0,
+          "category": "MISS",
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        {
+          "step": 2,
+          "rewardCoins": 0,
+          "category": "MISS",
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        {
+          "step": 3,
+          "rewardCoins": 0,
+          "category": "MISS",
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        }
+      ]
+    }
+  },
+  "errors": {
+    "insufficient_coins": {
+      "success": false,
+      "error": "INSUFFICIENT_COINS",
+      "message": "Insufficient coin balance. Required: 100, Available: 10"
+    }
+  },
+  "idempotent_replay": {
+    "success": true,
+    "transactionId": "00000000-0000-4000-8000-0000000000tx",
+    "isLucky": true,
+    "streamId": "00000000-0000-4000-8000-0000000000st",
+    "senderId": "00000000-0000-4000-8000-0000000000s1",
+    "receiverId": "00000000-0000-4000-8000-0000000000r1",
+    "gift": {
+      "id": "00000000-0000-4000-8000-0000000000g1",
+      "name": "Lucky Star",
+      "displayImageUrl": "https://cdn.example/thumb.webp",
+      "fullImageUrl": "https://cdn.example/full.png",
+      "coinCost": 100,
+      "effectLuckyGift": true
+    },
+    "count": 1,
+    "totalCost": 100,
+    "hostEarningPoints": 4,
+    "totalRewardCoins": 100,
+    "breakdownArray": [
+      100
+    ],
+    "category": "EQUAL",
+    "senderRemainingCoins": 99900,
+    "currentLevel": 12,
+    "isLevelUp": false,
+    "socketPayload": {
+      "success": true,
+      "streamId": "00000000-0000-4000-8000-0000000000st",
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "senderName": "Sender",
+      "senderRemainingCoins": 99900,
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "gift": {
+        "id": "00000000-0000-4000-8000-0000000000g1",
+        "name": "Lucky Star",
+        "displayImageUrl": "https://cdn.example/thumb.webp",
+        "fullImageUrl": "https://cdn.example/full.png",
+        "coinCost": 100,
+        "effectLuckyGift": true
+      },
+      "count": 1,
+      "totalCost": 100,
+      "pointsAwarded": 4,
+      "wealthLevel": 12,
+      "isLevelUp": false,
+      "isLucky": true
+    },
+    "luckyWin": {
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "giftId": "00000000-0000-4000-8000-0000000000g1",
+      "giftName": "Lucky Star",
+      "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+      "unitCoinCost": 100,
+      "rewardCoins": 100,
+      "category": "EQUAL",
+      "breakdownArray": [
+        100
+      ]
+    },
+    "replayed": true
+  },
+  "stealth_mystery": {
+    "httpStream": {
+      "success": true,
+      "message": "Gift sent successfully",
+      "data": {
+        "newBalance": 99900,
+        "currentLevel": 12,
+        "isLevelUp": false,
+        "isLucky": true,
+        "sendValue": 100,
+        "returnValue": 100,
+        "transactionId": "00000000-0000-4000-8000-0000000000tx",
+        "category": "EQUAL"
+      }
+    },
+    "httpDirect": {
+      "success": true,
+      "transactionId": "00000000-0000-4000-8000-0000000000tx",
+      "isLucky": true,
+      "streamId": "00000000-0000-4000-8000-0000000000st",
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "gift": {
+        "id": "00000000-0000-4000-8000-0000000000g1",
+        "name": "Lucky Star",
+        "displayImageUrl": "https://cdn.example/thumb.webp",
+        "fullImageUrl": "https://cdn.example/full.png",
+        "coinCost": 100,
+        "effectLuckyGift": true
+      },
+      "count": 1,
+      "totalCost": 100,
+      "hostEarningPoints": 4,
+      "totalRewardCoins": 100,
+      "breakdownArray": [
+        100
+      ],
+      "category": "EQUAL",
+      "senderRemainingCoins": 99900,
+      "currentLevel": 12,
+      "isLevelUp": false,
+      "socketPayload": {
+        "success": true,
+        "streamId": "00000000-0000-4000-8000-0000000000st",
+        "senderId": null,
+        "senderName": "Mystery",
+        "senderRemainingCoins": 99900,
+        "receiverId": "00000000-0000-4000-8000-0000000000r1",
+        "gift": {
+          "id": "00000000-0000-4000-8000-0000000000g1",
+          "name": "Lucky Star",
+          "displayImageUrl": "https://cdn.example/thumb.webp",
+          "fullImageUrl": "https://cdn.example/full.png",
+          "coinCost": 100,
+          "effectLuckyGift": true
+        },
+        "count": 1,
+        "totalCost": 100,
+        "pointsAwarded": 4,
+        "wealthLevel": 12,
+        "isLevelUp": false,
+        "isLucky": true
+      },
+      "luckyWin": {
+        "senderId": "00000000-0000-4000-8000-0000000000s1",
+        "receiverId": "00000000-0000-4000-8000-0000000000r1",
+        "giftId": "00000000-0000-4000-8000-0000000000g1",
+        "giftName": "Lucky Star",
+        "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+        "unitCoinCost": 100,
+        "rewardCoins": 100,
+        "category": "EQUAL",
+        "breakdownArray": [
+          100
+        ]
+      }
+    },
+    "giftSent": {
+      "success": true,
+      "streamId": "00000000-0000-4000-8000-0000000000st",
+      "senderId": null,
+      "senderName": "Mystery",
+      "senderRemainingCoins": 99900,
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "gift": {
+        "id": "00000000-0000-4000-8000-0000000000g1",
+        "name": "Lucky Star",
+        "displayImageUrl": "https://cdn.example/thumb.webp",
+        "fullImageUrl": "https://cdn.example/full.png",
+        "coinCost": 100,
+        "effectLuckyGift": true
+      },
+      "count": 1,
+      "totalCost": 100,
+      "pointsAwarded": 4,
+      "wealthLevel": 12,
+      "isLevelUp": false,
+      "isLucky": true,
+      "transactionId": "00000000-0000-4000-8000-0000000000tx"
+    },
+    "luckyGiftWin": {
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "giftId": "00000000-0000-4000-8000-0000000000g1",
+      "giftName": "Lucky Star",
+      "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+      "unitCoinCost": 100,
+      "rewardCoins": 100,
+      "category": "EQUAL",
+      "breakdownArray": [
+        100
+      ],
+      "transactionId": "00000000-0000-4000-8000-0000000000tx",
+      "coins": 100
+    },
+    "lucky_gift_single_result": {
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "giftId": "00000000-0000-4000-8000-0000000000g1",
+      "giftName": "Lucky Star",
+      "giftDisplayImageUrl": "https://cdn.example/thumb.webp",
+      "unitCoinCost": 100,
+      "rewardCoins": 100,
+      "category": "EQUAL",
+      "breakdownArray": [
+        100
+      ],
+      "transactionId": "00000000-0000-4000-8000-0000000000tx"
+    },
+    "lucky_gift_combo_step": null
+  },
+  "nonLucky": {
+    "stream": {
+      "name": "non_lucky_normal",
+      "kind": "non_lucky",
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99850,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": false
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderRemainingCoins": 99850,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "nl1",
+            "name": "Rose",
+            "coinCost": 50,
+            "effectLuckyGift": false
+          },
+          "count": 1,
+          "totalCost": 50,
+          "pointsAwarded": 5,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": false,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": null
+      }
+    },
+    "direct_path_note": "non-lucky cannot use /lucky-gift/send",
+    "socket_send_gift": {
+      "name": "non_lucky_normal",
+      "kind": "non_lucky",
+      "payloads": {
+        "httpStream": {
+          "success": true,
+          "message": "Gift sent successfully",
+          "data": {
+            "newBalance": 99850,
+            "currentLevel": 12,
+            "isLevelUp": false,
+            "isLucky": false
+          }
+        },
+        "giftSent": {
+          "success": true,
+          "streamId": "00000000-0000-4000-8000-0000000000st",
+          "senderId": "00000000-0000-4000-8000-0000000000s1",
+          "senderRemainingCoins": 99850,
+          "receiverId": "00000000-0000-4000-8000-0000000000r1",
+          "gift": {
+            "id": "nl1",
+            "name": "Rose",
+            "coinCost": 50,
+            "effectLuckyGift": false
+          },
+          "count": 1,
+          "totalCost": 50,
+          "pointsAwarded": 5,
+          "wealthLevel": 12,
+          "isLevelUp": false,
+          "isLucky": false,
+          "transactionId": "00000000-0000-4000-8000-0000000000tx"
+        },
+        "luckyGiftWin": null
+      }
+    }
+  }
+}
