@@ -1,11 +1,10 @@
 /**
  * Lucky Gift Services
- * 
+ *
  * Handles host 4% payout, 92% RTP sender lucky reward calculation,
  * and atomic database transaction execution for lucky gifts.
  */
 
-import prisma from '../../config/prisma.js';
 import crypto from 'crypto';
 import { client as redisClient } from '../../config/redis.js';
 import { LUCKY_GIFT_CONFIG } from '../../config/luckyGift.config.js';
@@ -25,17 +24,28 @@ export const calculateHostEarning = ({ totalCost, hostShareBp = Math.round(LUCKY
 export const calculateSingleReward = calcSingle;
 export const calculateComboReward = calcCombo;
 
+/** Optional callables with production defaults (second arg to sendLuckyGiftService). */
+const defaultDeps = {
+    ledgerCall: callLedger,
+    getPoolStats: getReservePoolStats,
+    checkFrozen: checkCoinsFrozenFast,
+    redis: redisClient,
+};
+
 /**
  * BE-20 remote ledger for a lucky gift. The RTP draw (`luckyResult`) and the reserve pool stay
  * here; ol-node-rest writes the debit, reward, host cut, levels and (combo only) commission.
  * Returns the same fields as the local transaction.
  */
-const luckyGiftRemoteLedger = async ({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId = null }) => {
+const luckyGiftRemoteLedger = async ({
+    senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId = null,
+}, deps = {}) => {
+    const ledgerCall = deps.ledgerCall ?? defaultDeps.ledgerCall;
     let r;
     try {
         // Phase 4: always advertise supportsServerDraw so a ledger that can run water_v1 does.
         // An old ledger ignores the unknown field; a new ledger without enforce returns engine=legacy.
-        r = await callLedger("LUCKY_GIFT", "lucky-gift", {
+        r = await ledgerCall("LUCKY_GIFT", "lucky-gift", {
             senderId,
             receiverId: receiverId || null,
             giftId: gift.id,
@@ -78,13 +88,18 @@ export const sendLuckyGiftService = async ({
     comboCount = 1,
     clientTxId = null,
     preFetchedGift = null
-}) => {
+}, deps = {}) => {
+    const ledgerCall = deps.ledgerCall ?? defaultDeps.ledgerCall;
+    const getPoolStats = deps.getPoolStats ?? defaultDeps.getPoolStats;
+    const checkFrozen = deps.checkFrozen ?? defaultDeps.checkFrozen;
+    const redis = deps.redis ?? defaultDeps.redis;
+
     // Fast pre-check only; re-checked under the wallet lock inside the tx.
-    await checkCoinsFrozenFast(senderId);
+    await checkFrozen(senderId);
     // SEC-11: scoped to the sender, so one user's clientTxId can never replay another's result.
     const idemKey = clientTxId ? `lucky:idempotency:${senderId}:${clientTxId}` : null;
     if (idemKey) {
-        const cachedTx = await redisClient.get(idemKey);
+        const cachedTx = await redis.get(idemKey);
         if (cachedTx) {
             console.log(`[LuckyGift Service] Idempotent request hit for txId: ${clientTxId}`);
             return JSON.parse(cachedTx);
@@ -118,7 +133,7 @@ export const sendLuckyGiftService = async ({
     // Keep the legacy Live-server draw exactly as today. Used when the ledger returns engine=legacy
     // or omits engine (old ledger). Never re-draw after a ledger timeout: callLedger retries with the
     // same requestId / clientTxId identity.
-    const poolStats = await getReservePoolStats();
+    const poolStats = await getPoolStats();
 
     let luckyResult;
     if (isCombo) {
@@ -151,7 +166,9 @@ export const sendLuckyGiftService = async ({
     // separate credit, not a discount), then writes the debit, reward, host cut, levels, combo-only
     // agency commission and the reserve-pool counters in one locked transaction, and refreshes the
     // caches. Live-server's own copy of this transaction was retired on 2026-10-21.
-    const txRecord = await luckyGiftRemoteLedger({ senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId });
+    const txRecord = await luckyGiftRemoteLedger({
+        senderId, receiverId, gift, count, giftTransactionId, txKeyBase, luckyResult, clientTxId,
+    }, { ledgerCall });
     const hostPoints = txRecord.hostPoints;
     const finalBalanceCoins = txRecord.finalBalanceCoins;
     const wealthLevel = txRecord.wealth.newLevel;
@@ -193,10 +210,6 @@ export const sendLuckyGiftService = async ({
         senderRemainingCoins: Number(finalBalanceCoins),
         currentLevel: wealthLevel,
         isLevelUp,
-        // Additive fields (app ignores unknown keys).
-        engine: txRecord.engine,
-        tierId: txRecord.tierId,
-        configVersion: txRecord.configVersion,
         socketPayload: {
             success: true,
             streamId,
@@ -218,6 +231,7 @@ export const sendLuckyGiftService = async ({
             isLucky: true
         },
         // luckyWin = null iff rewardCoins == 0 (contract for app win banner / chat).
+        // Closeout A1: legacy/off path omits additive keys so payloads match pre-water baseline.
         luckyWin: totalRewardCoins > 0n ? {
             senderId,
             receiverId,
@@ -228,14 +242,21 @@ export const sendLuckyGiftService = async ({
             rewardCoins: Number(totalRewardCoins),
             category,
             breakdownArray,
-            transactionId: txRecord.log.id
+            ...(useWater ? { transactionId: txRecord.log.id } : {})
         } : null
     };
+
+    // Additive water_v1-only fields (app ignores unknown keys). Never attached on legacy/off.
+    if (useWater) {
+        resultPayload.engine = 'water_v1';
+        resultPayload.tierId = txRecord.tierId;
+        resultPayload.configVersion = txRecord.configVersion;
+    }
 
     if (idemKey) {
         // node-redis takes options as an object; the positional ioredis form
         // ('EX', 86400) silently left these replay snapshots without a TTL.
-        await redisClient.set(idemKey, JSON.stringify(resultPayload), { EX: 86400 });
+        await redis.set(idemKey, JSON.stringify(resultPayload), { EX: 86400 });
     }
 
     return resultPayload;
