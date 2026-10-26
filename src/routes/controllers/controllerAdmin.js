@@ -172,7 +172,7 @@ export const getMyRestrictions = async (req, res, next) => {
 
 /**
  * Recent go-live / join / connect failures (LIVE-06), newest first.
- * GET /api/v1/admin/live/failures?kind=&userId=&streamId=&code=&page=&limit=
+ * GET /api/v1/admin/live/failures?kind=&userId=&streamId=&code=&severity=&area=&page=&limit=
  */
 export const getLiveFailures = async (req, res) => {
   try {
@@ -181,6 +181,8 @@ export const getLiveFailures = async (req, res) => {
       userId: req.query.userId,
       streamId: req.query.streamId,
       code: req.query.code,
+      severity: req.query.severity,
+      area: req.query.area,
       page: req.query.page,
       limit: req.query.limit
     });
