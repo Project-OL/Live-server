@@ -1,5 +1,6 @@
 import crypto from "crypto";
 import { logger, logContext } from "../utils/logger.js";
+import { recordTrafficRequest } from "../services/traffic.service.js";
 
 /**
  * LIVE-44 / INF-11: a request id and one access-log line per HTTP request.
@@ -40,9 +41,12 @@ export const requestLog = (req, res, next) => {
 
     let logged = false;
     const done = (aborted) => {
-        if (logged || mode === "off") return;
+        if (logged) return;
         logged = true;
         const status = aborted ? 499 : res.statusCode;
+        // TRF-03: hourly section counters, independent of LIVE_REQUEST_LOG.
+        recordTrafficRequest(path, req.userId ?? req.user?.userId ?? req.user?.id, status);
+        if (mode === "off") return;
         if (mode === "errors" && status < 400) return;
         if (QUIET_PATHS.has(path) && status < 500) return;
         const ms = Number(process.hrtime.bigint() - started) / 1e6;
