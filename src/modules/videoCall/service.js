@@ -16,6 +16,7 @@ import { unlinkByPattern } from "../../utils/redisScan.js";
 import { LIVE_FAILURE_KINDS, recordLiveFailure } from "../../services/liveFailureLog.service.js";
 import { hostStreamFacts, livekitCause } from "../../services/livekitEvents.service.js";
 import { disconnectMeta, lastDisconnect } from "../../services/socketDisconnect.service.js";
+import { modeFromEnv } from "../../utils/tokenBucket.js";
 import {
     isLeader,
     onShutdown,
@@ -581,6 +582,14 @@ export const rejectCall = async (sessionId, receiverId) => {
     return { success: true };
 };
 
+/**
+ * BE-13: CALL_BILL_TO_LAST_HB = off | log (default) | enforce. enforce: no minute is billed once
+ * neither side has sent a heartbeat for BILL_HEARTBEAT_STALE_MS, and a HEARTBEAT_LOST end is
+ * recorded at the last heartbeat instead of the sweep time. The app pings every 15 s.
+ */
+const billToLastHeartbeatMode = () => modeFromEnv("CALL_BILL_TO_LAST_HB");
+const BILL_HEARTBEAT_STALE_MS = 30000;
+
 /** End reasons that mean a side lost its network or app (not a hang-up). */
 const CALL_NET_LOST_REASONS = new Set(["HEARTBEAT_LOST", "USER_DISCONNECTED_TIMEOUT"]);
 
@@ -853,10 +862,22 @@ export const billDueMinutes = async (session) => {
 
     if (currentMinute > session.minsCharged) {
         const coinRate = await currentCallerCoinsPerMinute(session.pricePerMin); // F10
+        const hbMode = billToLastHeartbeatMode();
+        const lastHeartbeat = hbMode === "off" ? null : await getCallHeartbeat(session.id);
 
         let hasFailed = false;
 
         for (let m = session.minsCharged + 1; m <= currentMinute; m++) {
+            // BE-13: neither side has pinged for 30 s before this minute starts (frozen app, dead
+            // network with the socket still up): the call is about to be ended as HEARTBEAT_LOST,
+            // so do not bill a minute nobody could use. log = report only; enforce = skip.
+            const minuteStart = new Date(session.startedAt).getTime() + (m - 1) * 60000;
+            if (lastHeartbeat && minuteStart - lastHeartbeat > BILL_HEARTBEAT_STALE_MS) {
+                const quietSec = Math.round((minuteStart - lastHeartbeat) / 1000);
+                console.log(`[VideoCall Billing HB] mode=${hbMode} ${hbMode === "enforce" ? "skipping" : "would skip"} minute ${m} of session ${session.id}: no heartbeat for ${quietSec}s before it.`);
+                if (hbMode === "enforce") break;
+            }
+
             // Billing Guard: Check if caller was disconnected prior to or during minute m boundary
             let isCallerDisconnected = false;
             if (redisClient.isOpen) {
@@ -1012,7 +1033,11 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
                     if (now - sessionPing > 60000) {
                         console.log(`[VideoCall Protection] Global heartbeat lost for session ${session.id}. Auto-ending call.`);
                         heartbeatCache.delete(session.id);
-                        await endCall(session.id, session.callerId, "HEARTBEAT_LOST");
+                        // BE-13 enforce: the call ended when the pings stopped, not 60 s later.
+                        const endAt = billToLastHeartbeatMode() === "enforce" && sessionPing > new Date(session.startedAt).getTime()
+                            ? new Date(sessionPing)
+                            : null;
+                        await endCall(session.id, session.callerId, "HEARTBEAT_LOST", endAt);
                     }
                 }
             }

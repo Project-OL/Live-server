@@ -48,12 +48,15 @@ server.listen(PORT, () => {
 
 /**
  * L6 (LIVE-09): graceful shutdown on SIGTERM (scale-in, MIG) and SIGINT (pm2 stop /
- * restart). pm2 SIGKILLs after kill_timeout (1600 ms by default), so this stays well
- * under that: stop accepting, close sockets (clients reconnect to a peer or to the
+ * restart): stop accepting, close sockets (clients reconnect to a peer or to the
  * restarted process), hand over leader locks, run cleanup hooks, then exit.
  * Durable deadlines stay in Redis and are fired by whichever node leads next.
+ *
+ * pm2 runs ol-live with --kill-timeout 15000 (F19: unpack script and gce-bootstrap), so the
+ * budget is 10 s, 5 s under pm2's SIGKILL. The old 1.4 s (sized for pm2's 1.6 s default) ran out
+ * on the 2026-10-26 11:42 UTC deploy ("[Shutdown] timed out"), skipping lock hand-over and hooks.
  */
-const SHUTDOWN_TIMEOUT_MS = Number(process.env.LIVE_SHUTDOWN_TIMEOUT_MS || 1400);
+const SHUTDOWN_TIMEOUT_MS = Number(process.env.LIVE_SHUTDOWN_TIMEOUT_MS || 10000);
 
 const shutdown = async (signal) => {
   if (isShuttingDown()) return;
