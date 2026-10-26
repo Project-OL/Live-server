@@ -11,7 +11,7 @@ import './src/config/assertProductionConfig.js';
 import http from 'http';
 import app from './src/app.js';
 import dotenv from 'dotenv';
-import { initSocket } from "./src/socket/index.js";
+import { initSocket, notifyServerShift } from "./src/socket/index.js";
 import prisma from './src/config/prisma.js';
 import { client as redisClient } from './src/config/redis.js';
 import {
@@ -64,6 +64,10 @@ const shutdown = async (signal) => {
     process.exit(1);
   }, SHUTDOWN_TIMEOUT_MS);
   hardExit.unref();
+
+  // BE-08: tell each connected app this is a server shift (deploy / scale-in), with its own random
+  // delay, so reconnects spread over 3 s; then give the frames a moment to leave before closing.
+  if (notifyServerShift(io) > 0) await new Promise((resolve) => setTimeout(resolve, 150));
 
   try {
     await new Promise((resolve) => io.close(() => resolve()));

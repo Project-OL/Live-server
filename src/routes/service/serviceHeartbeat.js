@@ -5,7 +5,9 @@ import {
 } from './serviceLive.js';
 import { livekitHostIsPresent } from './livekitPresence.js';
 import { HOST_NOVIDEO_MAX_MS, hostNoVideoKey, hostNoVideoMode, hostNoVideoMs } from './hostNoVideo.js';
-import { LIVE_FAILURE_KINDS, recordLiveFailure } from '../../services/liveFailureLog.service.js';
+import { LIVE_FAILURE_KINDS, recordLiveFailure, pruneOldFailureEvents } from '../../services/liveFailureLog.service.js';
+import { hostStreamFacts, livekitCause } from '../../services/livekitEvents.service.js';
+import { disconnectMeta } from '../../services/socketDisconnect.service.js';
 import { isLeader, onShutdown } from '../../services/cluster.service.js';
 import { heartbeatVerdict } from './heartbeatPolicy.js';
 
@@ -184,6 +186,21 @@ const endFromSweep = async (io, stream, streamIdKey, { reason, message, failure,
     if (!result || result.alreadyEnded) {
         console.log(`[${logTag}] Stream ${streamIdKey} was already ended; no failure recorded.`);
         return;
+    }
+    // BE-05/06: say what LiveKit saw of the host and how their app socket closed, so the event
+    // separates "never reached LiveKit" from "left LiveKit: <reason>" and a dead app from a network drop.
+    try {
+        const [facts, disc] = await Promise.all([
+            hostStreamFacts(streamIdKey, stream.userId),
+            disconnectMeta(stream.userId),
+        ]);
+        failure = {
+            ...failure,
+            role: 'host',
+            meta: { ...(failure.meta || {}), livekit: livekitCause(facts), livekitJoins: facts.joins, ...disc },
+        };
+    } catch {
+        /* the failure is recorded without the extra context */
     }
     recordLiveFailure(failure);
     emitStreamEnded(io, stream, streamIdKey, reason, message);
@@ -435,7 +452,20 @@ export const startStreamHeartbeatMonitor = (io) => {
         }
     }, 5000);
     onShutdown('stream-heartbeat-monitor', stopStreamHeartbeatMonitor);
+
+    // BE-03: keep live_failure_events to 90 days (leader only, every 6 hours).
+    if (failurePruneInterval) clearInterval(failurePruneInterval);
+    failurePruneInterval = setInterval(async () => {
+        try {
+            if (await isLeader('live-failure-prune')) await pruneOldFailureEvents();
+        } catch (err) {
+            console.error('[LiveFailure] prune failed:', err.message);
+        }
+    }, 6 * 3600 * 1000);
+    onShutdown('live-failure-prune', () => clearInterval(failurePruneInterval));
 };
+
+let failurePruneInterval = null;
 
 export const stopStreamHeartbeatMonitor = () => {
     if (heartbeatMonitorInterval) {
