@@ -1,0 +1,126 @@
+{
+  "name": "combo_reduce_fix_on",
+  "engine": {
+    "totalCost": "300",
+    "totalReward": "0",
+    "breakdownArray": [
+      0,
+      0,
+      0
+    ],
+    "category": "MISS"
+  },
+  "payloads": {
+    "httpStream": {
+      "success": true,
+      "message": "Gift sent successfully",
+      "data": {
+        "newBalance": 99600,
+        "currentLevel": 12,
+        "isLevelUp": false,
+        "isLucky": true,
+        "sendValue": 300,
+        "returnValue": 0,
+        "transactionId": "00000000-0000-4000-8000-0000000000tx",
+        "category": "MISS"
+      }
+    },
+    "httpDirect": {
+      "success": true,
+      "transactionId": "00000000-0000-4000-8000-0000000000tx",
+      "isLucky": true,
+      "streamId": "00000000-0000-4000-8000-0000000000st",
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "gift": {
+        "id": "00000000-0000-4000-8000-0000000000g1",
+        "name": "Lucky Star",
+        "displayImageUrl": "https://cdn.example/thumb.webp",
+        "fullImageUrl": "https://cdn.example/full.png",
+        "coinCost": 100,
+        "effectLuckyGift": true
+      },
+      "count": 3,
+      "totalCost": 300,
+      "hostEarningPoints": 12,
+      "totalRewardCoins": 0,
+      "breakdownArray": [
+        0,
+        0,
+        0
+      ],
+      "category": "MISS",
+      "senderRemainingCoins": 99600,
+      "currentLevel": 12,
+      "isLevelUp": false,
+      "socketPayload": {
+        "success": true,
+        "streamId": "00000000-0000-4000-8000-0000000000st",
+        "senderId": "00000000-0000-4000-8000-0000000000s1",
+        "senderName": "Sender",
+        "senderRemainingCoins": 99600,
+        "receiverId": "00000000-0000-4000-8000-0000000000r1",
+        "gift": {
+          "id": "00000000-0000-4000-8000-0000000000g1",
+          "name": "Lucky Star",
+          "displayImageUrl": "https://cdn.example/thumb.webp",
+          "fullImageUrl": "https://cdn.example/full.png",
+          "coinCost": 100,
+          "effectLuckyGift": true
+        },
+        "count": 3,
+        "totalCost": 300,
+        "pointsAwarded": 12,
+        "wealthLevel": 12,
+        "isLevelUp": false,
+        "isLucky": true
+      },
+      "luckyWin": null
+    },
+    "giftSent": {
+      "success": true,
+      "streamId": "00000000-0000-4000-8000-0000000000st",
+      "senderId": "00000000-0000-4000-8000-0000000000s1",
+      "senderName": "Sender",
+      "senderRemainingCoins": 99600,
+      "receiverId": "00000000-0000-4000-8000-0000000000r1",
+      "gift": {
+        "id": "00000000-0000-4000-8000-0000000000g1",
+        "name": "Lucky Star",
+        "displayImageUrl": "https://cdn.example/thumb.webp",
+        "fullImageUrl": "https://cdn.example/full.png",
+        "coinCost": 100,
+        "effectLuckyGift": true
+      },
+      "count": 3,
+      "totalCost": 300,
+      "pointsAwarded": 12,
+      "wealthLevel": 12,
+      "isLevelUp": false,
+      "isLucky": true,
+      "transactionId": "00000000-0000-4000-8000-0000000000tx"
+    },
+    "luckyGiftWin": null,
+    "lucky_gift_single_result": null,
+    "lucky_gift_combo_step": [
+      {
+        "step": 1,
+        "rewardCoins": 0,
+        "category": "MISS",
+        "transactionId": "00000000-0000-4000-8000-0000000000tx"
+      },
+      {
+        "step": 2,
+        "rewardCoins": 0,
+        "category": "MISS",
+        "transactionId": "00000000-0000-4000-8000-0000000000tx"
+      },
+      {
+        "step": 3,
+        "rewardCoins": 0,
+        "category": "MISS",
+        "transactionId": "00000000-0000-4000-8000-0000000000tx"
+      }
+    ]
+  }
+}
