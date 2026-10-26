@@ -21,6 +21,7 @@ import {
 import { rejectNotOwner } from '../../utils/ownershipCheck.js';
 import { socketUserId } from '../../socket/socketAuth.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
+import { withLuckyEmitOnce } from '../../modules/luckyGift/emitDedupe.js';
 import { roomPublicId } from './roomPublicId.js';
 import { client as redisClient } from '../../config/redis.js';
 import { isUserRestrictedFast } from './serviceAdmin.js';
@@ -906,21 +907,25 @@ export const setupLiveSockets = (io) => {
                     clientTxId
                 });
 
-                // Standard Gift Animation broadcast
-                broadcastToStream(streamId, "GIFT_SENT", result.socketPayload);
+                const emitLuckyOrGift = () => {
+                    broadcastToStream(streamId, "GIFT_SENT", result.socketPayload);
+                    if (result.luckyWin) {
+                        broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+                        console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${result.luckyWin.senderId}: ${result.luckyWin.rewardCoins} coins`);
+                    }
+                };
+                // F6: lucky sends emit at most once per transactionId.
+                if (result.isLucky) {
+                    await withLuckyEmitOnce(result.transactionId, emitLuckyOrGift);
+                } else {
+                    emitLuckyOrGift();
+                }
 
                 const progressData = (result.socketPayload && result.socketPayload.galleryProgress) || result.galleryProgress || result.galleryProgressUpdate;
                 if (progressData) {
                     broadcastToStream(streamId, "GIFT_GALLERY_UPDATE", progressData);
                     broadcastToStream(streamId, "GIFT_GALLERY_PROGRESS_UPDATED", progressData);
                     console.log(`[Socket Gift Gallery] Broadcast GIFT_GALLERY_UPDATE & GIFT_GALLERY_PROGRESS_UPDATED in stream ${streamId}`);
-                }
-
-
-
-                if (result.luckyWin) {
-                    broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
-                    console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${result.luckyWin.senderId}: ${result.luckyWin.rewardCoins} coins`);
                 }
             } catch (err) {
                 console.error("[Socket] send_gift failed:", err.message);
@@ -952,49 +957,50 @@ export const setupLiveSockets = (io) => {
                 const nameStr = `${user?.firstName || ""} ${user?.lastName || ""}`.trim();
                 const displaySenderName = isStealth ? (await getOrCreateSessionAlias(streamId, userId) || "Mystery Gifter") : (nameStr || user?.username || "User");
 
-                if (result.breakdownArray.length <= 1) {
-                    // Single Lucky Draw Result
-                    broadcastToStream(streamId, "lucky_gift_single_result", {
-                        senderId: isStealth ? null : userId,
-                        senderName: displaySenderName,
-                        receiverId,
-                        gift: result.gift,
-                        totalCost: result.totalCost,
-                        totalRewardCoins: result.totalRewardCoins,
-                        category: result.category,
-                        isMystery: isStealth
-                    });
-                } else {
-                    // Multi-Step Combo Result (Broadcast Sequential Popups)
-                    let cumulativeCoins = 0;
-                    for (let i = 0; i < result.breakdownArray.length; i++) {
-                        const stepCoins = result.breakdownArray[i];
-                        cumulativeCoins += stepCoins;
-                        broadcastToStream(streamId, "lucky_gift_combo_step", {
-                            senderId: isStealth ? null : userId,
-                            senderName: displaySenderName,
-                            receiverId,
-                            gift: result.gift,
-                            stepIndex: i + 1,
-                            totalSteps: result.breakdownArray.length,
-                            stepRewardCoins: stepCoins,
-                            accumulatedRewardCoins: cumulativeCoins,
-                            totalRewardCoins: result.totalRewardCoins,
-                            isMystery: isStealth
-                        });
-                    }
-                }
-
                 const receiverUser = receiverId ? await prisma.user.findUnique({ where: { id: receiverId }, select: { username: true, name: true, firstName: true, lastName: true } }) : null;
                 const receiverNameStr = `${receiverUser?.firstName || ""} ${receiverUser?.lastName || ""}`.trim();
                 const receiverName = receiverNameStr || receiverUser?.name || receiverUser?.username || "Host";
 
-                if (result.luckyWin) {
-                    result.luckyWin.senderName = displaySenderName;
-                    result.luckyWin.receiverName = receiverName;
-                    broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
-                    console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${userId}: ${result.luckyWin.rewardCoins} coins`);
-                }
+                // F6: lucky extras + LUCKY_GIFT_WIN at most once per transactionId.
+                await withLuckyEmitOnce(result.transactionId, () => {
+                    if (result.breakdownArray.length <= 1) {
+                        broadcastToStream(streamId, "lucky_gift_single_result", {
+                            senderId: isStealth ? null : userId,
+                            senderName: displaySenderName,
+                            receiverId,
+                            gift: result.gift,
+                            totalCost: result.totalCost,
+                            totalRewardCoins: result.totalRewardCoins,
+                            category: result.category,
+                            isMystery: isStealth
+                        });
+                    } else {
+                        let cumulativeCoins = 0;
+                        for (let i = 0; i < result.breakdownArray.length; i++) {
+                            const stepCoins = result.breakdownArray[i];
+                            cumulativeCoins += stepCoins;
+                            broadcastToStream(streamId, "lucky_gift_combo_step", {
+                                senderId: isStealth ? null : userId,
+                                senderName: displaySenderName,
+                                receiverId,
+                                gift: result.gift,
+                                stepIndex: i + 1,
+                                totalSteps: result.breakdownArray.length,
+                                stepRewardCoins: stepCoins,
+                                accumulatedRewardCoins: cumulativeCoins,
+                                totalRewardCoins: result.totalRewardCoins,
+                                isMystery: isStealth
+                            });
+                        }
+                    }
+
+                    if (result.luckyWin) {
+                        result.luckyWin.senderName = displaySenderName;
+                        result.luckyWin.receiverName = receiverName;
+                        broadcastToStream(streamId, "LUCKY_GIFT_WIN", result.luckyWin);
+                        console.log(`[Socket Lucky Gift Win] Broadcast LUCKY_GIFT_WIN in stream ${streamId} for winner ${userId}: ${result.luckyWin.rewardCoins} coins`);
+                    }
+                });
 
 
 
