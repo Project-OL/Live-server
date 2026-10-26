@@ -7,6 +7,7 @@ import { withGiftThumbnail } from "../../utils/giftImage.js";
 import { getActiveGiftCatalogPage, GIFT_CATALOG_PAGE_SIZE } from "../../services/giftCatalog.service.js";
 import { rejectNotOwner } from "../../utils/ownershipCheck.js";
 import { recordLivekitEvent, webhookMode } from "../../services/livekitEvents.service.js";
+import { handleLivekitNetworkEvent } from "../../services/networkNotice.service.js";
 
 // SEC-07: LiveKit signs every webhook with the API key/secret (Authorization header).
 const webhookReceiver = new WebhookReceiver(
@@ -122,6 +123,8 @@ export const livekitWebhook = async (req, res) => {
     // OBS-07 / LIVE-43: record every event (presence + counters) before anything else; never fails
     // the request, so LiveKit doesn't retry.
     await recordLivekitEvent(event).catch(() => {});
+    // BE-09: host / call-partner network notices (LIVE_NETWORK_NOTICE_MODE, default log).
+    handleLivekitNetworkEvent(event).catch(() => {});
     try {
         if (event && event.event === 'room_finished' && event.room?.name) {
             const session = await prisma.videoCallSession.findUnique({

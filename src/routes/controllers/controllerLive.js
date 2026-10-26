@@ -8,8 +8,13 @@ import { recordStreamHeartbeat } from '../service/serviceHeartbeat.js';
 import {
     LIVE_FAILURE_KINDS,
     recordLiveFailure,
-    allowClientFailureReport
+    recordClientEvent,
+    allowClientFailureReport,
+    CLIENT_EVENTS_MAX_BATCH,
+    CLIENT_EVENTS_RATE_PER_MIN
 } from '../../services/liveFailureLog.service.js';
+import { hostStreamFacts, livekitCause } from '../../services/livekitEvents.service.js';
+import { disconnectMeta } from '../../services/socketDisconnect.service.js';
 
 import {
     fastGoLiveStreamService,
@@ -186,6 +191,31 @@ const fastGoLiveStream = async (req, res) => {
 
 
 
+/** A host end this soon after go-live, with no video ever published, is a failed go-live. */
+const ABANDON_WINDOW_MS = 30_000;
+
+/**
+ * BE-07: on 24 Oct three failed go-lives (12-18 s, the app restarting) were recorded only as
+ * MANUAL_USER_END. Record them as GOLIVE_ABANDONED with what LiveKit saw and how the socket closed.
+ */
+const recordAbandonedGoLive = async (stream, req) => {
+    const startedAt = new Date(stream.startedAt || stream.createdAt).getTime();
+    const endedAt = new Date(stream.endedAt || Date.now()).getTime();
+    const ageMs = endedAt - startedAt;
+    if (!(ageMs >= 0 && ageMs < ABANDON_WINDOW_MS)) return;
+    const facts = await hostStreamFacts(stream.streamId, stream.userId);
+    if (facts.publishedVideo) return;
+    recordLiveFailure({
+        kind: LIVE_FAILURE_KINDS.GOLIVE_ABANDONED,
+        userId: stream.userId,
+        streamId: stream.streamId,
+        role: 'host',
+        code: 'GOLIVE_ABANDONED',
+        message: `Host ended the stream ${Math.round(ageMs / 1000)} s after going live without publishing video.`,
+        meta: { ageMs, livekit: livekitCause(facts), ...clientMeta(req), ...(await disconnectMeta(stream.userId)) },
+    });
+};
+
 const endLiveStream = async (req, res) => {
     try {
         const result = await endLiveStreamService({
@@ -196,6 +226,10 @@ const endLiveStream = async (req, res) => {
 
         // Broadcast rich summary payload to all viewers in stream room
         broadcastToStream(result.stream.streamId, "stream_ended", result.summary);
+
+        if (!result.alreadyEnded && !result.redisOnly) {
+            recordAbandonedGoLive(result.stream, req).catch(() => { });
+        }
 
         return res.json({
             success: true,
@@ -1510,6 +1544,8 @@ const reportConnectFailure = async (req, res) => {
     }
     recordLiveFailure({
         kind: LIVE_FAILURE_KINDS.CLIENT_CONNECT_FAILED,
+        source: 'app',
+        role,
         userId: req.userId,
         streamId: typeof b.streamId === 'string' ? b.streamId : null,
         code: typeof b.errorType === 'string' ? b.errorType : 'CONNECT_FAILED',
@@ -1531,8 +1567,38 @@ const reportConnectFailure = async (req, res) => {
     return res.status(202).json({ success: true });
 };
 
+/**
+ * POST /live-stream/client-events (BE-02): a batch of up to 50 app-reported events (crashes, unclean
+ * exits, connect failures, network notices), sent from the app's offline queue, so events may be up
+ * to 7 days old (`occurredAt` = app clock). Per-event results; one bad event never fails the batch.
+ * Rate limit: 60 events per user per minute. Dedupe on the event `id` (UUID) for 8 days.
+ */
+const reportClientEvents = async (req, res) => {
+    const events = Array.isArray(req.body?.events) ? req.body.events : null;
+    if (!events || events.length === 0) {
+        return res.status(400).json({ success: false, message: 'events must be a non-empty array.' });
+    }
+    if (events.length > CLIENT_EVENTS_MAX_BATCH) {
+        return res.status(400).json({ success: false, message: `At most ${CLIENT_EVENTS_MAX_BATCH} events per request.` });
+    }
+    if (!(await allowClientFailureReport(req.userId, events.length, CLIENT_EVENTS_RATE_PER_MIN, 'events'))) {
+        return res.status(429).json({ success: false, message: 'Too many events; try again later.' });
+    }
+    let accepted = 0;
+    let duplicates = 0;
+    const rejected = [];
+    for (let i = 0; i < events.length; i += 1) {
+        const r = await recordClientEvent(req.userId, events[i], req.headers['x-app-version']);
+        if (r === 'ok') accepted += 1;
+        else if (r === 'duplicate') duplicates += 1;
+        else rejected.push({ index: i, reason: r });
+    }
+    return res.status(202).json({ success: true, accepted, duplicates, rejected });
+};
+
 router.post('/heartbeat', auth, streamHeartbeat);
 router.post('/connect-failure', auth, reportConnectFailure);
+router.post('/client-events', auth, reportClientEvents);
 router.post('/go-live', auth, fastGoLiveStream);
 router.post('/end/:id', auth, endLiveStream);
 router.post('/join/:id', auth, joinLiveStream);

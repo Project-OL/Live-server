@@ -28,6 +28,7 @@ import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
 import { recordStreamHeartbeat, startStreamHeartbeatMonitor, HOST_DISCONNECT_TIMEOUT_MS } from './serviceHeartbeat.js';
 import { startTrafficSnapshot } from '../../services/traffic.service.js';
+import { handleClientQuality } from '../../services/networkNotice.service.js';
 import {
     isShuttingDown,
     registerDurableHandler,
@@ -372,6 +373,11 @@ export const setupLiveSockets = (io) => {
                     await removeSessionAlias(streamId, userId);
                 }
             }
+        });
+
+        // BE-09: the app reports its own LiveKit quality; viewers / the call partner get a notice.
+        socket.on("network_quality", (data) => {
+            handleClientQuality(socket, data).catch(() => { });
         });
 
         socket.on("disconnect", async () => {

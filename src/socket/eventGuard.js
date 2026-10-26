@@ -25,7 +25,7 @@ export const HANDLED_EVENTS = new Set([
     "accept_sheet_invite", "toggle_mic_permission", "set_chat_permission", "request_to_join_sheet",
     "accept_sheet_request", "reject_sheet_request", "toggle_sheet_mute", "toggle_self_mute",
     "remove_from_sheet", "toggle_camera_state", "leave_sheet", "clear_chat", "send_gift",
-    "send_lucky_gift", "SEND_MESSAGE"
+    "send_lucky_gift", "SEND_MESSAGE", "network_quality"
 ]);
 
 // [type, required, max] per field; `id` = non-empty string or finite number up to max chars.
@@ -59,7 +59,9 @@ const SCHEMAS = {
     send_lucky_gift: {
         streamId: ID(), giftId: ID(), receiverId: ID(false), comboCount: INT(100_000), clientTxId: STR(false, 100)
     },
-    SEND_MESSAGE: { receiverId: ID(), text: STR(true, 1000) }
+    SEND_MESSAGE: { receiverId: ID(), text: STR(true, 1000) },
+    // BE-09: the app's own LiveKit connection quality (host in a live room, or a call participant).
+    network_quality: { quality: STR(true, 16), sessionId: ID(false), streamId: ID(false) }
 };
 
 const isPlainObject = (v) => v !== null && typeof v === "object" && !Array.isArray(v);

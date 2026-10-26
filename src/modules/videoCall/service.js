@@ -13,6 +13,9 @@ import { getSheetUsersService, removeUserFromSheetService } from "../../routes/s
 import { giftImageFields } from "../../utils/giftImage.js";
 import { callLedger, toLocalError } from "../../services/ledgerClient.js";
 import { unlinkByPattern } from "../../utils/redisScan.js";
+import { LIVE_FAILURE_KINDS, recordLiveFailure } from "../../services/liveFailureLog.service.js";
+import { hostStreamFacts, livekitCause } from "../../services/livekitEvents.service.js";
+import { disconnectMeta, lastDisconnect } from "../../services/socketDisconnect.service.js";
 import {
     isLeader,
     onShutdown,
@@ -578,6 +581,60 @@ export const rejectCall = async (sessionId, receiverId) => {
     return { success: true };
 };
 
+/** End reasons that mean a side lost its network or app (not a hang-up). */
+const CALL_NET_LOST_REASONS = new Set(["HEARTBEAT_LOST", "USER_DISCONNECTED_TIMEOUT"]);
+
+/**
+ * BE-07: record CALL_NET_LOST with what we know about each side: its last socket close and what
+ * LiveKit saw. `droppedUserId` is the side whose 15 s socket grace ran out (null for the heartbeat
+ * sweep, which cannot tell which side went quiet).
+ */
+const recordCallNetLost = async (session, droppedUserId, reason) => {
+    const sides = [session.callerId, session.creatorId].filter(Boolean);
+    const meta = { reason, durationSec: Math.round((Date.now() - new Date(session.startedAt).getTime()) / 1000) };
+    for (const [i, uid] of sides.entries()) {
+        const tag = i === 0 ? "caller" : "callee";
+        const [facts, disc] = await Promise.all([hostStreamFacts(session.livekitRoom, uid), lastDisconnect(uid)]);
+        meta[`${tag}Livekit`] = livekitCause(facts);
+        if (disc) meta[`${tag}SocketClose`] = disc.reason;
+    }
+    recordLiveFailure({
+        kind: LIVE_FAILURE_KINDS.CALL_NET_LOST,
+        userId: droppedUserId || session.callerId,
+        callId: session.id,
+        role: droppedUserId ? (droppedUserId === session.callerId ? "caller" : "callee") : null,
+        code: reason,
+        message: `Paid call ended after a lost connection (${reason}).`,
+        meta,
+    });
+};
+
+/**
+ * BE-07: once per call, 20-120 s after accept, record CALL_CONNECT_FAIL when one side never
+ * appeared in the LiveKit room. Only when LiveKit reported the other side joining, so a missing
+ * webhook can never look like a failure. Log only: the call is not ended.
+ */
+const checkCallConnected = async (session) => {
+    if (!redisClient.isOpen || !session.callerId || !session.creatorId) return;
+    const [caller, callee] = await Promise.all([
+        hostStreamFacts(session.livekitRoom, session.callerId),
+        hostStreamFacts(session.livekitRoom, session.creatorId),
+    ]);
+    if (caller.joined === callee.joined) return; // both in (fine) or no webhook data (unknown)
+    const first = await redisClient.set(`vc:connectfail:${session.id}`, "1", { NX: true, EX: 3600 });
+    if (first === null) return;
+    const missing = caller.joined ? session.creatorId : session.callerId;
+    recordLiveFailure({
+        kind: LIVE_FAILURE_KINDS.CALL_CONNECT_FAIL,
+        userId: missing,
+        callId: session.id,
+        role: missing === session.callerId ? "caller" : "callee",
+        code: "CALL_CONNECT_FAIL",
+        message: "Accepted call: one side never reached the LiveKit room.",
+        meta: { ageSec: Math.round((Date.now() - new Date(session.startedAt).getTime()) / 1000), ...(await disconnectMeta(missing)) },
+    });
+};
+
 const SYSTEM_END_REASONS = ["HEARTBEAT_LOST", "INSUFFICIENT_BALANCE", "RINGING_TIMEOUT", "TEST_RESET", "SYSTEM_RESET", "ROOM_FINISHED_WEBHOOK", "VIOLATION_NUDITY"];
 
 export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtOverride = null) => {
@@ -613,6 +670,11 @@ export const endCall = async (sessionId, userId, reason = "USER_ENDED", endedAtO
         }
     }
     if (!updatedSession) return null;
+
+    // BE-07: a running call ended by a lost connection is a failure, not a hang-up.
+    if (session.status === "ACTIVE" && CALL_NET_LOST_REASONS.has(reason)) {
+        recordCallNetLost(session, userId, reason).catch(() => { });
+    }
 
     const socketEvent = session.status === "RINGING" ? "CALL_MISSED" : "CALL_ENDED";
 
@@ -942,6 +1004,9 @@ if (process.env.NODE_ENV !== "test" && !process.env.IS_TEST) {
 
             for (const session of activeSessionsForHeartbeat) {
                 const sessionAge = now - new Date(session.startedAt).getTime();
+                if (sessionAge >= 20000 && sessionAge <= 120000) {
+                    checkCallConnected(session).catch(() => { });
+                }
                 if (sessionAge > 45000) {
                     const sessionPing = (await getCallHeartbeat(session.id)) || new Date(session.startedAt).getTime();
                     if (now - sessionPing > 60000) {

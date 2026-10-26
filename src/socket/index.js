@@ -4,7 +4,8 @@ import { setupVideoCallSockets } from "../modules/videoCall/socket.js";
 import { setupLiveSockets } from "../routes/service/socket-live-service.js";
 import { client as redisClient } from "../config/redis.js";
 import { onShutdown } from "../services/cluster.service.js";
-import { claimedUserId, socketAuthMiddleware, socketAuthMode } from "./socketAuth.js";
+import { claimedUserId, socketAuthMiddleware, socketAuthMode, socketUserId } from "./socketAuth.js";
+import { noteDisconnect } from "../services/socketDisconnect.service.js";
 import { withLogContext } from "../utils/logger.js";
 import { socketEventGuard } from "./eventGuard.js";
 import { corsAllowedOrigins } from "../config/corsOrigins.js";
@@ -82,12 +83,35 @@ export const initSocket = async (server) => {
     io.on("connection", (socket) => {
         console.log("connected", socket.id);
 
-        socket.on("disconnect", () => {
-            console.log("disconnected");
+        // BE-05: keep the close reason ("transport close", "ping timeout", "client namespace
+        // disconnect", ...) so a later failure event can say how the app's connection ended.
+        socket.on("disconnect", (reason) => {
+            const userId = socketUserId(socket);
+            console.log(`[Socket] disconnected sid=${socket.id} user=${userId || "-"} reason=${reason}`);
+            noteDisconnect(userId, reason, socket.id);
         });
     });
 
     return io;
+};
+
+/**
+ * BE-08: before a graceful shutdown, send each socket on this node `server_shift` with its own
+ * random `retryInMs` (0-3000) so reconnects to the next process spread out. Old apps ignore it.
+ * Returns how many sockets were told.
+ */
+export const notifyServerShift = (server) => {
+    let n = 0;
+    try {
+        for (const socket of server.sockets.sockets.values()) {
+            socket.emit("server_shift", { reason: "deploy", retryInMs: Math.floor(Math.random() * 3000) });
+            n += 1;
+        }
+    } catch (err) {
+        console.error("[Shutdown] server_shift notice failed:", err.message);
+    }
+    if (n) console.log(`[Shutdown] server_shift sent to ${n} sockets`);
+    return n;
 };
 
 export const getIO = () => io;

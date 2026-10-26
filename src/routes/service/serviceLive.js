@@ -404,6 +404,8 @@ export const endLiveStreamService = async ({
             isLive: false,
             endedAt,
             effectiveDurationSeconds,
+            // BE-04: kept in the DB; before this the reason lived only in pm2 logs.
+            endReason: String(reason || "UNKNOWN").slice(0, 64),
         }
     });
 
@@ -1672,6 +1674,7 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
                     isLive: false,
                     endedAt,
                     effectiveDurationSeconds,
+                    endReason: "AI_MODERATION_NUDITY_BLOCK",
                 }
             });
 

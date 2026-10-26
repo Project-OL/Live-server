@@ -2000,10 +2000,42 @@ model LiveStream {
   startedAt                DateTime? @map("started_at")
   endedAt                  DateTime? @map("ended_at")
   effectiveDurationSeconds Int       @default(0) @map("effective_duration_seconds")
+  /// BE-04: why the stream ended (endLiveStreamService reason). Migration lives in ol-node-rest.
+  endReason                String?   @map("end_reason") @db.VarChar(64)
   createdAt                DateTime  @default(now()) @map("created_at")
   updatedAt                DateTime  @updatedAt @map("updated_at")
 
   @@map("live_streams")
+}
+
+/// BE-03: live / call / socket / app failure events with a severity (90 days). Table owned by
+/// ol-node-rest's migration 20261026200000_live_failure_events; Live-server writes it.
+model LiveFailureEvent {
+  id          String   @id @db.Uuid
+  occurredAt  DateTime @map("occurred_at") @db.Timestamptz(6)
+  receivedAt  DateTime @default(now()) @map("received_at") @db.Timestamptz(6)
+  kind        String   @db.VarChar(32)
+  area        String   @db.VarChar(16)
+  failureCode String   @map("failure_code") @db.VarChar(64)
+  severity    String   @db.VarChar(2)
+  source      String   @db.VarChar(8)
+  userId      String?  @map("user_id") @db.Uuid
+  streamId    String?  @map("stream_id") @db.VarChar(64)
+  callId      String?  @map("call_id") @db.VarChar(64)
+  role        String?  @db.VarChar(16)
+  status      Int?
+  message     String?  @db.VarChar(300)
+  appVersion  String?  @map("app_version") @db.VarChar(40)
+  platform    String?  @db.VarChar(16)
+  deviceModel String?  @map("device_model") @db.VarChar(64)
+  network     String?  @db.VarChar(16)
+  meta        Json?
+
+  @@index([occurredAt(sort: Desc)], map: "live_failure_events_occurred_idx")
+  @@index([userId, occurredAt(sort: Desc)], map: "live_failure_events_user_idx")
+  @@index([failureCode, occurredAt(sort: Desc)], map: "live_failure_events_code_idx")
+  @@index([severity, occurredAt(sort: Desc)], map: "live_failure_events_severity_idx")
+  @@map("live_failure_events")
 }
 
 model LiveMessage {
