@@ -15,6 +15,7 @@ import {
 } from '../../services/liveFailureLog.service.js';
 import { hostStreamFacts, livekitCause } from '../../services/livekitEvents.service.js';
 import { disconnectMeta } from '../../services/socketDisconnect.service.js';
+import { rejoinTokenService } from '../../services/rejoinToken.service.js';
 
 import {
     fastGoLiveStreamService,
@@ -23,6 +24,7 @@ import {
     getLiveStreamService,
     getHostProfileService,
     getUserPrivacyService,
+    generateStreamHostToken,
     generateStreamViewerToken,
     isStreamAdminService,
     promoteDemoteAdminService,
@@ -1596,6 +1598,29 @@ const reportClientEvents = async (req, res) => {
     return res.status(202).json({ success: true, accepted, duplicates, rejected });
 };
 
+/**
+ * BE-14: GET /:id/rejoin-token. A fresh LiveKit token for the same room after a drop, without
+ * repeating go-live / join. 404 once the stream has ended, so the app falls back to the end screen.
+ */
+const getRejoinToken = async (req, res) => {
+    try {
+        const result = await rejoinTokenService({ id: req.params.id, userId: req.userId }, {
+            getStream: (id) => getLiveStreamService({ id }),
+            isKicked: (streamId, userId) => isUserKickedService({ streamId, userId }),
+            hasJoined: async (streamId, userId) =>
+                redisClient.isOpen ? !!(await redisClient.sIsMember(`stream:history:${streamId}`, userId)) : false,
+            hostToken: generateStreamHostToken,
+            viewerToken: generateStreamViewerToken,
+        });
+        if (!result.ok) {
+            return res.status(result.status).json({ success: false, code: result.code, message: result.message });
+        }
+        return res.json({ success: true, token: result.token, role: result.role, streamId: result.streamId, id: result.id });
+    } catch (error) {
+        return res.status(400).json({ success: false, message: error.message });
+    }
+};
+
 router.post('/heartbeat', auth, streamHeartbeat);
 router.post('/connect-failure', auth, reportConnectFailure);
 router.post('/client-events', auth, reportClientEvents);
@@ -1606,6 +1631,7 @@ router.post('/leave/:id', auth, leaveLiveStream);
 router.get('/list', auth, getLiveStreams);
 router.get('/gifts', auth, getGifts);
 router.get('/wallet/balance', auth, getWalletBalance);
+router.get('/:id/rejoin-token', auth, getRejoinToken);
 router.get('/:id', auth, getLiveStream);
 router.post('/:id/message', auth, sendMessage);
 router.get('/:id/messages', auth, getMessages);
