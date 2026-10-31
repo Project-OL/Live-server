@@ -28,6 +28,7 @@ import { isUserRestrictedFast } from './serviceAdmin.js';
 import { clearHostReturnTimeout } from '../../modules/videoCall/service.js';
 import { recordStreamHeartbeat, startStreamHeartbeatMonitor, HOST_DISCONNECT_TIMEOUT_MS } from './serviceHeartbeat.js';
 import { startTrafficSnapshot } from '../../services/traffic.service.js';
+import { startActiveStreamReconciler } from '../../services/liveHostStatus.service.js';
 import { handleClientQuality } from '../../services/networkNotice.service.js';
 import {
     isShuttingDown,
@@ -163,6 +164,7 @@ export const setupLiveSockets = (io) => {
     ioInstance = io;
     startStreamHeartbeatMonitor(io);
     startTrafficSnapshot(io);
+    startActiveStreamReconciler();
     io.on("connection", (socket) => {
         // F02: the verified id, never the client's claim when a valid token exists.
         const userId = socketUserId(socket);
