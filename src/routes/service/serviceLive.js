@@ -7,7 +7,7 @@ import dotenv from 'dotenv';
 import { isUserRestrictedFast } from './serviceAdmin.js';
 import { LevelType } from '@prisma/client';
 import { callLedger, toLocalError } from '../../services/ledgerClient.js';
-import { scanKeys } from '../../utils/redisScan.js';
+import { publishLiveStatus } from '../../services/liveHostStatus.service.js';
 import { moderateImage, uploadFlaggedFrameToS3 } from '../../modules/videoCall/aws.service.js';
 import { broadcastToStream } from './socket-live-service.js';
 import { sendLuckyGiftService } from './serviceLuckyGift.js';
@@ -214,6 +214,8 @@ export const fastGoLiveStreamService = async ({
         }
     }
 
+    publishLiveStatus(userId, true, streamId); // LIVE-60
+
     return {
         stream: createdStream,
         token
@@ -289,6 +291,7 @@ export const endLiveStreamService = async ({
                     id: parsed.id || id
                 });
                 await closeLivekitRoom(sid);
+                publishLiveStatus(userId, false); // LIVE-60
                 console.log(
                     `[End Stream] Redis-only abort for ${sid} (DB row not ready yet)`
                 );
@@ -421,6 +424,7 @@ export const endLiveStreamService = async ({
             await redisClient.del(keyUncounted);
         } catch (_) {}
     }
+    publishLiveStatus(stream.userId, false); // LIVE-60: only the winning end announces it
 
     const durationSeconds = effectiveDurationSeconds;
 
@@ -1725,6 +1729,7 @@ export const verifyStreamFrameService = async ({ id, base64Image }) => {
             } catch (cleanError) {
                 console.error("[Stream Moderation Clean] Failed to clear Redis keys:", cleanError.message);
             }
+            publishLiveStatus(stream.userId, false); // LIVE-60
 
             // Calculate ban details and apply automatic ban punishment
             let banDurationHours = 1;
@@ -2401,40 +2406,6 @@ export const getUserPrivacyService = async ({ userId }) => {
     }
 
     return result;
-};
-
-export const cleanupStaleLiveStreamRedisKeys = async () => {
-    if (!redisClient.isOpen) return { cleanedCount: 0 };
-    try {
-        // LIVE-32: SCAN, not KEYS (non-blocking on the shared Redis).
-        const activeUserKeys = [];
-        for await (const key of scanKeys("user:active_stream:*")) activeUserKeys.push(key);
-        let cleanedCount = 0;
-
-        for (const key of activeUserKeys) {
-            const userId = key.replace("user:active_stream:", "");
-            const streamId = await redisClient.get(key);
-
-            if (streamId) {
-                const dbStream = await prisma.liveStream.findFirst({
-                    where: { id: streamId, userId, isLive: true }
-                });
-
-                if (!dbStream) {
-                    console.log(`[Stale Key Cleaner] Deleting stale Redis key ${key} for ended stream ${streamId}`);
-                    await Promise.all([
-                        redisClient.del(key),
-                        redisClient.del(`stream:info:${streamId}`)
-                    ]).catch(() => { });
-                    cleanedCount++;
-                }
-            }
-        }
-        return { cleanedCount, totalChecked: activeUserKeys.length };
-    } catch (err) {
-        console.error("[Stale Key Cleaner Error]:", err.message);
-        return { cleanedCount: 0, error: err.message };
-    }
 };
 
 /**
