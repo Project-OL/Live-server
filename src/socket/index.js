@@ -2,7 +2,7 @@ import { Server } from "socket.io";
 import { createAdapter } from "@socket.io/redis-adapter";
 import { setupVideoCallSockets } from "../modules/videoCall/socket.js";
 import { setupLiveSockets } from "../routes/service/socket-live-service.js";
-import { client as redisClient } from "../config/redis.js";
+import { attachReadonlyRecovery, client as redisClient } from "../config/redis.js";
 import { onShutdown } from "../services/cluster.service.js";
 import { claimedUserId, socketAuthMiddleware, socketAuthMode, socketUserId } from "./socketAuth.js";
 import { noteDisconnect } from "../services/socketDisconnect.service.js";
@@ -27,7 +27,8 @@ const attachRedisAdapter = async (server) => {
         return;
     }
     try {
-        const pubClient = redisClient.duplicate();
+        // duplicate() copies the reconnect/ping options; READONLY recovery is per instance.
+        const pubClient = attachReadonlyRecovery(redisClient.duplicate(), "adapter-pub");
         const subClient = redisClient.duplicate();
         pubClient.on("error", (err) => console.error("[Socket adapter pub] Redis error:", err.message));
         subClient.on("error", (err) => console.error("[Socket adapter sub] Redis error:", err.message));
