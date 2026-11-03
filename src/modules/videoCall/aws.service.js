@@ -2,15 +2,37 @@ import { RekognitionClient, DetectModerationLabelsCommand } from "@aws-sdk/clien
 import { S3Client, PutObjectCommand } from "@aws-sdk/client-s3";
 import dotenv from "dotenv";
 import { isNudeMonitoringEnabled } from "../../config/moderation.js";
+import { createCircuitBreaker } from "../../utils/circuitBreaker.js";
 
 dotenv.config();
 
+// LIVE-65: a frame check must never hang a request. Bounded connect/request time and one retry
+// (the SDK default is 3 attempts with no request timeout); a breaker fails fast while AWS is down.
 const client = new RekognitionClient({
     region: process.env.AWS_REGION || "ap-south-1",
     credentials: {
         accessKeyId: process.env.AWS_ACCESS_KEY_ID,
         secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY
+    },
+    maxAttempts: 2,
+    requestHandler: {
+        connectionTimeout: Number(process.env.REKOGNITION_CONNECT_TIMEOUT_MS) || 2000,
+        requestTimeout: Number(process.env.REKOGNITION_REQUEST_TIMEOUT_MS) || 5000
     }
+});
+
+// Bad images (InvalidImageFormat, ImageTooLarge, ...) are the caller's problem, not AWS being down.
+const REKOGNITION_INPUT_ERRORS = new Set([
+    "InvalidImageFormatException",
+    "ImageTooLargeException",
+    "InvalidParameterException",
+    "ValidationException"
+]);
+const rekognitionBreaker = createCircuitBreaker({
+    name: "rekognition-moderation",
+    failureThreshold: 5,
+    openMs: 30_000,
+    isFailure: (err) => !REKOGNITION_INPUT_ERRORS.has(err?.name)
 });
 
 // Object storage is provider-swappable, mirroring ol-node-rest's src/config/s3.ts.
@@ -70,7 +92,7 @@ export const moderateImage = async (buffer) => {
             MinConfidence: 70
         });
 
-        const response = await client.send(command);
+        const response = await rekognitionBreaker.exec(() => client.send(command));
         const labels = response.ModerationLabels || [];
 
 

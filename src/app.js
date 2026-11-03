@@ -1,5 +1,6 @@
 import express from "express";
 import cors from "cors";
+import compression from "compression";
 import dotenv from "dotenv";
 import authMiddleware from "./middlewares/authMiddleware.js";
 import apiRoutes from "./modules/index.js";
@@ -34,6 +35,12 @@ app.use(
     credentials: true,
   })
 )
+
+// LIVE-65: gzip JSON/text responses over 1 KB (the classic LB doesn't compress). socket.io sits on
+// the http server, not on Express, so it's unaffected. LIVE_GZIP=off turns it off without a deploy.
+if (String(process.env.LIVE_GZIP || "on").toLowerCase() !== "off") {
+  app.use(compression({ threshold: 1024 }));
+}
 
 // F20: 1 MB bodies, 50 MB only on the image-upload routes (config/bodyLimits.js).
 app.use(...bodyParsers());

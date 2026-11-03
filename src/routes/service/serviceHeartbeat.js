@@ -10,6 +10,7 @@ import { hostStreamFacts, livekitCause } from '../../services/livekitEvents.serv
 import { disconnectMeta } from '../../services/socketDisconnect.service.js';
 import { isLeader, onShutdown } from '../../services/cluster.service.js';
 import { heartbeatVerdict } from './heartbeatPolicy.js';
+import { forEachLimit } from '../../utils/forEachLimit.js';
 
 /**
  * How long a host may go silent (no heartbeat) before the stream is auto-ended.
@@ -63,6 +64,13 @@ export const getStreamHeartbeat = async (streamId) => {
 };
 
 let heartbeatMonitorInterval = null;
+
+/**
+ * LIVE-61: streams checked at once per monitor tick. Each check is a few Redis reads, one LiveKit
+ * participant lookup and sometimes a DB read; one after another a tick passed 5 s at ~150-250
+ * live streams. Default 8 keeps LiveKit API and DB pool pressure small. 1 = the old sequential loop.
+ */
+const SWEEP_CONCURRENCY = Math.min(32, Math.max(1, Number(process.env.LIVE_SWEEP_CONCURRENCY) || 8));
 
 /** Initial grace after go-live before heartbeat is required */
 const HEARTBEAT_START_GRACE_MS = Number(process.env.LIVE_HEARTBEAT_START_GRACE_MS || 15000);
@@ -227,6 +235,189 @@ const hostPausedForCallOrReturn = async (hostUserId, streamIdKey) => {
 };
 
 /**
+ * One stream's checks for a monitor tick (ghost / no video / absence cap / heartbeat lost).
+ * LIVE-61: streams are independent and ends are claimed atomically (LIVE-29), so a tick runs
+ * these with bounded parallelism instead of one after another.
+ */
+const checkStream = async (io, stream, now) => {
+    const streamIdKey = stream.streamId || stream.id;
+    const hostUserId = stream.userId;
+    const startTime = (stream.startedAt || stream.createdAt || new Date()).getTime();
+    const ageMs = now - startTime;
+    // LiveKit presence of the host, looked up at most once per tick per stream.
+    let hostInLk = null;
+
+    // --- Ghost / Wi-Fi: go-live created DB row but host never joined LiveKit ---
+    if (GHOST_SWEEP_ENABLED && ageMs >= LIVEKIT_HOST_GRACE_MS) {
+        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
+        if (hostInLk) {
+            // Host confirmed present at least once — remember it so a later
+            // drop (network blip, backgrounded app) isn't mistaken for a
+            // "never connected" ghost and gets the full heartbeat grace instead.
+            markHostConfirmed(streamIdKey).catch(() => { });
+            clearHostAbsent(streamIdKey);
+            const noVideoMs = await hostNoVideoMs(streamIdKey, hostUserId, now);
+            if (noVideoMs !== null && noVideoMs >= HOST_NOVIDEO_MAX_MS) {
+                if (hostNoVideoMode() === 'enforce') {
+                    console.warn(`[Host No Video] Stream ${streamIdKey} host in LiveKit without video for ${noVideoMs} ms; ending (HOST_MEDIA_LOST).`);
+                    await endFromSweep(io, stream, streamIdKey, {
+                        reason: "HOST_MEDIA_LOST",
+                        message: "Live stream ended because the host's video was lost.",
+                        logTag: "Host No Video",
+                        failure: {
+                            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
+                            userId: hostUserId,
+                            streamId: streamIdKey,
+                            code: 'HOST_NO_VIDEO',
+                            message: `Host in LiveKit but published no video for ${noVideoMs} ms; stream auto-ended.`,
+                            meta: { ageMs, noVideoMs }
+                        }
+                    });
+                    redisClient.del(hostNoVideoKey(streamIdKey)).catch(() => { });
+                    return;
+                }
+                if (now - (noVideoLoggedAt.get(streamIdKey) || 0) >= 60000) {
+                    noVideoLoggedAt.set(streamIdKey, now);
+                    if (noVideoLoggedAt.size > 5000) noVideoLoggedAt.clear();
+                    console.warn(`[Host No Video] mode=log would end stream ${streamIdKey}: host in LiveKit without video for ${Math.round(noVideoMs / 1000)} s (camera not switched off).`);
+                }
+            }
+        } else {
+            const pause = await hostPausedForCallOrReturn(hostUserId, streamIdKey);
+            if (pause.paused) {
+                console.log(`[Ghost Sweep] Stream ${streamIdKey} no LiveKit host but paused (${pause.why}).`);
+                clearHostAbsent(streamIdKey);
+            } else if (await isHostConfirmed(streamIdKey)) {
+                // Host was live before; this is a drop, not a ghost. The heartbeat
+                // check below handles a silent host; LIVE-15 caps a host who keeps
+                // heartbeating without media.
+                const absentMs = await noteHostAbsent(streamIdKey);
+                if (absentMs >= HOST_ABSENCE_MAX_MS) {
+                    if (hostAbsenceMode() === 'enforce') {
+                        console.warn(`[Host Absence] Stream ${streamIdKey} host off LiveKit for ${absentMs} ms; ending (HOST_MEDIA_LOST).`);
+                        await endFromSweep(io, stream, streamIdKey, {
+                            reason: "HOST_MEDIA_LOST",
+                            message: "Live stream ended because the host's video was lost.",
+                            logTag: "Host Absence",
+                            failure: {
+                                kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
+                                userId: hostUserId,
+                                streamId: streamIdKey,
+                                code: 'HOST_MEDIA_LOST',
+                                message: `Host heartbeating but absent from LiveKit for ${absentMs} ms; stream auto-ended.`,
+                                meta: { ageMs, absentMs }
+                            }
+                        });
+                        clearHostAbsent(streamIdKey);
+                        return;
+                    }
+                    if (now - (absenceLoggedAt.get(streamIdKey) || 0) >= 60000) {
+                        absenceLoggedAt.set(streamIdKey, now);
+                        if (absenceLoggedAt.size > 5000) absenceLoggedAt.clear();
+                        console.warn(`[Host Absence] mode=log would end stream ${streamIdKey}: host off LiveKit for ${Math.round(absentMs / 1000)} s while heartbeating.`);
+                    }
+                } else {
+                    console.log(`[Ghost Sweep] Stream ${streamIdKey} host previously confirmed but not in LiveKit now. Deferring to heartbeat monitor.`);
+                }
+            } else {
+                console.warn(
+                    `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}, never confirmed. Auto-ending.`
+                );
+                await endFromSweep(io, stream, streamIdKey, {
+                    reason: "NO_LIVEKIT_HOST",
+                    message: "Live stream ended because the host never connected media.",
+                    logTag: "Ghost Sweep",
+                    failure: {
+                        kind: LIVE_FAILURE_KINDS.GHOST_STREAM_ENDED,
+                        userId: hostUserId,
+                        streamId: streamIdKey,
+                        code: 'NO_LIVEKIT_HOST',
+                        message: 'Host never appeared in the LiveKit room; stream auto-ended.',
+                        meta: { ageMs }
+                    }
+                });
+                return;
+            }
+        }
+    }
+
+    // 15-second grace window upon initial stream creation (heartbeat)
+    if (ageMs < HEARTBEAT_START_GRACE_MS) {
+        return;
+    }
+
+    let lastHeartbeatTime = null;
+    if (redisClient.isOpen) {
+        const rawHb = await redisClient.get(`stream:heartbeat:${streamIdKey}`);
+        if (rawHb) {
+            try {
+                const parsed = JSON.parse(rawHb);
+                lastHeartbeatTime = parsed.timestamp;
+            } catch (_) {
+                lastHeartbeatTime = Number(rawHb);
+            }
+        }
+    }
+
+    if (lastHeartbeatTime && (now - lastHeartbeatTime <= HEARTBEAT_TIMEOUT_MS)) {
+        return;
+    }
+
+    const durationSinceLastPing = lastHeartbeatTime ? (now - lastHeartbeatTime) : ageMs;
+
+    if (durationSinceLastPing <= HEARTBEAT_TIMEOUT_MS) {
+        return;
+    }
+
+    // LIVE-19: the app's heartbeat timer lives on the live room screen, so a
+    // minimized room or a dead socket stops it while the host keeps publishing.
+    // While the host is in the LiveKit room the stream is alive: refresh the
+    // heartbeat ourselves instead of ending a stream viewers are watching.
+    if (hostInLk === null) {
+        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
+    }
+    const pause = hostInLk
+        ? { paused: false }
+        : await hostPausedForCallOrReturn(hostUserId, streamIdKey);
+    const verdict = heartbeatVerdict({
+        now,
+        ageMs,
+        lastHeartbeatTime,
+        timeoutMs: HEARTBEAT_TIMEOUT_MS,
+        startGraceMs: HEARTBEAT_START_GRACE_MS,
+        paused: pause.paused,
+        hostInLiveKit: hostInLk,
+    });
+    if (verdict === 'keepalive') {
+        await recordStreamHeartbeat(streamIdKey, hostUserId);
+        markHostConfirmed(streamIdKey).catch(() => { });
+        logKeepalive(streamIdKey, hostUserId, durationSinceLastPing, lastHeartbeatTime);
+        return;
+    }
+    if (verdict === 'paused') {
+        console.log(`[Heartbeat Monitor] Host ${hostUserId} paused (${pause.why}).`);
+        return;
+    }
+
+    console.warn(
+        `[Heartbeat Monitor] Stream ${streamIdKey} lost heartbeat (last ping ${durationSinceLastPing}ms ago). Auto-ending stream!`
+    );
+    await endFromSweep(io, stream, streamIdKey, {
+        reason: "HEARTBEAT_LOST",
+        message: "Live stream ended due to host network loss.",
+        logTag: "Heartbeat Monitor",
+        failure: {
+            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
+            userId: hostUserId,
+            streamId: streamIdKey,
+            code: lastHeartbeatTime ? 'HEARTBEAT_LOST' : 'NO_HEARTBEAT_EVER',
+            message: `No host heartbeat for ${durationSinceLastPing}ms; stream auto-ended.`,
+            meta: { ageMs, sinceLastPingMs: durationSinceLastPing }
+        }
+    });
+};
+
+/**
  * Start the background worker that monitors all live streams every 5 seconds.
  * - Missing host heartbeat > timeout → auto-end (existing)
  * - No LiveKit host participant after grace → auto-end (ghost / Wi-Fi fail)
@@ -262,187 +453,12 @@ export const startStreamHeartbeatMonitor = (io) => {
 
             const now = Date.now();
 
-            for (const stream of activeStreams) {
-                try {
-                    const streamIdKey = stream.streamId || stream.id;
-                    const hostUserId = stream.userId;
-                    const startTime = (stream.startedAt || stream.createdAt || new Date()).getTime();
-                    const ageMs = now - startTime;
-                    // LiveKit presence of the host, looked up at most once per tick per stream.
-                    let hostInLk = null;
-
-                    // --- Ghost / Wi-Fi: go-live created DB row but host never joined LiveKit ---
-                    if (GHOST_SWEEP_ENABLED && ageMs >= LIVEKIT_HOST_GRACE_MS) {
-                        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
-                        if (hostInLk) {
-                            // Host confirmed present at least once — remember it so a later
-                            // drop (network blip, backgrounded app) isn't mistaken for a
-                            // "never connected" ghost and gets the full heartbeat grace instead.
-                            markHostConfirmed(streamIdKey).catch(() => { });
-                            clearHostAbsent(streamIdKey);
-                            const noVideoMs = await hostNoVideoMs(streamIdKey, hostUserId, now);
-                            if (noVideoMs !== null && noVideoMs >= HOST_NOVIDEO_MAX_MS) {
-                                if (hostNoVideoMode() === 'enforce') {
-                                    console.warn(`[Host No Video] Stream ${streamIdKey} host in LiveKit without video for ${noVideoMs} ms; ending (HOST_MEDIA_LOST).`);
-                                    await endFromSweep(io, stream, streamIdKey, {
-                                        reason: "HOST_MEDIA_LOST",
-                                        message: "Live stream ended because the host's video was lost.",
-                                        logTag: "Host No Video",
-                                        failure: {
-                                            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
-                                            userId: hostUserId,
-                                            streamId: streamIdKey,
-                                            code: 'HOST_NO_VIDEO',
-                                            message: `Host in LiveKit but published no video for ${noVideoMs} ms; stream auto-ended.`,
-                                            meta: { ageMs, noVideoMs }
-                                        }
-                                    });
-                                    redisClient.del(hostNoVideoKey(streamIdKey)).catch(() => { });
-                                    continue;
-                                }
-                                if (now - (noVideoLoggedAt.get(streamIdKey) || 0) >= 60000) {
-                                    noVideoLoggedAt.set(streamIdKey, now);
-                                    if (noVideoLoggedAt.size > 5000) noVideoLoggedAt.clear();
-                                    console.warn(`[Host No Video] mode=log would end stream ${streamIdKey}: host in LiveKit without video for ${Math.round(noVideoMs / 1000)} s (camera not switched off).`);
-                                }
-                            }
-                        } else {
-                            const pause = await hostPausedForCallOrReturn(hostUserId, streamIdKey);
-                            if (pause.paused) {
-                                console.log(`[Ghost Sweep] Stream ${streamIdKey} no LiveKit host but paused (${pause.why}).`);
-                                clearHostAbsent(streamIdKey);
-                            } else if (await isHostConfirmed(streamIdKey)) {
-                                // Host was live before; this is a drop, not a ghost. The heartbeat
-                                // check below handles a silent host; LIVE-15 caps a host who keeps
-                                // heartbeating without media.
-                                const absentMs = await noteHostAbsent(streamIdKey);
-                                if (absentMs >= HOST_ABSENCE_MAX_MS) {
-                                    if (hostAbsenceMode() === 'enforce') {
-                                        console.warn(`[Host Absence] Stream ${streamIdKey} host off LiveKit for ${absentMs} ms; ending (HOST_MEDIA_LOST).`);
-                                        await endFromSweep(io, stream, streamIdKey, {
-                                            reason: "HOST_MEDIA_LOST",
-                                            message: "Live stream ended because the host's video was lost.",
-                                            logTag: "Host Absence",
-                                            failure: {
-                                                kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
-                                                userId: hostUserId,
-                                                streamId: streamIdKey,
-                                                code: 'HOST_MEDIA_LOST',
-                                                message: `Host heartbeating but absent from LiveKit for ${absentMs} ms; stream auto-ended.`,
-                                                meta: { ageMs, absentMs }
-                                            }
-                                        });
-                                        clearHostAbsent(streamIdKey);
-                                        continue;
-                                    }
-                                    if (now - (absenceLoggedAt.get(streamIdKey) || 0) >= 60000) {
-                                        absenceLoggedAt.set(streamIdKey, now);
-                                        if (absenceLoggedAt.size > 5000) absenceLoggedAt.clear();
-                                        console.warn(`[Host Absence] mode=log would end stream ${streamIdKey}: host off LiveKit for ${Math.round(absentMs / 1000)} s while heartbeating.`);
-                                    }
-                                } else {
-                                    console.log(`[Ghost Sweep] Stream ${streamIdKey} host previously confirmed but not in LiveKit now. Deferring to heartbeat monitor.`);
-                                }
-                            } else {
-                                console.warn(
-                                    `[Ghost Sweep] Stream ${streamIdKey} age=${ageMs}ms with no LiveKit host ${hostUserId}, never confirmed. Auto-ending.`
-                                );
-                                await endFromSweep(io, stream, streamIdKey, {
-                                    reason: "NO_LIVEKIT_HOST",
-                                    message: "Live stream ended because the host never connected media.",
-                                    logTag: "Ghost Sweep",
-                                    failure: {
-                                        kind: LIVE_FAILURE_KINDS.GHOST_STREAM_ENDED,
-                                        userId: hostUserId,
-                                        streamId: streamIdKey,
-                                        code: 'NO_LIVEKIT_HOST',
-                                        message: 'Host never appeared in the LiveKit room; stream auto-ended.',
-                                        meta: { ageMs }
-                                    }
-                                });
-                                continue;
-                            }
-                        }
-                    }
-
-                    // 15-second grace window upon initial stream creation (heartbeat)
-                    if (ageMs < HEARTBEAT_START_GRACE_MS) {
-                        continue;
-                    }
-
-                    let lastHeartbeatTime = null;
-                    if (redisClient.isOpen) {
-                        const rawHb = await redisClient.get(`stream:heartbeat:${streamIdKey}`);
-                        if (rawHb) {
-                            try {
-                                const parsed = JSON.parse(rawHb);
-                                lastHeartbeatTime = parsed.timestamp;
-                            } catch (_) {
-                                lastHeartbeatTime = Number(rawHb);
-                            }
-                        }
-                    }
-
-                    if (lastHeartbeatTime && (now - lastHeartbeatTime <= HEARTBEAT_TIMEOUT_MS)) {
-                        continue;
-                    }
-
-                    const durationSinceLastPing = lastHeartbeatTime ? (now - lastHeartbeatTime) : ageMs;
-
-                    if (durationSinceLastPing <= HEARTBEAT_TIMEOUT_MS) {
-                        continue;
-                    }
-
-                    // LIVE-19: the app's heartbeat timer lives on the live room screen, so a
-                    // minimized room or a dead socket stops it while the host keeps publishing.
-                    // While the host is in the LiveKit room the stream is alive: refresh the
-                    // heartbeat ourselves instead of ending a stream viewers are watching.
-                    if (hostInLk === null) {
-                        hostInLk = await livekitHostIsPresent(streamIdKey, hostUserId);
-                    }
-                    const pause = hostInLk
-                        ? { paused: false }
-                        : await hostPausedForCallOrReturn(hostUserId, streamIdKey);
-                    const verdict = heartbeatVerdict({
-                        now,
-                        ageMs,
-                        lastHeartbeatTime,
-                        timeoutMs: HEARTBEAT_TIMEOUT_MS,
-                        startGraceMs: HEARTBEAT_START_GRACE_MS,
-                        paused: pause.paused,
-                        hostInLiveKit: hostInLk,
-                    });
-                    if (verdict === 'keepalive') {
-                        await recordStreamHeartbeat(streamIdKey, hostUserId);
-                        markHostConfirmed(streamIdKey).catch(() => { });
-                        logKeepalive(streamIdKey, hostUserId, durationSinceLastPing, lastHeartbeatTime);
-                        continue;
-                    }
-                    if (verdict === 'paused') {
-                        console.log(`[Heartbeat Monitor] Host ${hostUserId} paused (${pause.why}).`);
-                        continue;
-                    }
-
-                    console.warn(
-                        `[Heartbeat Monitor] Stream ${streamIdKey} lost heartbeat (last ping ${durationSinceLastPing}ms ago). Auto-ending stream!`
-                    );
-                    await endFromSweep(io, stream, streamIdKey, {
-                        reason: "HEARTBEAT_LOST",
-                        message: "Live stream ended due to host network loss.",
-                        logTag: "Heartbeat Monitor",
-                        failure: {
-                            kind: LIVE_FAILURE_KINDS.HEARTBEAT_LOST,
-                            userId: hostUserId,
-                            streamId: streamIdKey,
-                            code: lastHeartbeatTime ? 'HEARTBEAT_LOST' : 'NO_HEARTBEAT_EVER',
-                            message: `No host heartbeat for ${durationSinceLastPing}ms; stream auto-ended.`,
-                            meta: { ageMs, sinceLastPingMs: durationSinceLastPing }
-                        }
-                    });
-                } catch (streamErr) {
-                    console.error(`[Heartbeat Monitor] Error checking stream ${stream.id}:`, streamErr.message);
-                }
-            }
+            await forEachLimit(
+                activeStreams,
+                SWEEP_CONCURRENCY,
+                (stream) => checkStream(io, stream, now),
+                (err, stream) => console.error(`[Heartbeat Monitor] Error checking stream ${stream.id}:`, err?.message)
+            );
         } catch (loopErr) {
             console.error("[Heartbeat Monitor] Loop error:", loopErr.message);
         } finally {
